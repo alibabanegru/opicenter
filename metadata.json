@@ -1,0 +1,6 @@
+{
+  "name": "Opicenter sail",
+  "description": "Sistem de gestionare a programărilor pentru Opicenter sail.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,119 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // SECURITY WARNING:
+    // This application uses a custom password-based login system.
+    // Database security relies on strict data validation and 
+    // UI-level role enforcement.
+    // ===============================================================
+
+    // Helper Functions
+    function isValidPhone(phone) {
+      return phone == null || (phone is string && (phone.size() == 0 || phone.size() >= 5));
+    }
+
+    function isValidAppointment(data) {
+      return data.patientName is string && data.patientName.size() > 0 &&
+             (!('patientPhone' in data) || isValidPhone(data.patientPhone)) &&
+             (!('status' in data) || data.status is string);
+    }
+
+    function isValidConfig(data) {
+      return data.doctorId is string && data.doctorId.size() > 0 &&
+             data.dayConfigs is map;
+    }
+
+    function isValidClinicSettings(data) {
+      return !('logoUrl' in data) || data.logoUrl is string;
+    }
+
+    function isValidMedicalRecord(data) {
+      return data.patientName is string && data.patientName.size() > 0;
+    }
+
+    function isValidMedicalDocument(data) {
+      return data.patientName is string && data.patientName.size() > 0;
+    }
+
+    // Appointments Collection
+    match /appointments/{appointmentId} {
+      allow read: if true;
+      allow create: if isValidAppointment(request.resource.data);
+      allow update: if isValidAppointment(request.resource.data);
+      allow delete: if true; // Restricted by UI to Admin role
+    }
+
+    // Medical Records Collection
+    match /medicalRecords/{recordId} {
+      allow read: if true;
+      allow create, update: if isValidMedicalRecord(request.resource.data);
+      allow delete: if true;
+    }
+
+    // Medical Documents Collection
+    match /medicalDocuments/{documentId} {
+      allow read: if true;
+      allow create, update: if isValidMedicalDocument(request.resource.data);
+      allow delete: if true;
+    }
+
+    // Configs Collection
+    match /configs/{configId} {
+      allow read, write: if true;
+    }
+
+    // Clinic Config (Internal)
+    match /clinic_config/{configId} {
+      allow read, write: if true;
+    }
+
+    // Settings Collection
+    match /settings/{settingId} {
+      allow read, write: if true;
+    }
+
+    // Glasses Orders Collection
+    match /glasses_orders/{orderId} {
+      allow read, write: if true;
+    }
+
+    // Reception Alerts Collection
+    match /reception_alerts/{alertId} {
+      allow read, write: if true;
+    }
+
+    // Frame Stock Collection
+    match /frame_stock/{frameId} {
+      allow read, write: if true;
+    }
+
+    // Users Collection (Legacy/Optional)
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Connection Logs Collection
+    match /connection_logs/{logId} {
+      allow read, write: if true;
+    }
+
+    // Banned Emails Collection
+    match /banned_emails/{bannedId} {
+      allow read, write: if true;
+    }
+
+    // Activity Logs Collection
+    match /activityLogs/{logId} {
+      allow read, write: if true;
+    }
+
+    // User Credentials (Passwords)
+    match /user_credentials/{userId} {
+      // Allow single document get for login check
+      // Allow updates/listing for admin (enforced by UI for now since we use custom login)
+      allow read, write: if true; 
+    }
+  }
+}

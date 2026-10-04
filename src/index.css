@@ -1,0 +1,196 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Dancing+Script:wght@400;700&family=Fira+Code:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Times New Roman", Times, serif;
+  --font-signature: "Dancing Script", cursive;
+}
+
+@layer base {
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  @keyframes blink-yellow {
+    0%, 100% { background-color: rgba(234, 179, 8, 0.3); }
+    50% { background-color: transparent; }
+  }
+
+  @keyframes blink-green {
+    0%, 100% { color: #10b981; }
+    50% { color: inherit; }
+  }
+
+  @keyframes blink-red {
+    0%, 100% { color: #ef4444; }
+    50% { color: inherit; }
+  }
+
+  @keyframes blink-orange {
+    0%, 100% { color: #f97316; }
+    50% { color: inherit; }
+  }
+
+  .animate-blink-yellow {
+    animation: blink-yellow 1s infinite;
+  }
+
+  .animate-blink-green {
+    animation: blink-green 1s infinite;
+  }
+
+  .animate-blink-red {
+    animation: blink-red 0.5s infinite;
+  }
+
+  .animate-blink-orange {
+    animation: blink-orange 0.5s infinite;
+  }
+
+  @keyframes pulse-yellow-bg {
+    0%, 100% { background-color: #fef08a; color: #1e293b; border-color: #eab308; }
+    50% { background-color: #fde047; color: #0f172a; border-color: #ca8a04; }
+  }
+
+  @keyframes pulse-orange-bg {
+    0%, 100% { background-color: #ffedd5; color: #1e293b; border-color: #f97316; }
+    50% { background-color: #f97316; color: #ffffff; border-color: #ea580c; }
+  }
+
+  @keyframes pulse-red-bg {
+    0%, 100% { background-color: #fee2e2; color: #1e293b; border-color: #ef4444; }
+    50% { background-color: #ef4444; color: #ffffff; border-color: #dc2626; }
+  }
+
+  .animate-pulse-yellow-bg {
+    animation: pulse-yellow-bg 1s infinite ease-in-out;
+  }
+
+  .animate-pulse-orange-bg {
+    animation: pulse-orange-bg 1s infinite ease-in-out;
+  }
+
+  .animate-pulse-red-bg {
+    animation: pulse-red-bg 1s infinite ease-in-out;
+  }
+
+  @keyframes pulse-soft-red {
+    0%, 100% {
+      background-color: rgba(254, 242, 242, 0.45);
+      border-color: rgba(252, 165, 165, 0.3);
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+    }
+    50% {
+      background-color: rgba(254, 226, 226, 0.5);
+      border-color: rgba(248, 113, 113, 0.4);
+      box-shadow: 0 0 6px 1px rgba(239, 68, 68, 0.06);
+    }
+  }
+
+  @keyframes pulse-soft-red-dark {
+    0%, 100% {
+      background-color: rgba(136, 19, 55, 0.08);
+      border-color: rgba(225, 29, 72, 0.18);
+      box-shadow: 0 0 0 0 rgba(225, 29, 72, 0);
+    }
+    50% {
+      background-color: rgba(159, 18, 57, 0.18);
+      border-color: rgba(244, 63, 94, 0.3);
+      box-shadow: 0 0 6px 1px rgba(244, 63, 94, 0.09);
+    }
+  }
+
+  .animate-pulse-soft-red {
+    animation: pulse-soft-red 1.8s infinite ease-in-out;
+  }
+
+  .dark .animate-pulse-soft-red {
+    animation: pulse-soft-red-dark 1.8s infinite ease-in-out;
+  }
+
+  @keyframes pulse-soft-orange {
+    0%, 100% {
+      background-color: rgba(255, 251, 245, 0.5);
+      border-color: rgba(253, 186, 116, 0.3);
+      box-shadow: 0 0 0 0 rgba(249, 115, 22, 0);
+    }
+    50% {
+      background-color: rgba(254, 237, 213, 0.5);
+      border-color: rgba(251, 146, 60, 0.4);
+      box-shadow: 0 0 6px 1px rgba(249, 115, 22, 0.08);
+    }
+  }
+
+  @keyframes pulse-soft-orange-dark {
+    0%, 100% {
+      background-color: rgba(124, 45, 18, 0.1);
+      border-color: rgba(234, 88, 12, 0.2);
+      box-shadow: 0 0 0 0 rgba(234, 88, 12, 0);
+    }
+    50% {
+      background-color: rgba(154, 52, 18, 0.2);
+      border-color: rgba(249, 115, 22, 0.35);
+      box-shadow: 0 0 6px 1px rgba(249, 115, 22, 0.1);
+    }
+  }
+
+  .animate-pulse-soft-orange {
+    animation: pulse-soft-orange 1.8s infinite ease-in-out;
+  }
+
+  .dark .animate-pulse-soft-orange {
+    animation: pulse-soft-orange-dark 1.8s infinite ease-in-out;
+  }
+}
+
+/* Document Form Modal Fullscreen Styles */
+.document-modal-fullscreen input[type="text"],
+.document-modal-fullscreen select,
+.document-modal-fullscreen textarea {
+  padding: 0.85rem 1.15rem !important;
+  font-size: 0.95rem !important;
+  line-height: 1.5rem !important;
+  border-radius: 0.75rem !important;
+}
+
+.document-modal-fullscreen textarea {
+  min-height: 100px !important;
+}
+
+.document-modal-fullscreen label {
+  font-size: 0.8rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.05em !important;
+  margin-bottom: 0.35rem !important;
+  display: block;
+}
+
+/* Styling section headers inside the form */
+.document-modal-fullscreen p.text-slate-400,
+.document-modal-fullscreen p.text-slate-500 {
+  font-size: 0.85rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.05em !important;
+  color: #3b82f6 !important;
+}
+
+/* Larger and more elegant headers in fullscreen modal */
+.document-modal-fullscreen h2 {
+  font-size: 1.35rem !important;
+}
+
+.document-modal-fullscreen p.text-slate-500.uppercase {
+  font-size: 0.75rem !important;
+}
+

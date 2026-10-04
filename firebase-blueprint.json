@@ -1,0 +1,265 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with role and name",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "doctor1", "doctor2", "doctor3", "doctor4", "doctor5", "frontdesk", "seller"] },
+        "color": { "type": "string" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "Consultation appointment",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "patientName": { "type": "string" },
+        "patientAge": { "type": "number" },
+        "patientPhone": { "type": "string" },
+        "doctorId": { "type": "string" },
+        "startTime": { "type": "string", "format": "date-time" },
+        "endTime": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["scheduled", "cancelled"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "isControl": { "type": "boolean" },
+        "isConsultComplet": { "type": "boolean" }
+      },
+      "required": ["patientName", "patientAge", "patientPhone", "doctorId", "startTime", "endTime"]
+    },
+    "ScheduleConfig": {
+      "title": "ScheduleConfig",
+      "description": "Doctor availability configuration",
+      "type": "object",
+      "properties": {
+        "doctorId": { "type": "string" },
+        "availableDays": { "type": "array", "items": { "type": "number" } },
+        "startHour": { "type": "number" },
+        "endHour": { "type": "number" },
+        "intervalMinutes": { "type": "number" }
+      },
+      "required": ["doctorId", "availableDays", "startHour", "endHour"]
+    },
+    "MedicalRecord": {
+      "title": "MedicalRecord",
+      "description": "Patient medical record with eye prescription, visual acuity, and medical reports data",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "patientName": { "type": "string" },
+        "patientPhone": { "type": "string" },
+        "patientAge": { "type": "number" },
+        "patientCnp": { "type": "string" },
+        "patientAddress": { "type": "string" },
+        "patientSeries": { "type": "string" },
+        "patientNumber": { "type": "string" },
+        "od": { 
+          "type": "object",
+          "properties": {
+            "sph": { "type": "string" },
+            "cyl": { "type": "string" },
+            "axis": { "type": "string" },
+            "add": { "type": "string" },
+            "va_without": { "type": "string" },
+            "va_with": { "type": "string" }
+          }
+        },
+        "os": { 
+          "type": "object",
+          "properties": {
+            "sph": { "type": "string" },
+            "cyl": { "type": "string" },
+            "axis": { "type": "string" },
+            "add": { "type": "string" },
+            "va_without": { "type": "string" },
+            "va_with": { "type": "string" }
+          }
+        },
+        "dp": { "type": "string" },
+        "treatment": { "type": "string" },
+        "diagnostic": { "type": "string" },
+        "symptoms": { "type": "string" },
+        "history": { "type": "string" },
+        "medications": { "type": "string" },
+        "iop": { "type": "object" },
+        "pachymetry": { "type": "object" },
+        "anteriorSegment": { "type": "object" },
+        "posteriorSegment": { "type": "object" },
+        "specialMentions": { "type": "string" },
+        "lensType": { "type": "string" },
+        "lensMaterial": { "type": "string" },
+        "lensTreatment": { "type": "string" },
+        "glassesOrder": { "$ref": "#/entities/GlassesOrder" },
+        "orderHistory": { "type": "array", "items": { "$ref": "#/entities/GlassesOrder" } },
+        "prescriptionHistory": { "type": "array", "items": { "type": "object" } },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "isControl": { "type": "boolean" },
+        "isGratis": { "type": "boolean" },
+        "isConsultComplet": { "type": "boolean" }
+      },
+      "required": ["patientName", "patientPhone", "od", "os", "updatedAt"]
+    },
+    "GlassesOrder": {
+      "description": "Details for a specific glasses order",
+      "type": "object",
+      "properties": {
+        "orderNumber": { "type": "string" },
+        "frameCode": { "type": "string" },
+        "framePrice": { "type": "number" },
+        "lensRightName": { "type": "string" },
+        "lensRightPrice": { "type": "number" },
+        "lensLeftName": { "type": "string" },
+        "lensLeftPrice": { "type": "number" },
+        "laborPrice": { "type": "number" },
+        "total": { "type": "number" },
+        "advance": { "type": "number" },
+        "balance": { "type": "number" },
+        "deliveryDate": { "type": "string" },
+        "isUrgent": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["in-progress", "completed"] },
+        "dp": { "type": "string" },
+        "od": { 
+          "type": "object",
+          "properties": {
+            "sph": { "type": "string" },
+            "cyl": { "type": "string" },
+            "axis": { "type": "string" },
+            "add": { "type": "string" }
+          }
+        },
+        "os": { 
+          "type": "object",
+          "properties": {
+            "sph": { "type": "string" },
+            "cyl": { "type": "string" },
+            "axis": { "type": "string" },
+            "add": { "type": "string" }
+          }
+        },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["orderNumber", "total", "createdAt"]
+    },
+    "ConnectionLog": {
+      "title": "ConnectionLog",
+      "description": "Audit trail log for system logins",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userRole": { "type": "string" },
+        "googleEmail": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "userName", "userRole", "googleEmail", "timestamp"]
+    },
+    "BannedEmail": {
+      "title": "BannedEmail",
+      "description": "Banned Google email addresses",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "blockedAt": { "type": "string" },
+        "reason": { "type": "string" }
+      },
+      "required": ["email", "blockedAt"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Log of critical staff movements and actions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "user": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["action", "details", "user", "timestamp"]
+    },
+    "ReceptionAlert": {
+      "title": "ReceptionAlert",
+      "description": "Alert of newly saved prescriptions and recommendations for receptionists",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "patientId": { "type": "string" },
+        "patientName": { "type": "string" },
+        "patientAge": { "type": "string" },
+        "glasses": { "type": "boolean" },
+        "contactLenses": { "type": "boolean" },
+        "treatment": { "type": "string" },
+        "examinations": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["patientId", "patientName", "createdAt"]
+    },
+    "FrameStock": {
+      "title": "FrameStock",
+      "description": "Stock of optical frames with codes and available quantities",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "brand": { "type": "string" },
+        "category": { "type": "string" },
+        "quantity": { "type": "number" },
+        "price": { "type": "number" },
+        "location": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["code", "brand", "quantity"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/appointments/{appointmentId}": {
+      "schema": "Appointment",
+      "description": "All appointments"
+    },
+    "/configs/{configId}": {
+      "schema": "ScheduleConfig",
+      "description": "Doctor schedule configurations"
+    },
+    "/medicalRecords/{recordId}": {
+      "schema": "MedicalRecord",
+      "description": "Patient medical records"
+    },
+    "/glasses_orders/{orderId}": {
+      "schema": "GlassesOrder",
+      "description": "Standalone glasses orders"
+    },
+    "/connection_logs/{logId}": {
+      "schema": "ConnectionLog",
+      "description": "History of clinic logins"
+    },
+    "/banned_emails/{bannedId}": {
+      "schema": "BannedEmail",
+      "description": "Banned Google email addresses to block access"
+    },
+    "/activityLogs/{logId}": {
+      "schema": "ActivityLog",
+      "description": "Critical actions journal"
+    },
+    "/reception_alerts/{alertId}": {
+      "schema": "ReceptionAlert",
+      "description": "Alerts for receptionists with optometrist recommendations"
+    },
+    "/frame_stock/{frameId}": {
+      "schema": "FrameStock",
+      "description": "Optical frame inventory stock"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+import { initializeApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, setLogLevel } from 'firebase/firestore';
+
+const firebaseConfig = {
+  projectId: "gen-lang-client-0828267581",
+  appId: "1:636033516032:web:327c0257f8bc0979174ee5",
+  apiKey: "AIzaSyCfgM25sXmOHgcEZAKuFOwcNg_BWBwuok8",
+  authDomain: "gen-lang-client-0828267581.firebaseapp.com",
+  firestoreDatabaseId: "ai-studio-b2bfdb1e-aa58-49dc-9f6b-b89e10ce3dd7",
+  storageBucket: "gen-lang-client-0828267581.firebasestorage.app",
+  messagingSenderId: "636033516032",
+  measurementId: ""
+};
+
+setLogLevel('error');
+
+const app = initializeApp(firebaseConfig);
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager(),
+  }),
+} as any, firebaseConfig.firestoreDatabaseId);
+
+export const auth = getAuth(app);
