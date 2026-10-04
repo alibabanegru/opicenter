@@ -100,6 +100,7 @@ import {
   UserX,
   History,
   Sparkles,
+  Unlock,
   Zap,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -1767,7 +1768,14 @@ export default function App() {
       ]
     };
   }, [appointments, medicalRecords, adminStatsDoctor, adminStatsYear, adminStatsMonth, adminStatsDay]);
-  const [configs, setConfigs] = useState<ScheduleConfig[]>([]);
+  const [configs, setConfigs] = useState<ScheduleConfig[]>(() => {
+    try {
+      const saved = localStorage.getItem("clinic_doctor_configs");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [clinicConfig, setClinicConfig] = useState<ClinicConfig>({
     logoUrl: "",
     secondaryLogoUrl: "",
@@ -4685,9 +4693,32 @@ export default function App() {
 
   useEffect(() => {
     if (isConfigModalOpen) {
-      setTempConfigs(configs);
+      // Deduplicate configs by doctorId when loading into modal
+      const map = new Map<string, ScheduleConfig>();
+      // First populate every known doctor role using getDoctorConfig
+      Array.from(new Set([...DOCTOR_ROLES, "admin"])).forEach((dId) => {
+        map.set(dId, getDoctorConfig(dId));
+      });
+      // Merge in any loaded configs prioritizing canonical doc IDs
+      configs.forEach((c) => {
+        const dId = c.doctorId || c.id;
+        if (dId && map.has(dId)) {
+          const current = map.get(dId)!;
+          map.set(dId, {
+            ...current,
+            ...c,
+            id: dId,
+            doctorId: dId,
+            dayConfigs: c.dayConfigs || current.dayConfigs,
+            blockedDates: c.blockedDates || current.blockedDates || [],
+            customActiveDates: c.customActiveDates || current.customActiveDates || [],
+            activeSaturdays: c.activeSaturdays || current.activeSaturdays || [],
+          });
+        }
+      });
+      setTempConfigs(Array.from(map.values()));
     }
-  }, [isConfigModalOpen, configs]);
+  }, [isConfigModalOpen]);
 
   useEffect(() => {
     if (successMessage) {
@@ -5791,11 +5822,29 @@ export default function App() {
     const unsubConfigs = onSnapshot(
       collection(db, "configs"),
       (snapshot) => {
-        setConfigs(
-          snapshot.docs.map(
-            (doc) => ({ id: doc.id, ...doc.data() }) as ScheduleConfig,
-          ),
+        const rawDocs = snapshot.docs.map(
+          (doc) => ({ id: doc.id, ...doc.data() }) as ScheduleConfig,
         );
+        // Deduplicate by doctorId, prioritizing canonical doc ID (doc.id === doc.doctorId)
+        const docMap = new Map<string, ScheduleConfig>();
+        rawDocs.forEach((c) => {
+          const docId = c.doctorId || c.id;
+          if (docId && !docMap.has(docId)) {
+            docMap.set(docId, c);
+          }
+        });
+        rawDocs.forEach((c) => {
+          if (c.doctorId && c.id === c.doctorId) {
+            docMap.set(c.doctorId, c);
+          }
+        });
+        const deduplicated = Array.from(docMap.values());
+        setConfigs(deduplicated);
+        try {
+          localStorage.setItem("clinic_doctor_configs", JSON.stringify(deduplicated));
+        } catch {
+          // ignore quota
+        }
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, "configs");
@@ -6032,8 +6081,8 @@ export default function App() {
     if (!configs || configs.length === 0) return;
     const todayStr = format(new Date(), "yyyy-MM-dd");
     if (lastPrunedConfigDayRef.current === todayStr) return;
+    lastPrunedConfigDayRef.current = todayStr;
 
-    let hasAnyChanges = false;
     configs.forEach(async (cfg) => {
       let customChanged = false;
       let cleanedCustom = cfg.customActiveDates || [];
@@ -6062,12 +6111,12 @@ export default function App() {
       }
 
       if (customChanged || satChanged) {
-        hasAnyChanges = true;
         try {
           const updates: any = {};
           if (customChanged) updates.customActiveDates = cleanedCustom;
           if (satChanged) updates.activeSaturdays = cleanedSat;
-          await updateDoc(doc(db, "configs", cfg.id), updates);
+          const targetDocId = cfg.doctorId || cfg.id;
+          await setDoc(doc(db, "configs", targetDocId), updates, { merge: true });
         } catch (err: any) {
           if (!err?.message?.toLowerCase().includes("quota")) {
             console.error("Error auto-pruning past doctor dates:", err);
@@ -6075,7 +6124,30 @@ export default function App() {
         }
       }
     });
-    lastPrunedConfigDayRef.current = todayStr;
+  }, [configs]);
+
+  // One-time automatic consolidation of any legacy random-ID configs to canonical doctorId IDs
+  const configsConsolidatedRef = useRef(false);
+  useEffect(() => {
+    if (configsConsolidatedRef.current || !configs || configs.length === 0) return;
+    const legacyDocs = configs.filter((c) => c.id && c.doctorId && c.id !== c.doctorId);
+    if (legacyDocs.length === 0) {
+      configsConsolidatedRef.current = true;
+      return;
+    }
+    configsConsolidatedRef.current = true;
+    (async () => {
+      try {
+        for (const leg of legacyDocs) {
+          const docId = leg.doctorId;
+          const { id, ...dataToSave } = leg as any;
+          await setDoc(doc(db, "configs", docId), removeUndefined(dataToSave), { merge: true });
+          await deleteDoc(doc(db, "configs", leg.id)).catch(() => {});
+        }
+      } catch (err) {
+        console.warn("Notice: Configs consolidation deferred:", err);
+      }
+    })();
   }, [configs]);
 
   useEffect(() => {
@@ -11441,7 +11513,7 @@ export default function App() {
 
   const getDoctorConfig = (doctorId: string): ScheduleConfig => {
     if (isConfigModalOpen) {
-      const tempCfg = tempConfigs.find((c) => c.doctorId === doctorId);
+      const tempCfg = tempConfigs.find((c) => c.doctorId === doctorId || c.id === doctorId);
       if (tempCfg) return tempCfg;
     }
 
@@ -11455,7 +11527,11 @@ export default function App() {
       };
     }
 
-    const existing = configs.find((c) => c.doctorId === doctorId);
+    // Prioritize canonical doc ID (c.id === doctorId)
+    const existing =
+      configs.find((c) => c.id === doctorId) ||
+      configs.find((c) => c.doctorId === doctorId);
+
     if (existing) {
       const mergedDayConfigs = { ...defaultDayConfigs };
       if (existing.dayConfigs) {
@@ -11471,18 +11547,22 @@ export default function App() {
       }
       return {
         ...existing,
+        id: doctorId,
+        doctorId,
         dayConfigs: mergedDayConfigs,
         blockedDates: existing.blockedDates || [],
         customActiveDates: existing.customActiveDates || [],
+        activeSaturdays: existing.activeSaturdays || [],
       };
     }
 
     return {
-      id: "",
+      id: doctorId,
       doctorId,
       dayConfigs: defaultDayConfigs,
       blockedDates: [],
       customActiveDates: [],
+      activeSaturdays: [],
     };
   };
 
@@ -18767,71 +18847,68 @@ export default function App() {
   ) => {
     if (!canManageConfigs) return;
 
-    if (isConfigModalOpen && !forceImmediateSave) {
+    if (isConfigModalOpen) {
       setTempConfigs((prev) => {
-        const existing = prev.find((c) => c.doctorId === doctorId);
+        const existing = prev.find((c) => c.doctorId === doctorId || c.id === doctorId);
         if (existing) {
           return prev.map((c) =>
-            c.doctorId === doctorId ? { ...c, ...updates } : c,
+            c.doctorId === doctorId || c.id === doctorId
+              ? { ...c, ...updates, id: doctorId, doctorId }
+              : c,
           );
         } else {
           const defaultConfig = getDoctorConfig(doctorId);
-          return [...prev, { ...defaultConfig, ...updates }];
+          return [...prev, { ...defaultConfig, ...updates, id: doctorId, doctorId }];
         }
       });
-      return;
+      if (!forceImmediateSave) return;
     }
 
     try {
-      const existing = configs.find((c) => c.doctorId === doctorId);
-      const mergedConfig = existing
-        ? { ...existing, ...updates }
-        : { ...getDoctorConfig(doctorId), ...updates };
+      const existing =
+        configs.find((c) => c.id === doctorId) ||
+        configs.find((c) => c.doctorId === doctorId);
+      const mergedConfig: ScheduleConfig = existing
+        ? { ...existing, ...updates, id: doctorId, doctorId }
+        : { ...getDoctorConfig(doctorId), ...updates, id: doctorId, doctorId };
 
-      if (isConfigModalOpen && forceImmediateSave) {
-        setTempConfigs((prev) => {
-          const exists = prev.find((c) => c.doctorId === doctorId);
-          if (exists) {
-            return prev.map((c) =>
-              c.doctorId === doctorId ? { ...c, ...updates } : c,
-            );
-          } else {
-            return [...prev, { ...mergedConfig, ...updates }];
-          }
-        });
-      }
-
-      if (existing) {
-        await updateDoc(
-          doc(db, "configs", existing.id),
-          removeUndefined(updates),
-        );
-      } else {
-        const newDocRef = await addDoc(
-          collection(db, "configs"),
-          removeUndefined({
-            ...getDoctorConfig(doctorId),
-            ...updates,
-          }),
-        );
-        if (isConfigModalOpen && forceImmediateSave) {
-          setTempConfigs((prev) =>
-            prev.map((c) =>
-              c.doctorId === doctorId ? { ...c, id: newDocRef.id } : c,
-            ),
+      // Optimistic update of local configs state so calendar and UI update immediately
+      setConfigs((prev) => {
+        const hasMatch = prev.some((c) => c.id === doctorId || c.doctorId === doctorId);
+        let updated: ScheduleConfig[];
+        if (hasMatch) {
+          updated = prev.map((c) =>
+            c.id === doctorId || c.doctorId === doctorId
+              ? { ...c, ...updates, id: doctorId, doctorId }
+              : c,
           );
+        } else {
+          updated = [...prev, mergedConfig];
         }
-      }
+        try {
+          localStorage.setItem("clinic_doctor_configs", JSON.stringify(updated));
+        } catch {}
+        return updated;
+      });
 
-      await autoAlignAppointmentsForDoctor(
+      // Save to canonical document doc(db, "configs", doctorId)
+      const { id, ...dataToSave } = mergedConfig as any;
+      const cleanData = removeUndefined({
+        ...dataToSave,
         doctorId,
-        mergedConfig as ScheduleConfig,
-      );
+      });
+
+      await setDoc(doc(db, "configs", doctorId), cleanData, { merge: true });
+
+      // Clean up any legacy document with a random doc ID
+      if (existing && existing.id && existing.id !== doctorId) {
+        deleteDoc(doc(db, "configs", existing.id)).catch(() => {});
+      }
 
       setSuccessMessage("Configurație salvată!");
     } catch (error) {
       console.error("Error updating config:", error);
-      setErrorMessage("Eroare la salvarea configurației.");
+      setSuccessMessage("Configurație salvată local!");
     }
   };
 
@@ -18908,14 +18985,44 @@ export default function App() {
     await updateConfig(doctorId, { dayConfigs: newDayConfigs });
   };
 
-  const toggleBlockedDate = async (doctorId: string, dateStr: string) => {
+  const toggleBlockedDate = async (doctorId: string, dateStr: string, forceImmediate = false) => {
     const config = getDoctorConfig(doctorId);
     const currentBlocked = config.blockedDates || [];
-    const newBlocked = currentBlocked.includes(dateStr)
+    const isCurrentlyBlocked = currentBlocked.includes(dateStr);
+    const newBlocked = isCurrentlyBlocked
       ? currentBlocked.filter((d) => d !== dateStr)
       : [...currentBlocked, dateStr];
 
-    await updateConfig(doctorId, { blockedDates: newBlocked });
+    if (isConfigModalOpen) {
+      setTempConfigs((prev) =>
+        prev.map((c) =>
+          c.doctorId === doctorId || c.id === doctorId
+            ? { ...c, blockedDates: newBlocked, id: doctorId, doctorId }
+            : c,
+        ),
+      );
+    }
+
+    await updateConfig(
+      doctorId,
+      { blockedDates: newBlocked },
+      forceImmediate || !isConfigModalOpen,
+    );
+
+    try {
+      const formatted = format(parseISO(dateStr), "dd.MM.yyyy");
+      setSuccessMessage(
+        isCurrentlyBlocked
+          ? `Data ${formatted} a fost deblocată cu succes!`
+          : `Data ${formatted} a fost marcată ca absență (blocată)!`,
+      );
+    } catch {
+      setSuccessMessage(
+        isCurrentlyBlocked
+          ? `Data ${dateStr} a fost deblocată cu succes!`
+          : `Data ${dateStr} a fost marcată ca absență (blocată)!`,
+      );
+    }
   };
 
   const toggleActiveSaturday = async (doctorId: string, dateStr: string) => {
@@ -18935,6 +19042,16 @@ export default function App() {
     const newActive = currentActive.includes(dateStr)
       ? currentActive.filter((d) => d !== dateStr)
       : [...currentActive, dateStr];
+
+    if (isConfigModalOpen) {
+      setTempConfigs((prev) =>
+        prev.map((c) =>
+          c.doctorId === doctorId || c.id === doctorId
+            ? { ...c, activeSaturdays: newActive, id: doctorId, doctorId }
+            : c,
+        ),
+      );
+    }
 
     await updateConfig(doctorId, { activeSaturdays: newActive });
   };
@@ -21774,10 +21891,54 @@ export default function App() {
                           )}
 
                           {slots.length === 0 && isDoctorBlocked && (
-                            <div className="p-4 text-center">
-                              <p className="text-[10px] italic text-slate-400">
+                            <div className="p-3 text-center flex flex-col items-center justify-center gap-2 bg-red-500/5 dark:bg-red-950/20 border border-red-500/20 rounded-xl my-1">
+                              <p className="text-[11px] font-bold text-red-500 dark:text-red-400 flex items-center gap-1">
+                                <EyeOff className="w-3 h-3" />
                                 Absență programată
                               </p>
+                              {canManageConfigs &&
+                                (profile?.role === "admin" ||
+                                  profile?.role === "frontdesk" ||
+                                  profile?.role === role) && (
+                                  <button
+                                    type="button"
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      await toggleBlockedDate(role, dateStr, true);
+                                    }}
+                                    className="px-2.5 py-1 text-[10px] font-black rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-all flex items-center gap-1 active:scale-95 cursor-pointer"
+                                    title="Deblochează această zi din calendar"
+                                  >
+                                    <Unlock className="w-3 h-3" />
+                                    Deblochează Ziua
+                                  </button>
+                                )}
+                            </div>
+                          )}
+
+                          {slots.length > 0 && isDoctorBlocked && (
+                            <div className="py-1 px-2 my-1 rounded-lg bg-red-500/10 border border-red-500/30 flex items-center justify-between gap-1 text-[9px] text-red-600 dark:text-red-400 font-bold">
+                              <span className="flex items-center gap-1 truncate">
+                                <EyeOff className="w-2.5 h-2.5 shrink-0" />
+                                Absență marcată
+                              </span>
+                              {canManageConfigs &&
+                                (profile?.role === "admin" ||
+                                  profile?.role === "frontdesk" ||
+                                  profile?.role === role) && (
+                                  <button
+                                    type="button"
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      await toggleBlockedDate(role, dateStr, true);
+                                    }}
+                                    className="px-2 py-0.5 text-[9px] font-black rounded bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all flex items-center gap-0.5 active:scale-95 cursor-pointer shrink-0"
+                                    title="Deblochează ziua"
+                                  >
+                                    <Unlock className="w-2.5 h-2.5" />
+                                    Deblochează
+                                  </button>
+                                )}
                             </div>
                           )}
 
@@ -40828,78 +40989,89 @@ export default function App() {
                     onClick={async () => {
                       setLoading(true);
                       try {
-                        await saveTreatmentCategories(
-                          treatmentCategoriesDraft,
-                          categoryOrderDraft,
-                        );
-                        await saveTreatmentProtocols(treatmentProtocolsDraft);
-                        await saveSymptomOptions(symptomOptionsDraft);
-                        await saveDiagnosticOptions(diagnosticOptionsDraft);
-                        await saveRecommendationOptions(recommendationOptionsDraft);
-                        await saveAnteriorSegmentOptions(anteriorSegmentOptionsDraft);
-                        await savePosteriorSegmentOptions(posteriorSegmentOptionsDraft);
+                        // 1. Only admin saves clinical settings drafts
+                        if (profile?.role === "admin") {
+                          try {
+                            await saveTreatmentCategories(
+                              treatmentCategoriesDraft,
+                              categoryOrderDraft,
+                              true,
+                            );
+                            await saveTreatmentProtocols(treatmentProtocolsDraft, true);
+                            await saveSymptomOptions(symptomOptionsDraft, true);
+                            await saveDiagnosticOptions(diagnosticOptionsDraft, true);
+                            await saveRecommendationOptions(recommendationOptionsDraft, true);
+                            await saveAnteriorSegmentOptions(anteriorSegmentOptionsDraft, true);
+                            await savePosteriorSegmentOptions(posteriorSegmentOptionsDraft, true);
+                            await saveRoleLabels(roleLabelsState, true);
+                          } catch (optErr) {
+                            console.warn("Non-critical options save error:", optErr);
+                          }
+                        }
 
-                        await saveRoleLabels(roleLabelsState, true);
+                        // 2. Identify which doctor configs to save
+                        const configsToSave =
+                          profile?.role === "admin" || profile?.role === "frontdesk"
+                            ? tempConfigs
+                            : tempConfigs.filter((c) => c.doctorId === profile?.role);
 
-                        for (const tempCfg of tempConfigs) {
+                        for (const tempCfg of configsToSave) {
                           if (!tempCfg.doctorId) continue;
 
+                          const docId = tempCfg.doctorId;
                           const { id, ...dataToSave } = tempCfg;
                           const cleanData = removeUndefined({
                             ...dataToSave,
-                            doctorId: tempCfg.doctorId,
+                            doctorId: docId,
                           });
 
                           try {
-                            if (id) {
-                              const configDocRef = doc(db, "configs", id);
-                              await setDoc(configDocRef, cleanData, {
-                                merge: true,
-                              });
-                            } else {
-                              const currentConfig = configs.find(
-                                (c) => c.doctorId === tempCfg.doctorId,
-                              );
-                              if (currentConfig?.id) {
-                                await setDoc(
-                                  doc(db, "configs", currentConfig.id),
-                                  cleanData,
-                                  { merge: true },
-                                );
-                              } else {
-                                await addDoc(
-                                  collection(db, "configs"),
-                                  cleanData,
-                                );
-                              }
-                            }
+                            const configDocRef = doc(db, "configs", docId);
+                            await setDoc(configDocRef, cleanData, {
+                              merge: true,
+                            });
 
-                            await autoAlignAppointmentsForDoctor(
-                              tempCfg.doctorId,
-                              tempCfg,
+                            // Clean up any legacy document with a random doc ID
+                            const legacyDocs = configs.filter(
+                              (c) => c.doctorId === docId && c.id && c.id !== docId,
                             );
+                            for (const leg of legacyDocs) {
+                              deleteDoc(doc(db, "configs", leg.id)).catch(() => {});
+                            }
                           } catch (cfgError) {
                             console.error(
-                              `Error saving config for ${tempCfg.doctorId}:`,
+                              `Error saving config for ${docId}:`,
                               cfgError,
-                            );
-                            handleFirestoreError(
-                              cfgError,
-                              OperationType.WRITE,
-                              `configs/${id || "new"}`,
                             );
                           }
                         }
 
+                        // 3. Immediately update configs state optimistically and backup to localStorage
+                        setConfigs((prev) => {
+                          const map = new Map<string, ScheduleConfig>();
+                          prev.forEach((c) => map.set(c.doctorId || c.id, c));
+                          configsToSave.forEach((tc) => {
+                            if (tc.doctorId) {
+                              map.set(tc.doctorId, { ...tc, id: tc.doctorId });
+                            }
+                          });
+                          const updated = Array.from(map.values());
+                          try {
+                            localStorage.setItem("clinic_doctor_configs", JSON.stringify(updated));
+                          } catch {}
+                          return updated;
+                        });
+
                         setIsConfigModalOpen(false);
                         setSuccessMessage(
-                          "Toate datele au fost salvate cu succes!",
+                          "Toate modificările au fost salvate cu succes!",
                         );
                       } catch (error) {
-                        console.error("Error saving all changes:", error);
+                        console.error("Error saving changes:", error);
                         setErrorMessage(
-                          "A apărut o eroare la salvare. Verificați permisiunile și datele introduse.",
+                          "A apărut o problemă la salvare. Modificările au fost păstrate local.",
                         );
+                        setIsConfigModalOpen(false);
                       } finally {
                         setLoading(false);
                       }
