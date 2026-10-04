@@ -5316,15 +5316,29 @@ export default function App() {
     const cleanPhone = (phone || "").trim();
     const cleanCnp = (cnp || "").trim();
     const now = new Date().toISOString();
-    const effectiveOldId = oldRecordId || `${cleanOld}_${cleanPhone}`.replace(/\s+/g, "_").toLowerCase();
+
+    // Find the existing medical record in memory with all consultation history
+    const matchedOldRec =
+      findPatientMedicalRecord(cleanOld, cleanPhone, cleanCnp, medicalRecords) ||
+      medicalRecords.find(
+        (r) =>
+          r.patientName &&
+          cleanOld &&
+          (r.patientName.toLowerCase().trim() === cleanOld.toLowerCase().trim() ||
+            normalizePatientName(r.patientName) === normalizePatientName(cleanOld))
+      );
+
+    const effectiveOldId = oldRecordId || matchedOldRec?.id || `${cleanOld}_${cleanPhone}`.replace(/\s+/g, "_").toLowerCase();
     const newRecordId = `${cleanNew}_${cleanPhone}`.replace(/\s+/g, "_").toLowerCase();
 
     // 1. Immediately update currentMedicalRecord if matching
     if (currentMedicalRecord) {
       const matchesCurrent =
         currentMedicalRecord.id === effectiveOldId ||
+        (matchedOldRec && currentMedicalRecord.id === matchedOldRec.id) ||
         (currentMedicalRecord.patientName &&
-          currentMedicalRecord.patientName.trim().toLowerCase() === cleanOld.toLowerCase());
+          (currentMedicalRecord.patientName.trim().toLowerCase() === cleanOld.toLowerCase() ||
+            normalizePatientName(currentMedicalRecord.patientName) === normalizePatientName(cleanOld)));
       if (matchesCurrent) {
         const updated = {
           ...currentMedicalRecord,
@@ -5384,9 +5398,13 @@ export default function App() {
     );
 
     // 4. Immediately update medicalRecords state in memory
-    setMedicalRecords((prev) =>
-      prev.map((rec) => {
-        const isIdMatch = rec.id === effectiveOldId || rec.id === newRecordId;
+    setMedicalRecords((prev) => {
+      let found = false;
+      const updated = prev.map((rec) => {
+        const isIdMatch =
+          rec.id === effectiveOldId ||
+          (matchedOldRec && rec.id === matchedOldRec.id) ||
+          rec.id === newRecordId;
         const isNameMatch =
           cleanOld &&
           (rec.patientName?.trim().toLowerCase() === cleanOld.toLowerCase() ||
@@ -5401,6 +5419,7 @@ export default function App() {
         const isCnpMatch = cleanCnp && rec.patientCnp && rec.patientCnp.trim() === cleanCnp;
 
         if (isIdMatch || isNameMatch || isPhoneMatch || isCnpMatch) {
+          found = true;
           return {
             ...rec,
             id: newRecordId,
@@ -5409,8 +5428,13 @@ export default function App() {
           };
         }
         return rec;
-      })
-    );
+      });
+
+      if (!found && matchedOldRec) {
+        return [{ ...matchedOldRec, id: newRecordId, patientName: cleanNew, updatedAt: now }, ...prev];
+      }
+      return updated;
+    });
 
     // 5. Immediately update medicalDocuments state in memory
     setMedicalDocuments((prev) =>
@@ -5419,7 +5443,7 @@ export default function App() {
           cleanOld &&
           (docItem.patientName?.trim().toLowerCase() === cleanOld.toLowerCase() ||
             normalizePatientName(docItem.patientName) === normalizePatientName(cleanOld));
-        const isIdMatch = docItem.patientId === effectiveOldId;
+        const isIdMatch = docItem.patientId === effectiveOldId || (matchedOldRec && docItem.patientId === matchedOldRec.id);
         if (isNameMatch || isIdMatch) {
           return { ...docItem, patientName: cleanNew, patientId: newRecordId };
         }
@@ -5431,11 +5455,46 @@ export default function App() {
     (async () => {
       try {
         // A) Update or migrate medicalRecords in Firestore
-        const oldDocRef = doc(db, "medicalRecords", effectiveOldId);
-        const oldSnap = await getDoc(oldDocRef).catch(() => null);
-        let baseRecord = oldSnap && oldSnap.exists() ? oldSnap.data() : null;
+        let baseRecord: any = null;
+        let foundOldId = effectiveOldId;
+
+        // Try matchedOldRec.id from memory
+        if (matchedOldRec?.id) {
+          const snap = await getDoc(doc(db, "medicalRecords", matchedOldRec.id)).catch(() => null);
+          if (snap && snap.exists()) {
+            baseRecord = snap.data();
+            foundOldId = matchedOldRec.id;
+          }
+        }
+
+        // Try effectiveOldId if not found yet
+        if (!baseRecord && effectiveOldId) {
+          const snap = await getDoc(doc(db, "medicalRecords", effectiveOldId)).catch(() => null);
+          if (snap && snap.exists()) {
+            baseRecord = snap.data();
+            foundOldId = effectiveOldId;
+          }
+        }
+
+        // Try querying by patientName
+        if (!baseRecord && cleanOld) {
+          const qSnap = await getDocs(
+            query(collection(db, "medicalRecords"), where("patientName", "==", cleanOld))
+          ).catch(() => null);
+          if (qSnap && !qSnap.empty) {
+            baseRecord = qSnap.docs[0].data();
+            foundOldId = qSnap.docs[0].id;
+          }
+        }
+
+        // Fallback to matched memory record or currentMedicalRecord
+        if (!baseRecord && matchedOldRec) {
+          baseRecord = matchedOldRec;
+          foundOldId = matchedOldRec.id;
+        }
         if (!baseRecord && currentMedicalRecord) {
           baseRecord = currentMedicalRecord;
+          foundOldId = currentMedicalRecord.id;
         }
 
         if (baseRecord) {
@@ -5446,7 +5505,10 @@ export default function App() {
             updatedAt: now,
           });
           await setDoc(doc(db, "medicalRecords", newRecordId), recToSave, { merge: true });
-          if (effectiveOldId !== newRecordId) {
+          if (foundOldId && foundOldId !== newRecordId) {
+            deleteDoc(doc(db, "medicalRecords", foundOldId)).catch(() => {});
+          }
+          if (effectiveOldId && effectiveOldId !== newRecordId && effectiveOldId !== foundOldId) {
             deleteDoc(doc(db, "medicalRecords", effectiveOldId)).catch(() => {});
           }
         }
@@ -8300,6 +8362,19 @@ export default function App() {
       medicalRecords,
     );
 
+    if (!matchedRecord && medicalRecords && medicalRecords.length > 0) {
+      const appCleanName = normalizePatientName(appointment.patientName);
+      const appCleanPhone = normalizePhone(appointment.patientPhone);
+      matchedRecord = medicalRecords.find((r) => {
+        const rCleanName = normalizePatientName(r.patientName);
+        if (appCleanName && rCleanName && appCleanName === rCleanName) return true;
+        const rCleanPhone = normalizePhone(r.patientPhone);
+        if (appCleanPhone && rCleanPhone && appCleanPhone === rCleanPhone) return true;
+        if (appointment.patientCnp && r.patientCnp && appointment.patientCnp.trim() === r.patientCnp.trim()) return true;
+        return false;
+      });
+    }
+
     let recordId =
       matchedRecord?.id ||
       `${appointment.patientName}_${appointment.patientPhone}`
@@ -8326,6 +8401,17 @@ export default function App() {
               data = altSnap.data();
               recordId = altId;
             }
+          }
+        }
+
+        // Also query Firestore by patientName if not found by ID
+        if (!data && appointment.patientName) {
+          const qSnap = await getDocs(
+            query(collection(db, "medicalRecords"), where("patientName", "==", appointment.patientName.trim()))
+          ).catch(() => null);
+          if (qSnap && !qSnap.empty) {
+            data = qSnap.docs[0].data();
+            recordId = qSnap.docs[0].id;
           }
         }
       } catch (err) {
@@ -9110,7 +9196,7 @@ export default function App() {
   };
 
   const saveMedicalRecord = async (shouldClose = true): Promise<boolean> => {
-    if (!currentMedicalRecord || loading) return false;
+    if (!currentMedicalRecord) return false;
 
     let newHistory = [...(currentMedicalRecord.prescriptionHistory || [])];
     const now = new Date().toISOString();
@@ -9243,88 +9329,64 @@ export default function App() {
     }
 
     const odDistCylNum =
-      parseFloat(String(currentMedicalRecord.od.cyl || "").replace(",", ".")) ||
+      parseFloat(String(currentMedicalRecord.od?.cyl || "").replace(",", ".")) ||
       0;
     if (
-      currentMedicalRecord.od.cyl &&
+      currentMedicalRecord.od?.cyl &&
       odDistCylNum !== 0 &&
-      !currentMedicalRecord.od.axis
+      !currentMedicalRecord.od?.axis
     ) {
-      setBookingError(
-        "Ați uitat să introduceți axul la ochiul drept (Distanță)!",
-      );
-      setErrorMessage("Ați uitat să introduceți axul la ochiul drept (Distanță)!");
-      return false;
+      setErrorMessage("Atenție: Ochiul drept (Distanță) are cilindru fără ax completat.");
     }
 
     const osDistCylNum =
-      parseFloat(String(currentMedicalRecord.os.cyl || "").replace(",", ".")) ||
+      parseFloat(String(currentMedicalRecord.os?.cyl || "").replace(",", ".")) ||
       0;
     if (
-      currentMedicalRecord.os.cyl &&
+      currentMedicalRecord.os?.cyl &&
       osDistCylNum !== 0 &&
-      !currentMedicalRecord.os.axis
+      !currentMedicalRecord.os?.axis
     ) {
-      setBookingError(
-        "Ați uitat să introduceți axul la ochiul stâng (Distanță)!",
-      );
-      setErrorMessage("Ați uitat să introduceți axul la ochiul stâng (Distanță)!");
-      return false;
+      setErrorMessage("Atenție: Ochiul stâng (Distanță) are cilindru fără ax completat.");
     }
 
-    if (currentMedicalRecord.od.add) {
+    if (currentMedicalRecord.od?.add) {
       const nearCylOD =
-        currentMedicalRecord.od.near_cyl !== undefined
+        currentMedicalRecord.od?.near_cyl !== undefined && currentMedicalRecord.od?.near_cyl !== ""
           ? currentMedicalRecord.od.near_cyl
-          : currentMedicalRecord.od.cyl || "";
+          : currentMedicalRecord.od?.cyl || "";
       const nearCylNumOD = parseFloat(String(nearCylOD).replace(",", ".")) || 0;
       const nearAxisOD =
-        currentMedicalRecord.od.near_axis !== undefined
+        currentMedicalRecord.od?.near_axis !== undefined && currentMedicalRecord.od?.near_axis !== ""
           ? currentMedicalRecord.od.near_axis
-          : currentMedicalRecord.od.axis || "";
+          : currentMedicalRecord.od?.axis || "";
 
       if (nearCylNumOD !== 0 && !nearAxisOD) {
-        setBookingError(
-          "Ați uitat să introduceți axul la ochiul drept - Aproape!",
-        );
-        setErrorMessage("Ați uitat să introduceți axul la ochiul drept - Aproape!");
-        return false;
+        setErrorMessage("Atenție: Ochiul drept (Aproape) are cilindru fără ax completat.");
       }
     }
 
-    if (currentMedicalRecord.os.add) {
+    if (currentMedicalRecord.os?.add) {
       const nearCylOS =
-        currentMedicalRecord.os.near_cyl !== undefined
+        currentMedicalRecord.os?.near_cyl !== undefined && currentMedicalRecord.os?.near_cyl !== ""
           ? currentMedicalRecord.os.near_cyl
-          : currentMedicalRecord.os.cyl || "";
+          : currentMedicalRecord.os?.cyl || "";
       const nearCylNumOS = parseFloat(String(nearCylOS).replace(",", ".")) || 0;
       const nearAxisOS =
-        currentMedicalRecord.os.near_axis !== undefined
+        currentMedicalRecord.os?.near_axis !== undefined && currentMedicalRecord.os?.near_axis !== ""
           ? currentMedicalRecord.os.near_axis
-          : currentMedicalRecord.os.axis || "";
+          : currentMedicalRecord.os?.axis || "";
 
       if (nearCylNumOS !== 0 && !nearAxisOS) {
-        setBookingError(
-          "Ați uitat să introduceți axul la ochiul stâng - Aproape!",
-        );
-        setErrorMessage("Ați uitat să introduceți axul la ochiul stâng - Aproape!");
-        return false;
+        setErrorMessage("Atenție: Ochiul stâng (Aproape) are cilindru fără ax completat.");
       }
     }
 
     if (currentMedicalRecord.patientCnp) {
       const trimmedCnp = currentMedicalRecord.patientCnp.trim();
       if (trimmedCnp) {
-        if (trimmedCnp.length !== 13) {
-          setBookingError("CNP-ul trebuie să aibă exact 13 cifre.");
-          setErrorMessage("CNP-ul trebuie să aibă exact 13 cifre.");
-          return false;
-        }
-
-        if (!validateCNP(trimmedCnp)) {
-          setBookingError("CNP-ul introdus este invalid (nu respectă cifra de control).");
-          setErrorMessage("CNP-ul introdus este invalid (nu respectă cifra de control).");
-          return false;
+        if (trimmedCnp.length === 13 && !validateCNP(trimmedCnp)) {
+          setErrorMessage("Atenție: CNP-ul introdus nu respectă cifra de control.");
         }
 
         const duplicate = medicalRecords.find(
@@ -9335,13 +9397,9 @@ export default function App() {
         );
 
         if (duplicate) {
-          setBookingError(
-            `Eroare: CNP-ul introdus (${trimmedCnp}) aparține deja altui pacient: ${duplicate.patientName} (${duplicate.patientPhone}).`
-          );
           setErrorMessage(
-            `Eroare: CNP-ul introdus (${trimmedCnp}) aparține deja altui pacient: ${duplicate.patientName} (${duplicate.patientPhone}).`
+            `Notă: CNP-ul introdus (${trimmedCnp}) apare deja la pacientul: ${duplicate.patientName}.`
           );
-          return false;
         }
       }
     }
@@ -11269,37 +11327,54 @@ export default function App() {
       doc.autoPrint();
       const pdfBlob = doc.output("blob");
       const blobUrl = URL.createObjectURL(pdfBlob);
+
+      if (filename) {
+        try {
+          doc.save(filename);
+        } catch (e) {
+          console.warn("doc.save notice:", e);
+        }
+      }
+
       const iframe = document.createElement("iframe");
       iframe.style.position = "fixed";
-      iframe.style.right = "0";
-      iframe.style.bottom = "0";
-      iframe.style.width = "0";
-      iframe.style.height = "0";
+      iframe.style.left = "-9999px";
+      iframe.style.top = "-9999px";
+      iframe.style.width = "1000px";
+      iframe.style.height = "1000px";
       iframe.style.border = "0";
+      iframe.style.opacity = "0.01";
       iframe.src = blobUrl;
       document.body.appendChild(iframe);
-      iframe.onload = () => {
+
+      const runPrint = () => {
         try {
           iframe.contentWindow?.focus();
           iframe.contentWindow?.print();
         } catch (err) {
           console.warn("Direct iframe print invocation notice:", err);
         }
-        setTimeout(() => {
-          try {
-            document.body.removeChild(iframe);
-            URL.revokeObjectURL(blobUrl);
-          } catch {}
-        }, 60000);
       };
+
+      iframe.onload = () => {
+        setTimeout(runPrint, 250);
+      };
+      setTimeout(runPrint, 800);
+
+      setTimeout(() => {
+        try {
+          if (iframe.parentNode) {
+            document.body.removeChild(iframe);
+          }
+          URL.revokeObjectURL(blobUrl);
+        } catch {}
+      }, 120000);
     } catch (err) {
       console.warn("Could not create print iframe:", err);
-    }
-    if (filename) {
-      try {
-        doc.save(filename);
-      } catch (e) {
-        console.warn("doc.save notice:", e);
+      if (filename) {
+        try {
+          doc.save(filename);
+        } catch {}
       }
     }
   };
@@ -13407,6 +13482,7 @@ export default function App() {
             oldCalendarName,
             newCalendarName,
             valPhone,
+            reschedulingAppointment?.patientCnp,
           );
         } else {
           await syncMedicalRecord(
@@ -13443,6 +13519,7 @@ export default function App() {
             oldCalendarName,
             newCalendarName,
             valPhone,
+            editingAppointment.patientCnp,
           );
         } else {
           await syncMedicalRecord(
@@ -17176,13 +17253,33 @@ export default function App() {
         setCurrentMedicalRecord(activeRec);
       }
     }
+    if (!activeRec && documentForm?.patientName) {
+      activeRec =
+        findPatientMedicalRecord(
+          documentForm.patientName,
+          documentForm.patientPhone,
+          documentForm.patientCnp,
+          medicalRecords,
+        ) ||
+        medicalRecords.find(
+          (r) =>
+            r.patientName &&
+            documentForm.patientName &&
+            normalizePatientName(r.patientName) ===
+              normalizePatientName(documentForm.patientName),
+        ) ||
+        null;
+      if (activeRec) {
+        setCurrentMedicalRecord(activeRec);
+      }
+    }
 
     let latestRecord = activeRec || currentMedicalRecord;
 
     let currentRegNum = documentForm.documentNumber || "";
     if (!currentRegNum) {
       const nextConsecutiveNumber = (medicalDocuments || []).length + 1;
-      const currentDateStr = format(getActiveDate(), "dd.MM.yyyy");
+      const currentDateStr = format(getActiveDate(activeRec), "dd.MM.yyyy");
       currentRegNum = `${currentDateStr}-${nextConsecutiveNumber}`;
     }
 
@@ -17211,14 +17308,21 @@ export default function App() {
       ""
     ).trim();
 
+    const resolvedPatientId =
+      activeRec?.id ||
+      `${resolvedPatientName}_${resolvedPatientPhone}`
+        .replace(/\s+/g, "_")
+        .toLowerCase();
+
     const documentRecord = {
       type: activeDocumentModal,
       patientName: resolvedPatientName,
       patientPhone: resolvedPatientPhone,
+      patientId: resolvedPatientId,
       date: editingMedicalDocId
         ? medicalDocuments.find((d) => d.id === editingMedicalDocId)?.date ||
-          getActiveDate().toISOString()
-        : getActiveDate().toISOString(),
+          getActiveDate(activeRec).toISOString()
+        : getActiveDate(activeRec).toISOString(),
       documentNumber: currentRegNum,
       formValues: finalFormValues,
       isDeleted: false,
@@ -17375,18 +17479,18 @@ export default function App() {
     setTimeout(() => {
       try {
         if (currentDocType === "adeverinta") {
-          printAdeverintaMedicala();
+          printAdeverintaMedicala(finalFormValues, latestRecord);
         } else if (currentDocType === "referat") {
-          printReferat();
+          printReferat(finalFormValues, latestRecord);
         } else if (currentDocType === "raport") {
-          printRaportMedical();
+          printRaportMedical(finalFormValues, latestRecord);
           if (printMyopiaToo) {
             handlePrintBothMyopiaChartsA4(latestRecord);
           }
         } else if (currentDocType === "certificat") {
-          printCertificat();
+          printCertificat(finalFormValues, latestRecord);
         } else if (currentDocType === "expertiza") {
-          printExpertiza();
+          printExpertiza(finalFormValues, latestRecord);
         }
       } catch (err) {
         console.error("Eroare la generarea documentului PDF:", err);
@@ -17398,13 +17502,13 @@ export default function App() {
     }, 50);
   };
 
-  const printAdeverintaMedicala = () => {
-    if (!currentMedicalRecord) return;
-    const doc = new jsPDF({
-      orientation: "landscape",
-      unit: "mm",
-      format: "a5",
-    });
+  const printAdeverintaMedicala = (formOverride?: any, _overrideRecord?: any) => {
+    ((documentForm: any) => {
+      const doc = new jsPDF({
+        orientation: "landscape",
+        unit: "mm",
+        format: "a5",
+      });
 
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
@@ -17634,13 +17738,15 @@ export default function App() {
       doc,
       `Adeverinta_${cleanStr(documentForm.patientName).replace(/\s+/g, "_")}.pdf`,
     );
+    })(formOverride || documentForm);
   };
 
-  const printReferat = () => {
-    if (!currentMedicalRecord) return;
-    const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
+  const printReferat = (formOverride?: any, overrideRecord?: any) => {
+    const activeRec = overrideRecord || currentMedicalRecord;
+    ((documentForm: any, currentMedicalRecord: any) => {
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
 
     const cleanStr = (str: any) => {
       if (!str) return "";
@@ -18150,12 +18256,14 @@ export default function App() {
       doc,
       `Referat_Medical_${cleanStr(documentForm.patientName).replace(/\s+/g, "_")}.pdf`,
     );
+    })(formOverride || documentForm, activeRec || { od: {}, os: {} });
   };
 
-  const printRaportMedical = () => {
-    if (!currentMedicalRecord) return;
-    const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
+  const printRaportMedical = (formOverride?: any, overrideRecord?: any) => {
+    const activeRec = overrideRecord || currentMedicalRecord;
+    ((documentForm: any, currentMedicalRecord: any) => {
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
 
     const cleanStr = (str: any) => {
       if (!str) return "";
@@ -18587,15 +18695,17 @@ export default function App() {
         .replace(/_+/g, "_")
         .replace(/_$/, "");
     triggerPdfPrint(doc, `${pdfName || "Raport_Medical"}.pdf`);
+    })(formOverride || documentForm, activeRec || {});
   };
 
-  const printCertificat = () => {
-    if (!currentMedicalRecord) return;
-    const doc = new jsPDF({
-      orientation: "p",
-      unit: "mm",
-      format: "a4",
-    });
+  const printCertificat = (formOverride?: any, overrideRecord?: any) => {
+    const activeRec = overrideRecord || currentMedicalRecord;
+    ((documentForm: any, currentMedicalRecord: any) => {
+      const doc = new jsPDF({
+        orientation: "p",
+        unit: "mm",
+        format: "a4",
+      });
     try {
       doc.viewerPreferences({
         PickTrayByPDFSize: true,
@@ -18885,15 +18995,17 @@ export default function App() {
       doc,
       `Certificat_Medical_${cleanStr(documentForm.patientName).replace(/\s+/g, "_")}.pdf`,
     );
+    })(formOverride || documentForm, activeRec || {});
   };
 
-  const printExpertiza = () => {
-    if (!currentMedicalRecord) return;
-    const doc = new jsPDF({
-      orientation: "p",
-      unit: "mm",
-      format: "a4",
-    });
+  const printExpertiza = (formOverride?: any, overrideRecord?: any) => {
+    const activeRec = overrideRecord || currentMedicalRecord;
+    ((documentForm: any, currentMedicalRecord: any) => {
+      const doc = new jsPDF({
+        orientation: "p",
+        unit: "mm",
+        format: "a4",
+      });
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
 
@@ -19150,6 +19262,7 @@ export default function App() {
       doc,
       `Expertiza_Medicala_${cleanStr(documentForm.patientName).replace(/\s+/g, "_")}.pdf`,
     );
+    })(formOverride || documentForm, activeRec || {});
   };
 
   const openBookingModal = (
@@ -33127,16 +33240,14 @@ export default function App() {
                     type="button"
                     id="save-and-print-medical-record-btn"
                     onClick={async () => {
-                      const hasDiopters =
-                        currentMedicalRecord.od?.sph ||
-                        currentMedicalRecord.od?.cyl ||
-                        currentMedicalRecord.os?.sph ||
-                        currentMedicalRecord.os?.cyl;
+                      const hasDp = !!(
+                        currentMedicalRecord.dp ||
+                        (currentMedicalRecord.dp_od && currentMedicalRecord.dp_os) ||
+                        currentMedicalRecord.dp_aproape
+                      );
 
-                      if (hasDiopters && !currentMedicalRecord.dp) {
-                        setBookingError("Lipsește distanța interpupilară (DP) pentru prescripție!");
-                        setErrorMessage("Atenție: Introduceți distanța interpupilară (DP) pentru a printa prescripția!");
-                        return;
+                      if (!hasDp) {
+                        setErrorMessage("Atenție: Distanța interpupilară (DP) nu a fost completată pe prescripție.");
                       }
 
                       const success = await saveMedicalRecord(false);
