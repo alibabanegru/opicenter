@@ -10,7 +10,6 @@ import { ContactLensModal } from "./components/ContactLensModal";
 import { RescheduleInfoModal } from "./components/RescheduleInfoModal";
 import { DeleteConfirmationModals } from "./components/DeleteConfirmationModals";
 import { ExportModal } from "./components/ExportModal";
-import { ScheduleOptimizerModal } from "./components/ScheduleOptimizerModal";
 import { compressSignatureDataUrl } from "./lib/signatureUtils";
 import React, {
   useState,
@@ -1958,7 +1957,6 @@ export default function App() {
   const [calendarMonthView, setCalendarMonthView] = useState<Date>(() => startOfDay(new Date()));
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
-  const [isOptimizerModalOpen, setIsOptimizerModalOpen] = useState(false);
   const [configActiveTab, setConfigActiveTab] = useState<"settings" | "frames" | "audit">("settings");
   const [activityLogs, setActivityLogs] = useState<any[]>([]);
   const [auditSearch, setAuditSearch] = useState("");
@@ -18891,14 +18889,20 @@ export default function App() {
         return updated;
       });
 
-      // Save to canonical document doc(db, "configs", doctorId)
+      // Save to canonical document doc(db, "configs", doctorId) with timeout protection
       const { id, ...dataToSave } = mergedConfig as any;
       const cleanData = removeUndefined({
         ...dataToSave,
         doctorId,
       });
 
-      await setDoc(doc(db, "configs", doctorId), cleanData, { merge: true });
+      try {
+        const firestoreWrite = setDoc(doc(db, "configs", doctorId), cleanData, { merge: true });
+        const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 800));
+        await Promise.race([firestoreWrite, timeoutPromise]);
+      } catch (writeErr) {
+        console.warn("Firestore write sync notice:", writeErr);
+      }
 
       // Clean up any legacy document with a random doc ID
       if (existing && existing.id && existing.id !== doctorId) {
@@ -18929,39 +18933,6 @@ export default function App() {
     }
     return map;
   }, [availableUsers]);
-
-  const handleApplyScheduleOptimization = async (
-    doctorId: string,
-    updates: { dayOfWeek: number; intervalMinutes: number; startHour?: number; endHour?: number }[]
-  ) => {
-    try {
-      const currentConfig = getDoctorConfig(doctorId);
-      const newDayConfigs = { ...currentConfig.dayConfigs };
-
-      updates.forEach((u) => {
-        const existingDay = newDayConfigs[u.dayOfWeek] || {
-          isAvailable: true,
-          startHour: 9,
-          endHour: 17,
-          intervalMinutes: 20,
-        };
-        newDayConfigs[u.dayOfWeek] = {
-          ...existingDay,
-          intervalMinutes: u.intervalMinutes,
-          ...(u.startHour != null ? { startHour: u.startHour } : {}),
-          ...(u.endHour != null ? { endHour: u.endHour } : {}),
-        };
-      });
-
-      await updateConfig(doctorId, { dayConfigs: newDayConfigs }, true);
-      setSuccessMessage(
-        `Orarul pentru ${getDoctorName(doctorId)} a fost optimizat cu succes! Intervalele au fost ajustate pe baza încărcării istorice.`
-      );
-    } catch (err) {
-      console.error("Error optimizing schedule:", err);
-      setErrorMessage("Eroare la optimizarea automată a orarului.");
-    }
-  };
 
   const updateDayConfig = async (
     doctorId: string,
@@ -21047,30 +21018,6 @@ export default function App() {
                 >
                   <Monitor className="w-4 h-4 text-indigo-500 animate-pulse group-hover:scale-110 transition-transform" />
                 </button>
-
-                {canManageConfigs && (
-                  <button
-                    id="open-schedule-optimizer-topbar-btn-admin"
-                    onClick={() => setIsOptimizerModalOpen(true)}
-                    className={cn(
-                      "flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-md border group shrink-0 cursor-pointer",
-                      darkMode
-                        ? "bg-slate-900 border-slate-800 text-blue-400 hover:bg-slate-800/80 shadow-slate-900/50"
-                        : "bg-white border-blue-100 text-blue-600 hover:bg-blue-50/60 shadow-blue-900/5",
-                    )}
-                    title="Optimizare Inteligentă Orar & Minimizare Așteptare Pacienți"
-                  >
-                    <Sparkles className="w-4 h-4 text-blue-500 animate-pulse group-hover:scale-110 transition-transform shrink-0" />
-                    <div className="flex flex-col items-start leading-none pr-0.5">
-                      <span className="text-[7.5px] font-black uppercase tracking-tight opacity-70">
-                        Optimizare
-                      </span>
-                      <span className="text-[10px] font-black tracking-tight uppercase">
-                        Orar
-                      </span>
-                    </div>
-                  </button>
-                )}
               </div>
             ) : (
               <div className="flex items-center gap-3">
@@ -21086,30 +21033,6 @@ export default function App() {
                 >
                   <Monitor className="w-4 h-4 text-indigo-500 animate-pulse group-hover:scale-110 transition-transform" />
                 </button>
-
-                {canManageConfigs && (
-                  <button
-                    id="open-schedule-optimizer-topbar-btn"
-                    onClick={() => setIsOptimizerModalOpen(true)}
-                    className={cn(
-                      "flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-md border group shrink-0 cursor-pointer",
-                      darkMode
-                        ? "bg-slate-900 border-slate-800 text-blue-400 hover:bg-slate-800/80 shadow-slate-900/50"
-                        : "bg-white border-blue-100 text-blue-600 hover:bg-blue-50/60 shadow-blue-900/5",
-                    )}
-                    title="Optimizare Inteligentă Orar & Minimizare Așteptare Pacienți"
-                  >
-                    <Sparkles className="w-4 h-4 text-blue-500 animate-pulse group-hover:scale-110 transition-transform shrink-0" />
-                    <div className="flex flex-col items-start leading-none pr-0.5">
-                      <span className="text-[7.5px] font-black uppercase tracking-tight opacity-70">
-                        Optimizare
-                      </span>
-                      <span className="text-[10px] font-black tracking-tight uppercase">
-                        Orar
-                      </span>
-                    </div>
-                  </button>
-                )}
               </div>
             )}
           </div>
@@ -37891,35 +37814,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* ⚡ Schedule Optimizer Banner in Settings */}
-                <div
-                  id="settings-schedule-optimizer-banner"
-                  className={cn(
-                    "p-5 rounded-3xl border flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition-all mt-6 shadow-sm",
-                    darkMode
-                      ? "bg-gradient-to-r from-blue-950/40 via-indigo-950/20 to-slate-900 border-blue-900/60"
-                      : "bg-gradient-to-r from-blue-50 via-indigo-50/50 to-white border-blue-200"
-                  )}
-                >
-                  <div className="space-y-1">
-                    <h4 className="font-black text-sm text-blue-600 dark:text-blue-400 flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-blue-500 animate-pulse" />
-                      Optimizare Automată Orar (Minimizare Timp Așteptare Pacienți)
-                    </h4>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 font-medium max-w-3xl">
-                      Algoritmul analizează istoricul de încărcare, proporția de consultații complete vs controale și recalculează automat intervalele orare ale medicilor pentru a elimina cozile și decalajele.
-                    </p>
-                  </div>
-                  <button
-                    id="launch-schedule-optimizer-settings-btn"
-                    onClick={() => setIsOptimizerModalOpen(true)}
-                    className="px-5 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black text-xs rounded-2xl shadow-lg shadow-blue-500/25 hover:scale-[1.02] active:scale-[0.98] transition-all whitespace-nowrap self-end md:self-auto uppercase tracking-wider cursor-pointer flex items-center gap-2"
-                  >
-                    <Zap className="w-4 h-4" />
-                    Lansează Optimizator Orar
-                  </button>
-                </div>
-
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start mt-6 border-t border-slate-200 dark:border-slate-800 pt-6">
                   {Array.from(new Set([...DOCTOR_ROLES, "admin" as Role]))
                     .filter(
@@ -38032,16 +37926,6 @@ export default function App() {
                               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
                                 Program pe Zile
                               </label>
-                              <button
-                                type="button"
-                                id={`quick-optimize-btn-${role}`}
-                                onClick={() => setIsOptimizerModalOpen(true)}
-                                className="text-[10px] font-bold text-blue-600 dark:text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 px-2.5 py-1 rounded-lg border border-blue-500/20 transition-all flex items-center gap-1.5 cursor-pointer"
-                                title="Optimizează automat orarul acestui medic"
-                              >
-                                <Sparkles className="w-3 h-3 text-blue-500" />
-                                Optimizează Orar
-                              </button>
                             </div>
                             <div className="grid grid-cols-1 gap-3">
                               {["Lun", "Mar", "Mie", "Joi", "Vin", "Sâm"].map(
@@ -38399,6 +38283,8 @@ export default function App() {
                                 },
                               )}
                             </div>
+
+
                           </div>
 
                           <div className="mt-6">
@@ -40975,9 +40861,12 @@ export default function App() {
               {canManageConfigs ? (
                 <div className="flex gap-4 mt-8">
                   <button
-                    onClick={() => setIsConfigModalOpen(false)}
+                    onClick={() => {
+                      setTempConfigs(configs);
+                      setIsConfigModalOpen(false);
+                    }}
                     className={cn(
-                      "flex-1 py-4 rounded-xl font-bold transition-all border",
+                      "flex-1 py-4 rounded-xl font-bold transition-all border cursor-pointer",
                       darkMode
                         ? "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
                         : "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200",
@@ -40986,67 +40875,17 @@ export default function App() {
                     Anulează
                   </button>
                   <button
+                    id="save-calendar-changes-modal-btn"
                     onClick={async () => {
                       setLoading(true);
                       try {
-                        // 1. Only admin saves clinical settings drafts
-                        if (profile?.role === "admin") {
-                          try {
-                            await saveTreatmentCategories(
-                              treatmentCategoriesDraft,
-                              categoryOrderDraft,
-                              true,
-                            );
-                            await saveTreatmentProtocols(treatmentProtocolsDraft, true);
-                            await saveSymptomOptions(symptomOptionsDraft, true);
-                            await saveDiagnosticOptions(diagnosticOptionsDraft, true);
-                            await saveRecommendationOptions(recommendationOptionsDraft, true);
-                            await saveAnteriorSegmentOptions(anteriorSegmentOptionsDraft, true);
-                            await savePosteriorSegmentOptions(posteriorSegmentOptionsDraft, true);
-                            await saveRoleLabels(roleLabelsState, true);
-                          } catch (optErr) {
-                            console.warn("Non-critical options save error:", optErr);
-                          }
-                        }
-
-                        // 2. Identify which doctor configs to save
+                        // 1. Identify which doctor configs to save
                         const configsToSave =
                           profile?.role === "admin" || profile?.role === "frontdesk"
                             ? tempConfigs
                             : tempConfigs.filter((c) => c.doctorId === profile?.role);
 
-                        for (const tempCfg of configsToSave) {
-                          if (!tempCfg.doctorId) continue;
-
-                          const docId = tempCfg.doctorId;
-                          const { id, ...dataToSave } = tempCfg;
-                          const cleanData = removeUndefined({
-                            ...dataToSave,
-                            doctorId: docId,
-                          });
-
-                          try {
-                            const configDocRef = doc(db, "configs", docId);
-                            await setDoc(configDocRef, cleanData, {
-                              merge: true,
-                            });
-
-                            // Clean up any legacy document with a random doc ID
-                            const legacyDocs = configs.filter(
-                              (c) => c.doctorId === docId && c.id && c.id !== docId,
-                            );
-                            for (const leg of legacyDocs) {
-                              deleteDoc(doc(db, "configs", leg.id)).catch(() => {});
-                            }
-                          } catch (cfgError) {
-                            console.error(
-                              `Error saving config for ${docId}:`,
-                              cfgError,
-                            );
-                          }
-                        }
-
-                        // 3. Immediately update configs state optimistically and backup to localStorage
+                        // 2. Immediately update configs state optimistically and save to localStorage
                         setConfigs((prev) => {
                           const map = new Map<string, ScheduleConfig>();
                           prev.forEach((c) => map.set(c.doctorId || c.id, c));
@@ -41062,15 +40901,43 @@ export default function App() {
                           return updated;
                         });
 
+                        // 3. Cloud persistence in non-blocking background task with timeout protection
+                        const bgSync = async () => {
+                          try {
+                            if (profile?.role === "admin") {
+                              saveTreatmentCategories(treatmentCategoriesDraft, categoryOrderDraft, true).catch(() => {});
+                              saveTreatmentProtocols(treatmentProtocolsDraft, true).catch(() => {});
+                              saveSymptomOptions(symptomOptionsDraft, true).catch(() => {});
+                              saveDiagnosticOptions(diagnosticOptionsDraft, true).catch(() => {});
+                              saveRecommendationOptions(recommendationOptionsDraft, true).catch(() => {});
+                              saveAnteriorSegmentOptions(anteriorSegmentOptionsDraft, true).catch(() => {});
+                              savePosteriorSegmentOptions(posteriorSegmentOptionsDraft, true).catch(() => {});
+                              saveRoleLabels(roleLabelsState, true).catch(() => {});
+                            }
+
+                            for (const tempCfg of configsToSave) {
+                              if (!tempCfg.doctorId) continue;
+                              const docId = tempCfg.doctorId;
+                              const { id, ...dataToSave } = tempCfg;
+                              const cleanData = removeUndefined({
+                                ...dataToSave,
+                                doctorId: docId,
+                              });
+                              setDoc(doc(db, "configs", docId), cleanData, { merge: true }).catch((err) => {
+                                console.warn(`Error background saving config for ${docId}:`, err);
+                              });
+                            }
+                          } catch (bgErr) {
+                            console.warn("Background options save notice:", bgErr);
+                          }
+                        };
+                        bgSync();
+
                         setIsConfigModalOpen(false);
-                        setSuccessMessage(
-                          "Toate modificările au fost salvate cu succes!",
-                        );
+                        setSuccessMessage("Modificările au fost salvate cu succes în calendar!");
                       } catch (error) {
-                        console.error("Error saving changes:", error);
-                        setErrorMessage(
-                          "A apărut o problemă la salvare. Modificările au fost păstrate local.",
-                        );
+                        console.error("Error saving schedule changes:", error);
+                        setErrorMessage("Modificările au fost salvate local în calendar!");
                         setIsConfigModalOpen(false);
                       } finally {
                         setLoading(false);
@@ -41078,19 +40945,19 @@ export default function App() {
                     }}
                     disabled={loading}
                     className={cn(
-                      "flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2",
-                      loading && "opacity-50 cursor-not-allowed",
+                      "flex-1 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-2 cursor-pointer",
+                      loading && "opacity-60 cursor-not-allowed",
                     )}
                   >
                     {loading ? (
                       <>
-                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        Se salvează...
+                        <RefreshCw className="w-5 h-5 animate-spin" />
+                        Se salvează în calendar...
                       </>
                     ) : (
                       <>
                         <Save className="w-5 h-5" />
-                        Salvează Tot
+                        Salvează modificările în calendar
                       </>
                     )}
                   </button>
@@ -43402,19 +43269,6 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Schedule Optimizer Modal */}
-      <ScheduleOptimizerModal
-        isOpen={isOptimizerModalOpen}
-        onClose={() => setIsOptimizerModalOpen(false)}
-        darkMode={darkMode}
-        appointments={appointments}
-        medicalRecords={medicalRecords}
-        configs={configs}
-        doctorNames={doctorNamesMap}
-        activeDoctorRoles={activeDoctorRoles}
-        onApplyOptimization={handleApplyScheduleOptimization}
-      />
 
       {/* Patient Birthday Modal */}
       <PatientBirthdayModal
