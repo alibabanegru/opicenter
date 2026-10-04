@@ -1,8 +1,19 @@
 import express from "express";
 import nodemailer from "nodemailer";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
 app.use(express.json());
+
+// Normalize URLs in case Vercel rewrites strip the /api prefix
+app.use((req, _res, next) => {
+  if (req.url && !req.url.startsWith("/api")) {
+    req.url = "/api" + (req.url.startsWith("/") ? req.url : "/" + req.url);
+  }
+  next();
+});
 
 const USERS_DATA: Record<string, { name: string; role: string; pass: string }> = {
   admin: { name: "Administrator", role: "admin", pass: "123612" },
@@ -48,7 +59,7 @@ async function sendLoginEmail(details: {
   userRole: string;
 }) {
   const { googleEmail, timestamp, userName, userRole } = details;
-  const targetEmail = "alibabamosu@gmail.com";
+  const targetEmail = process.env.ALERT_EMAIL || "alibabamosu@gmail.com";
 
   let displayedRole = userRole;
   if (userRole === "admin") {
@@ -140,7 +151,11 @@ async function sendLoginEmail(details: {
     console.log(`  - Profile:      ${displayedRole}`);
     console.log(`  - User:         ${userName}`);
     console.log("========================================================\n");
-    return { success: true, mocked: true };
+    return {
+      success: false,
+      mocked: true,
+      error: "SMTP neconfigurat: variabilele SMTP_USER sau SMTP_PASS lipsesc din Environment Variables.",
+    };
   }
 }
 

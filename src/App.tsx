@@ -1650,6 +1650,14 @@ export default function App() {
     );
   };
   const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    if (loading) {
+      const timer = setTimeout(() => {
+        setLoading(false);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [loading]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [medicalRecords, setMedicalRecords] = useState<MedicalRecord[]>([]);
   const [adminStatsDoctor, setAdminStatsDoctor] = useState<string>("all");
@@ -3220,7 +3228,7 @@ export default function App() {
     }
     if (showScreenSaver) return; // If screensaver is already showing, do nothing
 
-    const timeoutMinutes = clinicConfig?.inactivityTimeoutMinutes ?? 5;
+    const timeoutMinutes = Math.max(1, clinicConfig?.inactivityTimeoutMinutes ?? 5);
     const timeoutMs = timeoutMinutes * 60 * 1000;
 
     let idleTimer: any;
@@ -6634,11 +6642,9 @@ export default function App() {
 
       if (isValidPassword) {
         if (user.pass !== password) {
-          try {
-            await setDoc(doc(db, "users", user.id), { pass: password }, { merge: true });
-          } catch (e) {
-            console.error("Error updating user password in DB:", e);
-          }
+          setDoc(doc(db, "users", user.id), { pass: password }, { merge: true }).catch((e) =>
+            console.error("Error updating user password in DB:", e)
+          );
         }
         const newProfile: UserProfile = {
           uid: selectedLoginUser,
@@ -6651,25 +6657,23 @@ export default function App() {
         const emailKey = (googleUser?.email || auth.currentUser?.email || "unknown").toLowerCase().replace(/[^a-z0-9]/g, "_");
         const updatedLock = { failedAttempts: 0, blockedUntil: 0 };
         setLoginLockData(updatedLock);
-        try {
-          await setDoc(doc(db, "settings", `login_lock_${emailKey}`), updatedLock, { merge: true });
-          localStorage.setItem(`clinic_login_failed_attempts_${emailKey}`, "0");
-          localStorage.setItem(`clinic_login_blocked_until_${emailKey}`, "0");
-        } catch (dbErr) {
-          console.error("Error resetting login lock status:", dbErr);
-        }
+        setDoc(doc(db, "settings", `login_lock_${emailKey}`), updatedLock, { merge: true }).catch((dbErr) =>
+          console.error("Error resetting login lock status:", dbErr)
+        );
+        localStorage.setItem(`clinic_login_failed_attempts_${emailKey}`, "0");
+        localStorage.setItem(`clinic_login_blocked_until_${emailKey}`, "0");
 
         try {
           const loginTimestamp = new Date().toISOString();
           const gEmail = auth.currentUser?.email || "Nenominalizat/Direct";
 
-          await addDoc(collection(db, "connection_logs"), {
+          addDoc(collection(db, "connection_logs"), {
             userId: selectedLoginUser,
             userName: user.name,
             userRole: user.role,
             googleEmail: gEmail,
             timestamp: loginTimestamp,
-          });
+          }).catch((logErr) => console.error("Eroare salvare raport conectare:", logErr));
 
           fetch("/api/notify-login", {
             method: "POST",
@@ -6689,6 +6693,8 @@ export default function App() {
           console.error("Eroare salvare raport conectare:", logErr);
         }
 
+        setShowScreenSaver(false);
+        setLoading(false);
         setProfile(newProfile);
         setShowAdminAppointments(false);
         sessionStorage.setItem("clinic_user", JSON.stringify(newProfile));
@@ -19277,14 +19283,6 @@ export default function App() {
     e.target.value = "";
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
-
   if (!googleUser) {
     const handlePatientEmailLogin = (e: React.FormEvent) => {
       e.preventDefault();
@@ -19733,9 +19731,10 @@ export default function App() {
 
                   <button
                     onClick={handleLogin}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg text-xs transition-all shadow-md shadow-blue-900/20 cursor-pointer"
+                    disabled={loading}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-lg text-xs transition-all shadow-md shadow-blue-900/20 cursor-pointer disabled:opacity-50"
                   >
-                    Intră în sistem
+                    {loading ? "Se verifică..." : "Intră în sistem"}
                   </button>
                 </div>
               </motion.div>
@@ -19752,6 +19751,14 @@ export default function App() {
           darkMode ? "bg-slate-950" : "bg-slate-50"
         )}
       >
+        {loading && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-[99999] pointer-events-auto">
+            <div className="flex flex-col items-center gap-3 p-6 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl text-white">
+              <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-500 border-t-transparent"></div>
+              <p className="text-xs font-bold text-slate-200">Se conectează...</p>
+            </div>
+          </div>
+        )}
         {/* TOP LEFT: Portal Pacienți */}
         <div className="absolute top-4 left-4 sm:top-6 sm:left-6 z-30">
           <button
@@ -19870,9 +19877,10 @@ export default function App() {
 
                         <button
                           onClick={handleLogin}
-                          className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-1.5 rounded-lg text-xs transition-all shadow-md cursor-pointer"
+                          disabled={loading}
+                          className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-1.5 rounded-lg text-xs transition-all shadow-md cursor-pointer disabled:opacity-50"
                         >
-                          Intră ca Admin
+                          {loading ? "Se verifică..." : "Intră ca Admin"}
                         </button>
                       </div>
                     </motion.div>
@@ -20155,6 +20163,14 @@ export default function App() {
           darkMode={darkMode}
           userAvatar={currentUserAvatar}
         />
+      )}
+      {loading && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-[99999] pointer-events-auto">
+          <div className="flex flex-col items-center gap-3 p-6 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl text-white">
+            <div className="animate-spin rounded-full h-10 w-10 border-2 border-blue-500 border-t-transparent"></div>
+            <p className="text-xs font-bold text-slate-200">Se încarcă...</p>
+          </div>
+        </div>
       )}
       {/* Navbar */}
       {/* Saved Animation Overlay */}
@@ -22116,27 +22132,16 @@ export default function App() {
                                          ) : null;
                                        })()}
                                      </p>
-                                     {(appointment.patientPhone || (
-                                       (profile?.role === "admin" ||
-                                         profile?.role === "frontdesk" ||
-                                         DOCTOR_ROLES.includes(
-                                           profile?.role as Role,
-                                         )) && !isDoctor && appointment.patientPhone
-                                     )) && (
+                                     {!isDoctor && appointment.patientPhone && (
                                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                                         {appointment.patientPhone && (
-                                           <span className={cn(
-                                             "font-bold text-[10.5px] whitespace-nowrap shrink-0",
-                                             darkMode ? "text-slate-300" : "text-slate-700"
-                                           )}>
-                                             {appointment.patientPhone}
-                                           </span>
-                                         )}
+                                         <span className={cn(
+                                           "font-bold text-[10.5px] whitespace-nowrap shrink-0",
+                                           darkMode ? "text-slate-300" : "text-slate-700"
+                                         )}>
+                                           {appointment.patientPhone}
+                                         </span>
                                          {(profile?.role === "admin" ||
-                                           profile?.role === "frontdesk" ||
-                                           DOCTOR_ROLES.includes(
-                                             profile?.role as Role,
-                                           )) && !isDoctor && appointment.patientPhone && (
+                                           profile?.role === "frontdesk") && (
                                            <button
                                              type="button"
                                              onClick={(e) => {
