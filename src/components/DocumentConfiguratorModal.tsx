@@ -26,6 +26,7 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
   darkMode,
   handleSaveAndPrintDocument,
 }: DocumentConfiguratorModalProps) {
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
   const currentDoc = (documentForm?.doctorName || "").trim();
   const sortedDoctorOptions = React.useMemo(() => {
     const defaultList = [...BASE_DOCTOR_OPTIONS];
@@ -3260,17 +3261,26 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                     <button
                       type="button"
                       onClick={() => setActiveDocumentModal(null)}
-                      className="px-6 py-2.5 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors"
+                      className="px-6 py-2.5 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer"
                     >
                       Anulează
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleSaveAndPrintDocument()}
-                      className="px-6 py-2.5 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white transition-colors flex items-center gap-2"
+                      id="save-and-print-doc-modal-btn"
+                      disabled={isSubmitting}
+                      onClick={async () => {
+                        try {
+                          setIsSubmitting(true);
+                          await handleSaveAndPrintDocument();
+                        } finally {
+                          setIsSubmitting(false);
+                        }
+                      }}
+                      className="px-6 py-2.5 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white transition-all flex items-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shadow-md shadow-blue-500/10"
                     >
                       <Printer className="w-4 h-4" />
-                      Salvare în Registru & Tipărire PDF
+                      {isSubmitting ? "Se salvează & generează PDF..." : "Salvare în Registru & Tipărire PDF"}
                     </button>
                   </div>
                 </motion.div>

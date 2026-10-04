@@ -2258,6 +2258,8 @@ export default function App() {
   const [isMedicalRecordModalOpen, setIsMedicalRecordModalOpen] =
     useState(false);
   const [isEditingPatientName, setIsEditingPatientName] = useState(false);
+  const [tempPatientName, setTempPatientName] = useState("");
+  const originalPatientNameRef = useRef<string>("");
   const [isEditingSymptoms, setIsEditingSymptoms] = useState(false);
   const [isVaAlExpanded, setIsVaAlExpanded] = useState(false);
   const [isExaminationsExpanded, setIsExaminationsExpanded] = useState(false);
@@ -2302,6 +2304,12 @@ export default function App() {
       return rName === targetName && rPhone === targetPhone;
     });
   }, [medicalRecords, currentMedicalRecord?.patientName, currentMedicalRecord?.patientPhone]);
+
+  useEffect(() => {
+    if (currentMedicalRecord?.patientName) {
+      originalPatientNameRef.current = currentMedicalRecord.patientName;
+    }
+  }, [currentMedicalRecord?.id]);
   const [isNearEmptyOnFocus, setIsNearEmptyOnFocus] = useState(false);
   const [isDistEmptyOnFocus, setIsDistEmptyOnFocus] = useState(false);
   const [activeMedicalTab, setActiveMedicalTab] = useState<
@@ -5287,11 +5295,305 @@ export default function App() {
     }
   };
 
+  const renamePatientEverywhere = async (
+    oldName: string,
+    newName: string,
+    phone?: string,
+    cnp?: string,
+    oldRecordId?: string,
+  ) => {
+    const cleanOld = (oldName || "").trim();
+    const cleanNew = (newName || "").trim();
+
+    if (!cleanNew) {
+      setErrorMessage("Numele pacientului nu poate fi gol!");
+      return false;
+    }
+    if (cleanOld === cleanNew) {
+      return true;
+    }
+
+    const cleanPhone = (phone || "").trim();
+    const cleanCnp = (cnp || "").trim();
+    const now = new Date().toISOString();
+    const effectiveOldId = oldRecordId || `${cleanOld}_${cleanPhone}`.replace(/\s+/g, "_").toLowerCase();
+    const newRecordId = `${cleanNew}_${cleanPhone}`.replace(/\s+/g, "_").toLowerCase();
+
+    // 1. Immediately update currentMedicalRecord if matching
+    if (currentMedicalRecord) {
+      const matchesCurrent =
+        currentMedicalRecord.id === effectiveOldId ||
+        (currentMedicalRecord.patientName &&
+          currentMedicalRecord.patientName.trim().toLowerCase() === cleanOld.toLowerCase());
+      if (matchesCurrent) {
+        const updated = {
+          ...currentMedicalRecord,
+          id: newRecordId,
+          patientName: cleanNew,
+          updatedAt: now,
+        };
+        setCurrentMedicalRecord(updated);
+      }
+    }
+    originalPatientNameRef.current = cleanNew;
+
+    // 2. Immediately update activeAppointment if open & matching
+    if (activeAppointment) {
+      const isOldMatch =
+        cleanOld &&
+        (activeAppointment.patientName?.trim().toLowerCase() === cleanOld.toLowerCase() ||
+          normalizePatientName(activeAppointment.patientName) === normalizePatientName(cleanOld));
+      const isPhoneMatch =
+        cleanPhone &&
+        activeAppointment.patientPhone &&
+        normalizePhone(activeAppointment.patientPhone) === normalizePhone(cleanPhone) &&
+        (!activeAppointment.patientName ||
+          activeAppointment.patientName.trim().toLowerCase() === cleanOld.toLowerCase() ||
+          normalizePatientName(activeAppointment.patientName) === normalizePatientName(cleanOld));
+      const isCnpMatch = cleanCnp && activeAppointment.patientCnp?.trim() === cleanCnp;
+
+      if (isOldMatch || isPhoneMatch || isCnpMatch || activeAppointment.id === effectiveOldId) {
+        setActiveAppointment((prev) => (prev ? { ...prev, patientName: cleanNew } : null));
+      }
+    }
+
+    // 3. Immediately update appointments state in memory
+    const matchedAppIds = new Set<string>();
+    setAppointments((prev) =>
+      prev.map((app) => {
+        const isNameMatch =
+          cleanOld &&
+          (app.patientName?.trim().toLowerCase() === cleanOld.toLowerCase() ||
+            normalizePatientName(app.patientName) === normalizePatientName(cleanOld));
+        const isPhoneMatch =
+          cleanPhone &&
+          app.patientPhone &&
+          normalizePhone(app.patientPhone) === normalizePhone(cleanPhone) &&
+          (!app.patientName ||
+            app.patientName.trim().toLowerCase() === cleanOld.toLowerCase() ||
+            normalizePatientName(app.patientName) === normalizePatientName(cleanOld));
+        const isCnpMatch = cleanCnp && app.patientCnp && app.patientCnp.trim() === cleanCnp;
+        const isActive = activeAppointment && app.id === activeAppointment.id;
+
+        if (isNameMatch || isPhoneMatch || isCnpMatch || isActive) {
+          matchedAppIds.add(app.id);
+          return { ...app, patientName: cleanNew };
+        }
+        return app;
+      })
+    );
+
+    // 4. Immediately update medicalRecords state in memory
+    setMedicalRecords((prev) =>
+      prev.map((rec) => {
+        const isIdMatch = rec.id === effectiveOldId || rec.id === newRecordId;
+        const isNameMatch =
+          cleanOld &&
+          (rec.patientName?.trim().toLowerCase() === cleanOld.toLowerCase() ||
+            normalizePatientName(rec.patientName) === normalizePatientName(cleanOld));
+        const isPhoneMatch =
+          cleanPhone &&
+          rec.patientPhone &&
+          normalizePhone(rec.patientPhone) === normalizePhone(cleanPhone) &&
+          (!rec.patientName ||
+            rec.patientName.trim().toLowerCase() === cleanOld.toLowerCase() ||
+            normalizePatientName(rec.patientName) === normalizePatientName(cleanOld));
+        const isCnpMatch = cleanCnp && rec.patientCnp && rec.patientCnp.trim() === cleanCnp;
+
+        if (isIdMatch || isNameMatch || isPhoneMatch || isCnpMatch) {
+          return {
+            ...rec,
+            id: newRecordId,
+            patientName: cleanNew,
+            updatedAt: now,
+          };
+        }
+        return rec;
+      })
+    );
+
+    // 5. Immediately update medicalDocuments state in memory
+    setMedicalDocuments((prev) =>
+      prev.map((docItem) => {
+        const isNameMatch =
+          cleanOld &&
+          (docItem.patientName?.trim().toLowerCase() === cleanOld.toLowerCase() ||
+            normalizePatientName(docItem.patientName) === normalizePatientName(cleanOld));
+        const isIdMatch = docItem.patientId === effectiveOldId;
+        if (isNameMatch || isIdMatch) {
+          return { ...docItem, patientName: cleanNew, patientId: newRecordId };
+        }
+        return docItem;
+      })
+    );
+
+    // 6. Background Firestore persistence (non-blocking for instant UI response)
+    (async () => {
+      try {
+        // A) Update or migrate medicalRecords in Firestore
+        const oldDocRef = doc(db, "medicalRecords", effectiveOldId);
+        const oldSnap = await getDoc(oldDocRef).catch(() => null);
+        let baseRecord = oldSnap && oldSnap.exists() ? oldSnap.data() : null;
+        if (!baseRecord && currentMedicalRecord) {
+          baseRecord = currentMedicalRecord;
+        }
+
+        if (baseRecord) {
+          const recToSave = removeUndefined({
+            ...baseRecord,
+            id: newRecordId,
+            patientName: cleanNew,
+            updatedAt: now,
+          });
+          await setDoc(doc(db, "medicalRecords", newRecordId), recToSave, { merge: true });
+          if (effectiveOldId !== newRecordId) {
+            deleteDoc(doc(db, "medicalRecords", effectiveOldId)).catch(() => {});
+          }
+        }
+
+        // B) Update all matching appointments in Firestore
+        const appDocIds = new Set<string>(matchedAppIds);
+        const appQueries = [
+          query(collection(db, "appointments"), where("patientName", "==", cleanOld)),
+        ];
+        if (cleanOld.toUpperCase() !== cleanOld) {
+          appQueries.push(query(collection(db, "appointments"), where("patientName", "==", cleanOld.toUpperCase())));
+        }
+        if (oldName !== cleanOld) {
+          appQueries.push(query(collection(db, "appointments"), where("patientName", "==", oldName)));
+        }
+        if (cleanPhone) {
+          appQueries.push(query(collection(db, "appointments"), where("patientPhone", "==", cleanPhone)));
+        }
+        if (cleanCnp) {
+          appQueries.push(query(collection(db, "appointments"), where("patientCnp", "==", cleanCnp)));
+        }
+
+        const appSnaps = await Promise.allSettled(appQueries.map((q) => getDocs(q)));
+        appSnaps.forEach((res) => {
+          if (res.status === "fulfilled") {
+            res.value.docs.forEach((d) => {
+              const data = d.data();
+              if (
+                data.patientName?.trim().toLowerCase() === cleanOld.toLowerCase() ||
+                (cleanPhone && normalizePhone(data.patientPhone) === normalizePhone(cleanPhone)) ||
+                (cleanCnp && data.patientCnp === cleanCnp)
+              ) {
+                appDocIds.add(d.id);
+              }
+            });
+          }
+        });
+
+        for (const appId of appDocIds) {
+          updateDoc(doc(db, "appointments", appId), { patientName: cleanNew }).catch((err) =>
+            console.warn("Error updating appointment doc during rename:", appId, err)
+          );
+        }
+
+        // C) Update glasses_orders in Firestore
+        const orderQueries = [
+          query(collection(db, "glasses_orders"), where("patientName", "==", cleanOld)),
+        ];
+        if (cleanOld.toUpperCase() !== cleanOld) {
+          orderQueries.push(query(collection(db, "glasses_orders"), where("patientName", "==", cleanOld.toUpperCase())));
+        }
+        if (cleanPhone) {
+          orderQueries.push(query(collection(db, "glasses_orders"), where("patientPhone", "==", cleanPhone)));
+        }
+        if (effectiveOldId) {
+          orderQueries.push(query(collection(db, "glasses_orders"), where("patientId", "==", effectiveOldId)));
+        }
+        const orderSnaps = await Promise.allSettled(orderQueries.map((q) => getDocs(q)));
+        const orderDocIds = new Set<string>();
+        orderSnaps.forEach((res) => {
+          if (res.status === "fulfilled") {
+            res.value.docs.forEach((d) => orderDocIds.add(d.id));
+          }
+        });
+        for (const orderId of orderDocIds) {
+          updateDoc(doc(db, "glasses_orders", orderId), {
+            patientName: cleanNew,
+            patientId: newRecordId,
+          }).catch((err) => console.warn("Error updating glasses_order doc:", orderId, err));
+        }
+
+        // D) Update medicalDocuments in Firestore
+        const docQueries = [
+          query(collection(db, "medicalDocuments"), where("patientName", "==", cleanOld)),
+        ];
+        if (effectiveOldId) {
+          docQueries.push(query(collection(db, "medicalDocuments"), where("patientId", "==", effectiveOldId)));
+        }
+        const docSnaps = await Promise.allSettled(docQueries.map((q) => getDocs(q)));
+        const docIds = new Set<string>();
+        docSnaps.forEach((res) => {
+          if (res.status === "fulfilled") {
+            res.value.docs.forEach((d) => docIds.add(d.id));
+          }
+        });
+        for (const mDocId of docIds) {
+          updateDoc(doc(db, "medicalDocuments", mDocId), {
+            patientName: cleanNew,
+            patientId: newRecordId,
+          }).catch((err) => console.warn("Error updating medicalDocument doc:", mDocId, err));
+        }
+
+        // E) Update reception_alerts in Firestore
+        const alertQueries = [
+          query(collection(db, "reception_alerts"), where("patientName", "==", cleanOld)),
+        ];
+        if (effectiveOldId) {
+          alertQueries.push(query(collection(db, "reception_alerts"), where("patientId", "==", effectiveOldId)));
+        }
+        const alertSnaps = await Promise.allSettled(alertQueries.map((q) => getDocs(q)));
+        const alertIds = new Set<string>();
+        alertSnaps.forEach((res) => {
+          if (res.status === "fulfilled") {
+            res.value.docs.forEach((d) => alertIds.add(d.id));
+          }
+        });
+        for (const alertId of alertIds) {
+          updateDoc(doc(db, "reception_alerts", alertId), {
+            patientName: cleanNew,
+            patientId: newRecordId,
+          }).catch((err) => console.warn("Error updating reception_alert doc:", alertId, err));
+        }
+
+        // F) Activity log
+        logActivity(
+          "Redenumire Pacient",
+          `Numele pacientului a fost modificat din "${cleanOld}" în "${cleanNew}" peste tot în aplicație (programări, fișe medicale, comenzi, documente).`
+        ).catch(() => {});
+      } catch (cloudErr) {
+        console.warn("Background rename cloud sync error:", cloudErr);
+      }
+    })();
+
+    setSuccessMessage(`Numele pacientului a fost actualizat peste tot în sistem: "${cleanNew}"`);
+    return true;
+  };
+
   const syncPatientDetailsInDB = async (
     field: "name" | "birthDate" | "sex",
     newValue: string,
   ) => {
     if (!currentMedicalRecord) return;
+
+    if (field === "name") {
+      const oldName = (originalPatientNameRef.current || currentMedicalRecord.patientName || "").trim();
+      const newName = newValue.trim();
+      if (oldName && newName && oldName !== newName) {
+        await renamePatientEverywhere(
+          oldName,
+          newName,
+          currentMedicalRecord.patientPhone,
+          currentMedicalRecord.patientCnp,
+          currentMedicalRecord.id,
+        );
+        return;
+      }
+    }
 
     try {
       const now = new Date().toISOString();
@@ -7925,24 +8227,35 @@ export default function App() {
     oldPhone?: string,
   ) => {
     try {
+      const cleanName = (name || "").trim();
+      const cleanOldName = (oldName || "").trim();
+      const cleanPhone = (phone || "").trim();
+      const cleanOldPhone = (oldPhone || "").trim();
+
+      if (cleanOldName && cleanOldName !== cleanName) {
+        await renamePatientEverywhere(cleanOldName, cleanName, cleanPhone || cleanOldPhone);
+        return;
+      }
+
       const existingRec =
-        findPatientMedicalRecord(name, phone, null, medicalRecords) ||
-        (oldName ? findPatientMedicalRecord(oldName, oldPhone, null, medicalRecords) : undefined) ||
+        findPatientMedicalRecord(cleanName, cleanPhone, null, medicalRecords) ||
+        (cleanOldName ? findPatientMedicalRecord(cleanOldName, cleanOldPhone, null, medicalRecords) : undefined) ||
         medicalRecords.find(
           (r) =>
             r.patientName &&
-            name &&
-            r.patientName.toLowerCase().trim() === name.toLowerCase().trim(),
+            cleanName &&
+            r.patientName.toLowerCase().trim() === cleanName.toLowerCase().trim(),
         );
 
-      const recordId = existingRec?.id || `${name}_${phone}`.replace(/\s+/g, "_").toLowerCase();
+      const recordId = existingRec?.id || `${cleanName}_${cleanPhone}`.replace(/\s+/g, "_").toLowerCase();
       const docRef = doc(db, "medicalRecords", recordId);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         await updateDoc(
           docRef,
           removeUndefined({
-            patientPhone: phone,
+            patientName: cleanName,
+            patientPhone: cleanPhone,
             patientAge: age,
             patientBirthDate: birthDate,
             patientSex: sex || undefined,
@@ -8071,6 +8384,8 @@ export default function App() {
         data.patientSeries || latestDoc?.formValues?.patientSeries || "";
       const finalPatientNumber =
         data.patientNumber || latestDoc?.formValues?.patientNumber || "";
+
+      originalPatientNameRef.current = finalPatientName;
 
       setCurrentMedicalRecord({
         ...data,
@@ -8902,6 +9217,7 @@ export default function App() {
 
     if (finalAge !== undefined && finalAge > 110) {
       setBookingError("Vârsta nu poate fi mai mare de 110 ani!");
+      setErrorMessage("Vârsta nu poate fi mai mare de 110 ani!");
       return false;
     }
 
@@ -8921,19 +9237,9 @@ export default function App() {
         setBookingError(
           "Data nașterii nu poate fi mai mare decât ziua curentă!",
         );
+        setErrorMessage("Data nașterii nu poate fi mai mare decât ziua curentă!");
         return false;
       }
-    }
-
-    const hasDiopters =
-      currentMedicalRecord.od.sph ||
-      currentMedicalRecord.od.cyl ||
-      currentMedicalRecord.os.sph ||
-      currentMedicalRecord.os.cyl;
-
-    if (hasDiopters && !currentMedicalRecord.dp) {
-      setBookingError("Lipsește distanța interpupilară!");
-      return false;
     }
 
     const odDistCylNum =
@@ -8947,6 +9253,7 @@ export default function App() {
       setBookingError(
         "Ați uitat să introduceți axul la ochiul drept (Distanță)!",
       );
+      setErrorMessage("Ați uitat să introduceți axul la ochiul drept (Distanță)!");
       return false;
     }
 
@@ -8961,6 +9268,7 @@ export default function App() {
       setBookingError(
         "Ați uitat să introduceți axul la ochiul stâng (Distanță)!",
       );
+      setErrorMessage("Ați uitat să introduceți axul la ochiul stâng (Distanță)!");
       return false;
     }
 
@@ -8979,6 +9287,7 @@ export default function App() {
         setBookingError(
           "Ați uitat să introduceți axul la ochiul drept - Aproape!",
         );
+        setErrorMessage("Ați uitat să introduceți axul la ochiul drept - Aproape!");
         return false;
       }
     }
@@ -8998,6 +9307,7 @@ export default function App() {
         setBookingError(
           "Ați uitat să introduceți axul la ochiul stâng - Aproape!",
         );
+        setErrorMessage("Ați uitat să introduceți axul la ochiul stâng - Aproape!");
         return false;
       }
     }
@@ -9007,11 +9317,13 @@ export default function App() {
       if (trimmedCnp) {
         if (trimmedCnp.length !== 13) {
           setBookingError("CNP-ul trebuie să aibă exact 13 cifre.");
+          setErrorMessage("CNP-ul trebuie să aibă exact 13 cifre.");
           return false;
         }
 
         if (!validateCNP(trimmedCnp)) {
           setBookingError("CNP-ul introdus este invalid (nu respectă cifra de control).");
+          setErrorMessage("CNP-ul introdus este invalid (nu respectă cifra de control).");
           return false;
         }
 
@@ -9024,6 +9336,9 @@ export default function App() {
 
         if (duplicate) {
           setBookingError(
+            `Eroare: CNP-ul introdus (${trimmedCnp}) aparține deja altui pacient: ${duplicate.patientName} (${duplicate.patientPhone}).`
+          );
+          setErrorMessage(
             `Eroare: CNP-ul introdus (${trimmedCnp}) aparține deja altui pacient: ${duplicate.patientName} (${duplicate.patientPhone}).`
           );
           return false;
@@ -9066,15 +9381,23 @@ export default function App() {
         );
       }
 
-      const oldPatientName = existingRec
-        ? existingRec.patientName
-        : currentMedicalRecord.patientName;
+      const oldPatientName = (originalPatientNameRef.current || existingRec?.patientName || currentMedicalRecord.patientName || "").trim();
       const oldRecordId = currentMedicalRecord.id;
       const phone = (currentMedicalRecord.patientPhone || "").trim();
       const newPatientName = (currentMedicalRecord.patientName || "").trim();
       const newRecordId = `${newPatientName}_${phone}`
         .replace(/\s+/g, "_")
         .toLowerCase();
+
+      if (oldPatientName && newPatientName && oldPatientName !== newPatientName) {
+        renamePatientEverywhere(
+          oldPatientName,
+          newPatientName,
+          phone,
+          currentMedicalRecord.patientCnp,
+          oldRecordId,
+        ).catch(() => {});
+      }
 
       const updatedRecord = removeUndefined({
         ...currentMedicalRecord,
@@ -9085,273 +9408,291 @@ export default function App() {
         updatedAt: now,
       });
 
-      if (oldRecordId !== newRecordId) {
-        await setDoc(doc(db, "medicalRecords", newRecordId), updatedRecord);
-        try {
-          await deleteDoc(doc(db, "medicalRecords", oldRecordId));
-        } catch (delErr) {
-          console.warn("Could not delete old medicalRecord doc:", delErr);
-        }
-      } else {
-        await setDoc(doc(db, "medicalRecords", oldRecordId), updatedRecord);
-      }
-
-      try {
-        const medicalRecordAny = updatedRecord as any;
-        const rxGlasses = !!(
-          medicalRecordAny.od?.sph ||
-          medicalRecordAny.os?.sph ||
-          medicalRecordAny.od?.cyl ||
-          medicalRecordAny.os?.cyl ||
-          medicalRecordAny.od?.add ||
-          medicalRecordAny.os?.add
-        );
-
-        const rxLenses = !!(
-          (medicalRecordAny.cl_od && (medicalRecordAny.cl_od.sph || medicalRecordAny.cl_od.brand)) ||
-          (medicalRecordAny.cl_os && (medicalRecordAny.cl_os.sph || medicalRecordAny.cl_os.brand))
-        );
-
-        const rxTreatment = !!(
-          (medicalRecordAny.treatment && medicalRecordAny.treatment.trim().length > 0) ||
-          (medicalRecordAny.clinicalTreatment && medicalRecordAny.clinicalTreatment.trim().length > 0) ||
-          (medicalRecordAny.medications && medicalRecordAny.medications.trim().length > 0)
-        );
-
-        if (rxGlasses || rxLenses || rxTreatment) {
-          const performedExams = [];
-
-          if (medicalRecordAny.isControl) {
-            performedExams.push("Control");
-          }
-          if (medicalRecordAny.examinations?.control && String(medicalRecordAny.examinations.control).trim()) {
-            performedExams.push(`Măsurători lungime axială Miopie (${String(medicalRecordAny.examinations.control).trim() === "1" ? "1 ochi" : "2 ochi"})`);
-          }
-          if (medicalRecordAny.isConsultComplet) {
-            performedExams.push("Consultație Completă");
-          }
-          if (medicalRecordAny.examinations?.consultatieCompleta && String(medicalRecordAny.examinations.consultatieCompleta).trim()) {
-            performedExams.push(`Tensiune oculară (${String(medicalRecordAny.examinations.consultatieCompleta).trim() === "1" ? "1 ochi" : "2 ochi"})`);
-          }
-
-          const extExams = (medicalRecordAny.examinations || {}) as any;
-          if (extExams.topografieOculara && String(extExams.topografieOculara).trim()) {
-            performedExams.push(`Topografie Oculară (${String(extExams.topografieOculara).trim() === "1" ? "1 ochi" : "2 ochi"})`);
-          } else if (extExams.topografieOculara === true) {
-            performedExams.push("Topografie Oculară");
-          }
-          if (extExams.oct && String(extExams.oct).trim()) {
-            performedExams.push(`OCT (${String(extExams.oct).trim() === "1" ? "1 ochi" : "2 ochi"})`);
-          } else if (extExams.oct === true) {
-            performedExams.push("OCT");
-          }
-          if (extExams.campVizual && String(extExams.campVizual).trim()) {
-            performedExams.push(`Câmp Vizual (${String(extExams.campVizual).trim() === "1" ? "1 ochi" : "2 ochi"})`);
-          } else if (extExams.campVizual === true) {
-            performedExams.push("Câmp Vizual");
-          }
-          if (extExams.ecografieOculara && String(extExams.ecografieOculara).trim()) {
-            performedExams.push(`Ecografie Oculară (${String(extExams.ecografieOculara).trim() === "1" ? "1 ochi" : "2 ochi"})`);
-          } else if (extExams.ecografieOculara === true) {
-            performedExams.push("Ecografie Oculară");
-          }
-          if (extExams.refractometriePediatrica && String(extExams.refractometriePediatrica).trim()) {
-            performedExams.push(`Refractometrie Pediatrică (${String(extExams.refractometriePediatrica).trim() === "1" ? "1 ochi" : "2 ochi"})`);
-          }
-          if (extExams.testSchirmer) performedExams.push("Test Schirmer");
-          if (extExams.biometrie && String(extExams.biometrie).trim()) {
-            performedExams.push(`Biometrie (${String(extExams.biometrie).trim() === "1" ? "1 ochi" : "2 ochi"})`);
-          }
-          if (extExams.gonioscopieAplanotonometrie && String(extExams.gonioscopieAplanotonometrie).trim()) {
-            performedExams.push(`Gonioscopie (${String(extExams.gonioscopieAplanotonometrie).trim() === "1" ? "1 ochi" : "2 ochi"})`);
-          }
-          if (extExams.pahimetrie && String(extExams.pahimetrie).trim()) {
-            performedExams.push(`Pahimetrie (${String(extExams.pahimetrie).trim() === "1" ? "1 ochi" : "2 ochi"})`);
-          }
-          if (extExams.sondajCaiLacrimale && String(extExams.sondajCaiLacrimale).trim()) {
-            performedExams.push(`Sondaj Căi Lacrimale (${String(extExams.sondajCaiLacrimale).trim()})`);
-          } else if (extExams.sondajCaiLacrimale === true) {
-            performedExams.push("Sondaj Căi Lacrimale");
-          }
-          if (extExams.iridotomieLaser && String(extExams.iridotomieLaser).trim()) {
-            performedExams.push(`Iridotmie Laser (${String(extExams.iridotomieLaser).trim()})`);
-          } else if (extExams.iridotomieLaser === true) {
-            performedExams.push("Iridotomie Laser");
-          }
-          if (extExams.capsulotomieLaser && String(extExams.capsulotomieLaser).trim()) {
-            performedExams.push(`Capsulotomie Laser (${String(extExams.capsulotomieLaser).trim()})`);
-          } else if (extExams.capsulotomieLaser === true) {
-            performedExams.push("Capsulotomie Laser");
-          }
-          if (extExams.slt && String(extExams.slt).trim()) {
-            performedExams.push(`SLT (${String(extExams.slt).trim()})`);
-          } else if (extExams.slt === true) {
-            performedExams.push("SLT");
-          }
-
-          const alertDocId = `${medicalRecordAny.id}_${Date.now()}`;
-          await setDoc(doc(db, "reception_alerts", alertDocId), {
-            id: alertDocId,
-            patientId: medicalRecordAny.id,
-            patientName: newPatientName,
-            patientAge: finalAge || medicalRecordAny.patientAge || "",
-            glasses: rxGlasses,
-            contactLenses: rxLenses,
-            treatment: rxTreatment ? (medicalRecordAny.treatment || medicalRecordAny.clinicalTreatment || medicalRecordAny.medications || "") : "",
-            examinations: performedExams,
-            createdAt: now,
-          });
-        }
-      } catch (alertErr) {
-        console.error("Failed to create receptionist alert:", alertErr);
-      }
-
+      // 1. Optimistic instant React state update
       setCurrentMedicalRecord(updatedRecord);
-
       setMedicalRecords((prev) => {
         const filtered = prev.filter(
           (r) => r.id !== oldRecordId && r.id !== newRecordId,
         );
         return [updatedRecord, ...filtered];
       });
+      originalPatientNameRef.current = newPatientName;
 
-      await logActivity(
-        "Modificare Fișă Pacient",
-        `Fișa medicală a pacientului ${newPatientName} (Tel: ${phone}) a fost salvată/modificată.`
-      );
+      // 2. Save to Firestore with timeout protection so it never freezes
+      const savePromise = (async () => {
+        try {
+          if (oldRecordId !== newRecordId) {
+            await setDoc(doc(db, "medicalRecords", newRecordId), updatedRecord);
+            try {
+              await deleteDoc(doc(db, "medicalRecords", oldRecordId));
+            } catch (delErr) {
+              console.warn("Could not delete old medicalRecord doc:", delErr);
+            }
+          } else {
+            await setDoc(doc(db, "medicalRecords", oldRecordId), updatedRecord);
+          }
+        } catch (dbErr) {
+          console.warn("Firestore medicalRecords setDoc notice:", dbErr);
+        }
+      })();
 
+      await Promise.race([
+        savePromise,
+        new Promise((resolve) => setTimeout(resolve, 3000)),
+      ]);
+
+      // 3. Instant UI feedback
       setShowSavedAnimation(true);
+      setSuccessMessage(`Fișa pacientului "${newPatientName}" a fost salvată cu succes!`);
 
       setTimeout(() => {
         setShowSavedAnimation(false);
         if (shouldClose) {
           setIsMedicalRecordModalOpen(false);
         }
-      }, 1500);
+      }, 1200);
 
-      try {
-        const appointmentsRef = collection(db, "appointments");
-        const appQueries = [];
+      // 4. Background auxiliary synchronization
+      (async () => {
+        try {
+          const medicalRecordAny = updatedRecord as any;
+          const rxGlasses = !!(
+            medicalRecordAny.od?.sph ||
+            medicalRecordAny.os?.sph ||
+            medicalRecordAny.od?.cyl ||
+            medicalRecordAny.os?.cyl ||
+            medicalRecordAny.od?.add ||
+            medicalRecordAny.os?.add
+          );
 
-        if (oldPatientName && oldPatientName.trim() !== "") {
-          appQueries.push(query(appointmentsRef, where("patientName", "==", oldPatientName)));
-        }
-        if (newPatientName && newPatientName !== oldPatientName) {
-          appQueries.push(query(appointmentsRef, where("patientName", "==", newPatientName)));
-        }
+          const rxLenses = !!(
+            (medicalRecordAny.cl_od && (medicalRecordAny.cl_od.sph || medicalRecordAny.cl_od.brand)) ||
+            (medicalRecordAny.cl_os && (medicalRecordAny.cl_os.sph || medicalRecordAny.cl_os.brand))
+          );
 
-        const appSnaps = await Promise.all(appQueries.map((q) => getDocs(q)));
-        const uniqueAppDocs = new Map<string, any>();
-        appSnaps.forEach((snap) => {
-          snap.docs.forEach((d) => uniqueAppDocs.set(d.id, d.data()));
-        });
+          const rxTreatment = !!(
+            (medicalRecordAny.treatment && medicalRecordAny.treatment.trim().length > 0) ||
+            (medicalRecordAny.clinicalTreatment && medicalRecordAny.clinicalTreatment.trim().length > 0) ||
+            (medicalRecordAny.medications && medicalRecordAny.medications.trim().length > 0)
+          );
 
-        if (activeAppointment?.id && !uniqueAppDocs.has(activeAppointment.id)) {
-          const isNameMatch =
-            (oldPatientName && activeAppointment.patientName?.toLowerCase().trim() === oldPatientName.toLowerCase().trim()) ||
-            (newPatientName && activeAppointment.patientName?.toLowerCase().trim() === newPatientName.toLowerCase().trim());
-          if (isNameMatch) {
-            uniqueAppDocs.set(activeAppointment.id, activeAppointment);
-          }
-        }
+          if (rxGlasses || rxLenses || rxTreatment) {
+            const performedExams = [];
 
-        const updatePromises = Array.from(uniqueAppDocs.keys()).map((docId) =>
-          updateDoc(
-            doc(db, "appointments", docId),
-            removeUndefined({
-              patientName: newPatientName,
-              patientAge: finalAge !== undefined ? finalAge : uniqueAppDocs.get(docId)?.patientAge,
-              patientBirthDate: currentMedicalRecord.patientBirthDate || "",
-              patientSex: currentMedicalRecord.patientSex || "",
-            }),
-          ),
-        );
-        await Promise.all(updatePromises);
-
-        setAppointments((prev) =>
-          prev.map((app) => {
-            const isOldNameMatch =
-              oldPatientName && app.patientName?.toLowerCase().trim() === oldPatientName.toLowerCase().trim();
-            const isNewNameMatch =
-              newPatientName && app.patientName?.toLowerCase().trim() === newPatientName.toLowerCase().trim();
-            const isActiveMatch =
-              activeAppointment && app.id === activeAppointment.id && (isOldNameMatch || isNewNameMatch);
-
-            if (
-              isOldNameMatch ||
-              isNewNameMatch ||
-              isActiveMatch
-            ) {
-              return {
-                ...app,
-                patientName: newPatientName,
-                patientAge: finalAge !== undefined ? finalAge : app.patientAge,
-                patientBirthDate: currentMedicalRecord.patientBirthDate || app.patientBirthDate,
-                patientSex: (currentMedicalRecord.patientSex as any) || app.patientSex,
-              };
+            if (medicalRecordAny.isControl) {
+              performedExams.push("Control");
             }
-            return app;
-          }),
-        );
+            if (medicalRecordAny.examinations?.control && String(medicalRecordAny.examinations.control).trim()) {
+              performedExams.push(`Măsurători lungime axială Miopie (${String(medicalRecordAny.examinations.control).trim() === "1" ? "1 ochi" : "2 ochi"})`);
+            }
+            if (medicalRecordAny.isConsultComplet) {
+              performedExams.push("Consultație Completă");
+            }
+            if (medicalRecordAny.examinations?.consultatieCompleta && String(medicalRecordAny.examinations.consultatieCompleta).trim()) {
+              performedExams.push(`Tensiune oculară (${String(medicalRecordAny.examinations.consultatieCompleta).trim() === "1" ? "1 ochi" : "2 ochi"})`);
+            }
 
-        if (activeAppointment) {
-          const isOldNameMatch =
-            oldPatientName && activeAppointment.patientName?.toLowerCase().trim() === oldPatientName.toLowerCase().trim();
-          const isNewNameMatch =
-            newPatientName && activeAppointment.patientName?.toLowerCase().trim() === newPatientName.toLowerCase().trim();
-          if (isOldNameMatch || isNewNameMatch) {
-            setActiveAppointment((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    patientName: newPatientName,
-                    patientAge: finalAge !== undefined ? finalAge : prev.patientAge,
-                    patientBirthDate: currentMedicalRecord.patientBirthDate || prev.patientBirthDate,
-                    patientSex: (currentMedicalRecord.patientSex as any) || prev.patientSex,
-                  }
-                : null,
+            const extExams = (medicalRecordAny.examinations || {}) as any;
+            if (extExams.topografieOculara && String(extExams.topografieOculara).trim()) {
+              performedExams.push(`Topografie Oculară (${String(extExams.topografieOculara).trim() === "1" ? "1 ochi" : "2 ochi"})`);
+            } else if (extExams.topografieOculara === true) {
+              performedExams.push("Topografie Oculară");
+            }
+            if (extExams.oct && String(extExams.oct).trim()) {
+              performedExams.push(`OCT (${String(extExams.oct).trim() === "1" ? "1 ochi" : "2 ochi"})`);
+            } else if (extExams.oct === true) {
+              performedExams.push("OCT");
+            }
+            if (extExams.campVizual && String(extExams.campVizual).trim()) {
+              performedExams.push(`Câmp Vizual (${String(extExams.campVizual).trim() === "1" ? "1 ochi" : "2 ochi"})`);
+            } else if (extExams.campVizual === true) {
+              performedExams.push("Câmp Vizual");
+            }
+            if (extExams.ecografieOculara && String(extExams.ecografieOculara).trim()) {
+              performedExams.push(`Ecografie Oculară (${String(extExams.ecografieOculara).trim() === "1" ? "1 ochi" : "2 ochi"})`);
+            } else if (extExams.ecografieOculara === true) {
+              performedExams.push("Ecografie Oculară");
+            }
+            if (extExams.refractometriePediatrica && String(extExams.refractometriePediatrica).trim()) {
+              performedExams.push(`Refractometrie Pediatrică (${String(extExams.refractometriePediatrica).trim() === "1" ? "1 ochi" : "2 ochi"})`);
+            }
+            if (extExams.testSchirmer) performedExams.push("Test Schirmer");
+            if (extExams.biometrie && String(extExams.biometrie).trim()) {
+              performedExams.push(`Biometrie (${String(extExams.biometrie).trim() === "1" ? "1 ochi" : "2 ochi"})`);
+            }
+            if (extExams.gonioscopieAplanotonometrie && String(extExams.gonioscopieAplanotonometrie).trim()) {
+              performedExams.push(`Gonioscopie (${String(extExams.gonioscopieAplanotonometrie).trim() === "1" ? "1 ochi" : "2 ochi"})`);
+            }
+            if (extExams.pahimetrie && String(extExams.pahimetrie).trim()) {
+              performedExams.push(`Pahimetrie (${String(extExams.pahimetrie).trim() === "1" ? "1 ochi" : "2 ochi"})`);
+            }
+            if (extExams.sondajCaiLacrimale && String(extExams.sondajCaiLacrimale).trim()) {
+              performedExams.push(`Sondaj Căi Lacrimale (${String(extExams.sondajCaiLacrimale).trim()})`);
+            } else if (extExams.sondajCaiLacrimale === true) {
+              performedExams.push("Sondaj Căi Lacrimale");
+            }
+            if (extExams.iridotomieLaser && String(extExams.iridotomieLaser).trim()) {
+              performedExams.push(`Iridotmie Laser (${String(extExams.iridotomieLaser).trim()})`);
+            } else if (extExams.iridotomieLaser === true) {
+              performedExams.push("Iridotomie Laser");
+            }
+            if (extExams.capsulotomieLaser && String(extExams.capsulotomieLaser).trim()) {
+              performedExams.push(`Capsulotomie Laser (${String(extExams.capsulotomieLaser).trim()})`);
+            } else if (extExams.capsulotomieLaser === true) {
+              performedExams.push("Capsulotomie Laser");
+            }
+            if (extExams.slt && String(extExams.slt).trim()) {
+              performedExams.push(`SLT (${String(extExams.slt).trim()})`);
+            } else if (extExams.slt === true) {
+              performedExams.push("SLT");
+            }
+
+            const alertDocId = `${medicalRecordAny.id}_${Date.now()}`;
+            await setDoc(doc(db, "reception_alerts", alertDocId), {
+              id: alertDocId,
+              patientId: medicalRecordAny.id,
+              patientName: newPatientName,
+              patientAge: finalAge || medicalRecordAny.patientAge || "",
+              glasses: rxGlasses,
+              contactLenses: rxLenses,
+              treatment: rxTreatment ? (medicalRecordAny.treatment || medicalRecordAny.clinicalTreatment || medicalRecordAny.medications || "") : "",
+              examinations: performedExams,
+              createdAt: now,
+            });
+          }
+        } catch (alertErr) {
+          console.error("Failed to create receptionist alert:", alertErr);
+        }
+
+        logActivity(
+          "Modificare Fișă Pacient",
+          `Fișa medicală a pacientului ${newPatientName} (Tel: ${phone}) a fost salvată/modificată.`
+        ).catch(() => {});
+
+        try {
+          const appointmentsRef = collection(db, "appointments");
+          const appQueries = [];
+
+          if (oldPatientName && oldPatientName.trim() !== "") {
+            appQueries.push(query(appointmentsRef, where("patientName", "==", oldPatientName)));
+          }
+          if (newPatientName && newPatientName !== oldPatientName) {
+            appQueries.push(query(appointmentsRef, where("patientName", "==", newPatientName)));
+          }
+
+          const appSnaps = await Promise.all(appQueries.map((q) => getDocs(q)));
+          const uniqueAppDocs = new Map<string, any>();
+          appSnaps.forEach((snap) => {
+            snap.docs.forEach((d) => uniqueAppDocs.set(d.id, d.data()));
+          });
+
+          if (activeAppointment?.id && !uniqueAppDocs.has(activeAppointment.id)) {
+            const isNameMatch =
+              (oldPatientName && activeAppointment.patientName?.toLowerCase().trim() === oldPatientName.toLowerCase().trim()) ||
+              (newPatientName && activeAppointment.patientName?.toLowerCase().trim() === newPatientName.toLowerCase().trim());
+            if (isNameMatch) {
+              uniqueAppDocs.set(activeAppointment.id, activeAppointment);
+            }
+          }
+
+          const updatePromises = Array.from(uniqueAppDocs.keys()).map((docId) =>
+            updateDoc(
+              doc(db, "appointments", docId),
+              removeUndefined({
+                patientName: newPatientName,
+                patientAge: finalAge !== undefined ? finalAge : uniqueAppDocs.get(docId)?.patientAge,
+                patientBirthDate: currentMedicalRecord.patientBirthDate || "",
+                patientSex: currentMedicalRecord.patientSex || "",
+              }),
+            ),
+          );
+          await Promise.all(updatePromises);
+
+          setAppointments((prev) =>
+            prev.map((app) => {
+              const isOldNameMatch =
+                oldPatientName && app.patientName?.toLowerCase().trim() === oldPatientName.toLowerCase().trim();
+              const isNewNameMatch =
+                newPatientName && app.patientName?.toLowerCase().trim() === newPatientName.toLowerCase().trim();
+              const isActiveMatch =
+                activeAppointment && app.id === activeAppointment.id && (isOldNameMatch || isNewNameMatch);
+
+              if (
+                isOldNameMatch ||
+                isNewNameMatch ||
+                isActiveMatch
+              ) {
+                return {
+                  ...app,
+                  patientName: newPatientName,
+                  patientAge: finalAge !== undefined ? finalAge : app.patientAge,
+                  patientBirthDate: currentMedicalRecord.patientBirthDate || app.patientBirthDate,
+                  patientSex: (currentMedicalRecord.patientSex as any) || app.patientSex,
+                };
+              }
+              return app;
+            }),
+          );
+
+          if (activeAppointment) {
+            const isOldNameMatch =
+              oldPatientName && activeAppointment.patientName?.toLowerCase().trim() === oldPatientName.toLowerCase().trim();
+            const isNewNameMatch =
+              newPatientName && activeAppointment.patientName?.toLowerCase().trim() === newPatientName.toLowerCase().trim();
+            if (isOldNameMatch || isNewNameMatch) {
+              setActiveAppointment((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      patientName: newPatientName,
+                      patientAge: finalAge !== undefined ? finalAge : prev.patientAge,
+                      patientBirthDate: currentMedicalRecord.patientBirthDate || prev.patientBirthDate,
+                      patientSex: (currentMedicalRecord.patientSex as any) || prev.patientSex,
+                    }
+                  : null,
+              );
+            }
+          }
+        } catch (err) {
+          console.warn("Could not sync with appointments:", err);
+        }
+
+        try {
+          const ordersRef = collection(db, "glasses_orders");
+          const orderQueries = [];
+          if (oldPatientName) orderQueries.push(query(ordersRef, where("patientName", "==", oldPatientName)));
+          const orderSnaps = await Promise.all(orderQueries.map((q) => getDocs(q)));
+          const uniqueOrders = new Map<string, any>();
+          orderSnaps.forEach((s) => s.docs.forEach((d) => uniqueOrders.set(d.id, d.data())));
+          if (oldPatientName !== newPatientName) {
+            await Promise.all(
+              Array.from(uniqueOrders.keys()).map((docId) =>
+                updateDoc(doc(db, "glasses_orders", docId), removeUndefined({ patientName: newPatientName })),
+              ),
             );
           }
+        } catch (e) {
+          console.warn("Could not sync glasses_orders:", e);
         }
-      } catch (err) {
-        console.warn("Could not sync with appointments:", err);
-      }
 
-      try {
-        const ordersRef = collection(db, "glasses_orders");
-        const orderQueries = [];
-        if (oldPatientName) orderQueries.push(query(ordersRef, where("patientName", "==", oldPatientName)));
-        const orderSnaps = await Promise.all(orderQueries.map((q) => getDocs(q)));
-        const uniqueOrders = new Map<string, any>();
-        orderSnaps.forEach((s) => s.docs.forEach((d) => uniqueOrders.set(d.id, d.data())));
-        if (oldPatientName !== newPatientName) {
-          await Promise.all(
-            Array.from(uniqueOrders.keys()).map((docId) =>
-              updateDoc(doc(db, "glasses_orders", docId), removeUndefined({ patientName: newPatientName })),
-            ),
-          );
+        try {
+          const docsRef = collection(db, "medicalDocuments");
+          const docQueries = [];
+          if (oldPatientName) docQueries.push(query(docsRef, where("patientName", "==", oldPatientName)));
+          const docSnaps = await Promise.all(docQueries.map((q) => getDocs(q)));
+          const uniqueDocs = new Map<string, any>();
+          docSnaps.forEach((s) => s.docs.forEach((d) => uniqueDocs.set(d.id, d.data())));
+          if (oldPatientName !== newPatientName) {
+            await Promise.all(
+              Array.from(uniqueDocs.keys()).map((docId) =>
+                updateDoc(doc(db, "medicalDocuments", docId), removeUndefined({ patientName: newPatientName })),
+              ),
+            );
+          }
+        } catch (e) {
+          console.warn("Could not sync medicalDocuments:", e);
         }
-      } catch (e) {
-        console.warn("Could not sync glasses_orders:", e);
-      }
-
-      try {
-        const docsRef = collection(db, "medicalDocuments");
-        const docQueries = [];
-        if (oldPatientName) docQueries.push(query(docsRef, where("patientName", "==", oldPatientName)));
-        const docSnaps = await Promise.all(docQueries.map((q) => getDocs(q)));
-        const uniqueDocs = new Map<string, any>();
-        docSnaps.forEach((s) => s.docs.forEach((d) => uniqueDocs.set(d.id, d.data())));
-        if (oldPatientName !== newPatientName) {
-          await Promise.all(
-            Array.from(uniqueDocs.keys()).map((docId) =>
-              updateDoc(doc(db, "medicalDocuments", docId), removeUndefined({ patientName: newPatientName })),
-            ),
-          );
-        }
-      } catch (e) {
-        console.warn("Could not sync medicalDocuments:", e);
-      }
+      })();
 
       return true;
     } catch (error) {
@@ -10923,6 +11264,46 @@ export default function App() {
     return canvas.toDataURL("image/png");
   };
 
+  const triggerPdfPrint = (doc: jsPDF, filename?: string) => {
+    try {
+      doc.autoPrint();
+      const pdfBlob = doc.output("blob");
+      const blobUrl = URL.createObjectURL(pdfBlob);
+      const iframe = document.createElement("iframe");
+      iframe.style.position = "fixed";
+      iframe.style.right = "0";
+      iframe.style.bottom = "0";
+      iframe.style.width = "0";
+      iframe.style.height = "0";
+      iframe.style.border = "0";
+      iframe.src = blobUrl;
+      document.body.appendChild(iframe);
+      iframe.onload = () => {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        } catch (err) {
+          console.warn("Direct iframe print invocation notice:", err);
+        }
+        setTimeout(() => {
+          try {
+            document.body.removeChild(iframe);
+            URL.revokeObjectURL(blobUrl);
+          } catch {}
+        }, 60000);
+      };
+    } catch (err) {
+      console.warn("Could not create print iframe:", err);
+    }
+    if (filename) {
+      try {
+        doc.save(filename);
+      } catch (e) {
+        console.warn("doc.save notice:", e);
+      }
+    }
+  };
+
   const printGlassesOrder = () => {
     if (!currentMedicalRecord || !currentMedicalRecord.glassesOrder) return;
     const order = currentMedicalRecord.glassesOrder;
@@ -11480,7 +11861,8 @@ export default function App() {
     doc.text("SEMNATURA OPTICIAN", 40, 285);
     doc.text("SEMNATURA CLIENT", 150, 285);
 
-    doc.save(
+    triggerPdfPrint(
+      doc,
       `Comanda_${normalize(order.orderNumber)}_${normalize(currentMedicalRecord.patientName)}.pdf`,
     );
   };
@@ -13018,16 +13400,28 @@ export default function App() {
         setReschedulingAppointment(null);
         setRescheduleAsControl(false);
 
-        await syncMedicalRecord(
-          patientName,
-          valPhone,
-          calculatedAge,
-          patientBirthDate,
-          patientSex,
-          reschedulingAppointment?.patientName,
-          reschedulingAppointment?.patientPhone,
-        );
+        const oldCalendarName = (reschedulingAppointment?.patientName || "").trim();
+        const newCalendarName = patientName.trim();
+        if (oldCalendarName && newCalendarName && oldCalendarName !== newCalendarName) {
+          await renamePatientEverywhere(
+            oldCalendarName,
+            newCalendarName,
+            valPhone,
+          );
+        } else {
+          await syncMedicalRecord(
+            patientName,
+            valPhone,
+            calculatedAge,
+            patientBirthDate,
+            patientSex,
+            reschedulingAppointment?.patientName,
+            reschedulingAppointment?.patientPhone,
+          );
+        }
       } else if (editingAppointment) {
+        const oldCalendarName = (editingAppointment.patientName || "").trim();
+        const newCalendarName = patientName.trim();
         await updateDoc(
           doc(db, "appointments", editingAppointment.id),
           removeUndefined({
@@ -13044,15 +13438,23 @@ export default function App() {
             endTime: endTime.toISOString(),
           }),
         );
-        await syncMedicalRecord(
-          patientName,
-          valPhone,
-          calculatedAge,
-          patientBirthDate,
-          patientSex,
-          editingAppointment?.patientName,
-          editingAppointment?.patientPhone,
-        );
+        if (oldCalendarName && newCalendarName && oldCalendarName !== newCalendarName) {
+          await renamePatientEverywhere(
+            oldCalendarName,
+            newCalendarName,
+            valPhone,
+          );
+        } else {
+          await syncMedicalRecord(
+            patientName,
+            valPhone,
+            calculatedAge,
+            patientBirthDate,
+            patientSex,
+            editingAppointment?.patientName,
+            editingAppointment?.patientPhone,
+          );
+        }
       } else {
         await addDoc(
           collection(db, "appointments"),
@@ -15820,7 +16222,8 @@ export default function App() {
     }
 
     addPageNumbers();
-    doc.save(
+    triggerPdfPrint(
+      doc,
       `Prescriptie_${cleanStr(currentMedicalRecord.patientName).replace(/\s+/g, "_")}.pdf`,
     );
   };
@@ -16101,7 +16504,8 @@ export default function App() {
     doc.setTextColor(0);
     doc.setFont("helvetica", "normal");
 
-    doc.save(
+    triggerPdfPrint(
+      doc,
       `Tratament_${currentMedicalRecord.patientName.replace(/\s+/g, "_")}.pdf`,
     );
   };
@@ -16759,9 +17163,21 @@ export default function App() {
   };
 
   const handleSaveAndPrintDocument = async (printMyopiaToo = false) => {
-    if (!currentMedicalRecord) return;
+    let activeRec = currentMedicalRecord;
+    if (!activeRec && activeAppointment) {
+      activeRec =
+        findPatientMedicalRecord(
+          activeAppointment.patientName,
+          activeAppointment.patientPhone,
+          activeAppointment.patientCnp,
+          medicalRecords,
+        ) || null;
+      if (activeRec) {
+        setCurrentMedicalRecord(activeRec);
+      }
+    }
 
-    let latestRecord = currentMedicalRecord;
+    let latestRecord = activeRec || currentMedicalRecord;
 
     let currentRegNum = documentForm.documentNumber || "";
     if (!currentRegNum) {
@@ -16778,19 +17194,27 @@ export default function App() {
 
     const currentPrescriptionDate =
       activePrescriptionIndex !== null &&
-      currentMedicalRecord.prescriptionHistory?.[activePrescriptionIndex]
-        ? currentMedicalRecord.prescriptionHistory[activePrescriptionIndex].date
-        : (currentMedicalRecord.updatedAt || currentMedicalRecord.createdAt || new Date().toISOString());
+      activeRec?.prescriptionHistory?.[activePrescriptionIndex]
+        ? activeRec.prescriptionHistory[activePrescriptionIndex].date
+        : (activeRec?.updatedAt || activeRec?.createdAt || new Date().toISOString());
+
+    const resolvedPatientName = (
+      finalFormValues.patientName ||
+      `${finalFormValues.lastName || ""} ${finalFormValues.firstName || ""}`.trim() ||
+      activeRec?.patientName ||
+      "Pacient"
+    ).trim();
+
+    const resolvedPatientPhone = (
+      activeRec?.patientPhone ||
+      finalFormValues.patientPhone ||
+      ""
+    ).trim();
 
     const documentRecord = {
       type: activeDocumentModal,
-      patientName: (
-        finalFormValues.patientName ||
-        `${finalFormValues.lastName || ""} ${finalFormValues.firstName || ""}`.trim() ||
-        currentMedicalRecord?.patientName ||
-        "Pacient"
-      ).trim(),
-      patientPhone: currentMedicalRecord.patientPhone || "",
+      patientName: resolvedPatientName,
+      patientPhone: resolvedPatientPhone,
       date: editingMedicalDocId
         ? medicalDocuments.find((d) => d.id === editingMedicalDocId)?.date ||
           getActiveDate().toISOString()
@@ -16801,107 +17225,177 @@ export default function App() {
       prescriptionDate: currentPrescriptionDate,
     };
 
-    try {
-      if (editingMedicalDocId) {
-        await setDoc(
-          doc(db, "medicalDocuments", editingMedicalDocId),
-          documentRecord,
-          { merge: true },
-        );
-        setSuccessMessage(
-          "Document modificat! Nu uitați să apăsați 'Salvează Fișa' în ecranul principal pentru fișa pacientului!",
-        );
-      } else {
-        await addDoc(collection(db, "medicalDocuments"), documentRecord);
-        setSuccessMessage(
-          "Document adăugat în registru! Nu uitați să apăsați 'Salvează Fișa' în ecranul principal pentru fișa pacientului!",
-        );
-      }
+    const savedDocId = editingMedicalDocId || `doc_${Date.now()}`;
+    const docWithId = { id: savedDocId, ...documentRecord };
 
+    // 1. Immediately update local state in React so it appears in the register instantly!
+    setMedicalDocuments((prev) => {
+      const filtered = prev.filter((d) => d.id !== savedDocId);
+      return [docWithId, ...filtered];
+    });
+
+    // 2. Cloud persistence for medicalDocuments (non-blocking)
+    (async () => {
+      try {
+        if (editingMedicalDocId) {
+          await setDoc(
+            doc(db, "medicalDocuments", editingMedicalDocId),
+            documentRecord,
+            { merge: true },
+          );
+        } else {
+          await setDoc(doc(db, "medicalDocuments", savedDocId), documentRecord);
+        }
+      } catch (err) {
+        console.warn("Cloud save error for medicalDocuments:", err);
+      }
+    })();
+
+    // 3. Sync all clinical observations & details from documentForm into activeRec
+    if (activeRec) {
       const axOd = finalFormValues.axialLengthOd || "";
       const axOs = finalFormValues.axialLengthOs || "";
-      if (axOd || axOs) {
-        const docDate = documentRecord.date;
-        let updatedHistory = [...(currentMedicalRecord.prescriptionHistory || [])];
+      const diagVal = finalFormValues.diagnostic || activeRec.diagnostic || "";
+      const treatVal = finalFormValues.treatment || activeRec.treatment || "";
+      const sympVal = finalFormValues.symptoms || activeRec.symptoms || "";
+      const histVal = finalFormValues.history || activeRec.history || "";
+      const medVal = finalFormValues.medications || activeRec.medications || "";
+      const otherDiseasesVal = finalFormValues.otherEyeDiseases || activeRec.otherEyeDiseases || "";
+      const interpVal = finalFormValues.examinationInterpretation || activeRec.examinationInterpretation || "";
+      const planVal = finalFormValues.recoveryPlan || activeRec.recoveryPlan || "";
+      const progVal = finalFormValues.recoveryPrognosis || activeRec.recoveryPrognosis || "";
+      const clinTreatVal = finalFormValues.clinicalTreatment || activeRec.clinicalTreatment || treatVal;
 
-        const docTime = new Date(docDate).getTime();
-        const existingIdx = updatedHistory.findIndex(h => {
-          return Math.abs(new Date(h.date).getTime() - docTime) < 60000;
-        });
+      const iopVal = {
+        od: finalFormValues.iopOd || activeRec.iop?.od || "",
+        os: finalFormValues.iopOs || activeRec.iop?.os || "",
+      };
+      const corrIopVal = {
+        od: finalFormValues.correctedIopOd || activeRec.correctedIop?.od || "",
+        os: finalFormValues.correctedIopOs || activeRec.correctedIop?.os || "",
+      };
+      const pachyVal = {
+        od: finalFormValues.pachymetryOd || activeRec.pachymetry?.od || "",
+        os: finalFormValues.pachymetryOs || activeRec.pachymetry?.os || "",
+      };
+      const axialVal = {
+        od: axOd || activeRec.axialLength?.od || "",
+        os: axOs || activeRec.axialLength?.os || "",
+      };
+      const antSegVal = {
+        od: finalFormValues.anteriorSegmentOd || (activeRec as any).anteriorSegment?.od || "",
+        os: finalFormValues.anteriorSegmentOs || (activeRec as any).anteriorSegment?.os || "",
+      };
+      const postSegVal = {
+        od: finalFormValues.posteriorSegmentOd || (activeRec as any).posteriorSegment?.od || "",
+        os: finalFormValues.posteriorSegmentOs || (activeRec as any).posteriorSegment?.os || "",
+      };
 
-        if (existingIdx !== -1) {
-          updatedHistory[existingIdx] = {
-            ...updatedHistory[existingIdx],
-            axialLength: { od: axOd, os: axOs }
-          };
-        } else {
-          updatedHistory.push({
-            date: docDate,
-            od: { sph: "", cyl: "", axis: "", add: "", pd: "", prism: "", base: "", va_without: "", va_with: "" },
-            os: { sph: "", cyl: "", axis: "", add: "", pd: "", prism: "", base: "", va_without: "", va_with: "" },
-            dp: "",
-            specialMentions: `Lungime axială înregistrată din documentul tip: ${activeDocumentModal?.toUpperCase()}`,
-            treatment: "",
-            diagnostic: "",
-            axialLength: { od: axOd, os: axOs }
-          });
-          updatedHistory.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        }
+      const docDate = documentRecord.date;
+      let updatedHistory = [...(activeRec.prescriptionHistory || [])];
+      const docTime = new Date(docDate).getTime();
+      const existingIdx = updatedHistory.findIndex((h) => {
+        return Math.abs(new Date(h.date).getTime() - docTime) < 60000;
+      });
 
-        const updatedRecord = {
-          ...currentMedicalRecord,
-          axialLength: {
-            od: axOd || currentMedicalRecord.axialLength?.od || "",
-            os: axOs || currentMedicalRecord.axialLength?.os || "",
-          },
-          prescriptionHistory: updatedHistory,
-          updatedAt: new Date().toISOString()
-        };
+      const updatedHistoryItem: PrescriptionHistoryItem = {
+        ...(existingIdx !== -1 ? updatedHistory[existingIdx] : {
+          date: docDate,
+          od: { sph: "", cyl: "", axis: "", add: "", pd: "", prism: "", base: "", va_without: "", va_with: "" },
+          os: { sph: "", cyl: "", axis: "", add: "", pd: "", prism: "", base: "", va_without: "", va_with: "" },
+          dp: "",
+        }),
+        specialMentions: (existingIdx !== -1 ? updatedHistory[existingIdx]?.specialMentions : "") || activeRec.specialMentions || "",
+        diagnostic: diagVal,
+        treatment: treatVal,
+        symptoms: sympVal,
+        history: histVal,
+        medications: medVal,
+        clinicalTreatment: clinTreatVal,
+        recoveryPlan: planVal,
+        recoveryPrognosis: progVal,
+        examinationInterpretation: interpVal,
+        iop: iopVal,
+        correctedIop: corrIopVal,
+        pachymetry: pachyVal,
+        axialLength: axialVal,
+        anteriorSegment: antSegVal,
+        posteriorSegment: postSegVal,
+      };
 
-        latestRecord = updatedRecord;
-        setCurrentMedicalRecord(updatedRecord);
-
-        await setDoc(
-          doc(db, "medicalRecords", currentMedicalRecord.id),
-          updatedRecord,
-          { merge: true }
-        );
+      if (existingIdx !== -1) {
+        updatedHistory[existingIdx] = updatedHistoryItem;
+      } else {
+        updatedHistory.unshift(updatedHistoryItem);
       }
-    } catch (err) {
-      console.error("Error saving medical document:", err);
-      setErrorMessage("Eroare la salvarea documentului!");
+
+      const updatedRecord: MedicalRecord = {
+        ...activeRec,
+        diagnostic: diagVal,
+        treatment: treatVal,
+        symptoms: sympVal,
+        history: histVal,
+        medications: medVal,
+        otherEyeDiseases: otherDiseasesVal,
+        examinationInterpretation: interpVal,
+        recoveryPlan: planVal,
+        recoveryPrognosis: progVal,
+        clinicalTreatment: clinTreatVal,
+        iop: iopVal,
+        correctedIop: corrIopVal,
+        pachymetry: pachyVal,
+        axialLength: axialVal,
+        anteriorSegment: antSegVal,
+        posteriorSegment: postSegVal,
+        prescriptionHistory: updatedHistory,
+        updatedAt: new Date().toISOString(),
+      };
+
+      latestRecord = updatedRecord;
+      setCurrentMedicalRecord(updatedRecord);
+      setMedicalRecords((prev) =>
+        prev.map((r) => (r.id === updatedRecord.id ? updatedRecord : r))
+      );
+
+      // Save updated medicalRecord to Firestore (non-blocking)
+      setDoc(
+        doc(db, "medicalRecords", activeRec.id),
+        removeUndefined(updatedRecord),
+        { merge: true }
+      ).catch((err) => console.warn("Firestore medicalRecords sync notice:", err));
     }
 
     setDocumentForm(finalFormValues);
+    setSuccessMessage("Documentul a fost salvat cu succes în registru și în fișa pacientului!");
+
+    const currentDocType = activeDocumentModal;
+    setActiveDocumentModal(null);
+    setEditingMedicalDocId(null);
 
     setTimeout(() => {
       try {
-        if (activeDocumentModal === "adeverinta") {
+        if (currentDocType === "adeverinta") {
           printAdeverintaMedicala();
-        } else if (activeDocumentModal === "referat") {
+        } else if (currentDocType === "referat") {
           printReferat();
-        } else if (activeDocumentModal === "raport") {
+        } else if (currentDocType === "raport") {
           printRaportMedical();
           if (printMyopiaToo) {
             handlePrintBothMyopiaChartsA4(latestRecord);
           }
-        } else if (activeDocumentModal === "certificat") {
+        } else if (currentDocType === "certificat") {
           printCertificat();
-        } else if (activeDocumentModal === "expertiza") {
+        } else if (currentDocType === "expertiza") {
           printExpertiza();
         }
-
-        setActiveDocumentModal(null);
-        setEditingMedicalDocId(null);
       } catch (err) {
         console.error("Eroare la generarea documentului PDF:", err);
-        alert(
+        setErrorMessage(
           "Eroare la generarea documentului PDF: " +
-            (err instanceof Error ? err.message : String(err)) +
-            "\n\nNotă: Datele au fost înregistrate în baza de date cu succes, dar documentul PDF nu s-a putut descărca. Corectați datele sau reîncercați.",
+            (err instanceof Error ? err.message : String(err))
         );
       }
-    }, 100);
+    }, 50);
   };
 
   const printAdeverintaMedicala = () => {
@@ -17136,7 +17630,8 @@ export default function App() {
       );
     }
 
-    doc.save(
+    triggerPdfPrint(
+      doc,
       `Adeverinta_${cleanStr(documentForm.patientName).replace(/\s+/g, "_")}.pdf`,
     );
   };
@@ -17651,7 +18146,8 @@ export default function App() {
     doc.setFontSize(8);
     doc.text("pag 2/2", pageWidth / 2, pageHeight - 10, { align: "center" });
 
-    doc.save(
+    triggerPdfPrint(
+      doc,
       `Referat_Medical_${cleanStr(documentForm.patientName).replace(/\s+/g, "_")}.pdf`,
     );
   };
@@ -18090,7 +18586,7 @@ export default function App() {
       `Raport_Medical_${cleanStr(documentForm.lastName || "")}_${cleanStr(documentForm.firstName || "")}`
         .replace(/_+/g, "_")
         .replace(/_$/, "");
-    doc.save(`${pdfName || "Raport_Medical"}.pdf`);
+    triggerPdfPrint(doc, `${pdfName || "Raport_Medical"}.pdf`);
   };
 
   const printCertificat = () => {
@@ -18385,8 +18881,8 @@ export default function App() {
     y += 5;
     doc.text("L.S.", pageWidth - 40, y);
 
-    doc.autoPrint();
-    doc.save(
+    triggerPdfPrint(
+      doc,
       `Certificat_Medical_${cleanStr(documentForm.patientName).replace(/\s+/g, "_")}.pdf`,
     );
   };
@@ -18650,7 +19146,8 @@ export default function App() {
       y,
     );
 
-    doc.save(
+    triggerPdfPrint(
+      doc,
       `Expertiza_Medicala_${cleanStr(documentForm.patientName).replace(/\s+/g, "_")}.pdf`,
     );
   };
@@ -25694,13 +26191,8 @@ export default function App() {
                       <div className="flex items-center gap-1.5">
                         <input
                           type="text"
-                          value={currentMedicalRecord.patientName}
-                          onChange={(e) => {
-                            setCurrentMedicalRecord({
-                              ...currentMedicalRecord,
-                              patientName: e.target.value,
-                            });
-                          }}
+                          value={tempPatientName}
+                          onChange={(e) => setTempPatientName(e.target.value)}
                           className={cn(
                             "px-2 py-0.5 border rounded-lg text-2xl sm:text-3xl outline-none focus:ring-2 focus:ring-blue-500 font-black",
                             darkMode
@@ -25708,28 +26200,49 @@ export default function App() {
                               : "bg-white border-slate-200 text-slate-900",
                           )}
                           autoFocus
-                          onKeyDown={(e) => {
+                          onKeyDown={async (e) => {
                             if (e.key === "Enter") {
+                              const newName = tempPatientName.trim();
+                              if (newName && newName !== currentMedicalRecord.patientName) {
+                                await renamePatientEverywhere(
+                                  currentMedicalRecord.patientName,
+                                  newName,
+                                  currentMedicalRecord.patientPhone,
+                                  currentMedicalRecord.patientCnp,
+                                  currentMedicalRecord.id,
+                                );
+                              }
                               setIsEditingPatientName(false);
-                              syncPatientDetailsInDB(
-                                "name",
-                                currentMedicalRecord.patientName,
-                              );
+                            } else if (e.key === "Escape") {
+                              setIsEditingPatientName(false);
                             }
                           }}
                         />
                         <button
-                          onClick={() => {
+                          onClick={async () => {
+                            const newName = tempPatientName.trim();
+                            if (newName && newName !== currentMedicalRecord.patientName) {
+                              await renamePatientEverywhere(
+                                currentMedicalRecord.patientName,
+                                newName,
+                                currentMedicalRecord.patientPhone,
+                                currentMedicalRecord.patientCnp,
+                                currentMedicalRecord.id,
+                              );
+                            }
                             setIsEditingPatientName(false);
-                            syncPatientDetailsInDB(
-                              "name",
-                              currentMedicalRecord.patientName,
-                            );
                           }}
-                          className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition-colors text-emerald-500"
-                          title="Confirmă numele"
+                          className="p-1 hover:bg-emerald-500/20 text-emerald-500 rounded-full transition-colors cursor-pointer"
+                          title="Confirmă noul nume peste tot"
                         >
                           <Check className="w-5 h-5" />
+                        </button>
+                        <button
+                          onClick={() => setIsEditingPatientName(false)}
+                          className="p-1 hover:bg-rose-500/20 text-rose-500 rounded-full transition-colors cursor-pointer"
+                          title="Anulează editarea numelui"
+                        >
+                          <X className="w-5 h-5" />
                         </button>
                       </div>
                     ) : (
@@ -25916,9 +26429,12 @@ export default function App() {
                           })()}
                         </h2>
                         <button
-                          onClick={() => setIsEditingPatientName(true)}
-                          className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors opacity-65 hover:opacity-100"
-                          title="Editează numele"
+                          onClick={() => {
+                            setTempPatientName(currentMedicalRecord.patientName);
+                            setIsEditingPatientName(true);
+                          }}
+                          className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors opacity-65 hover:opacity-100 cursor-pointer"
+                          title="Editează numele pacientului peste tot"
                         >
                           <Pencil className="w-4 h-4 text-slate-500" />
                         </button>
@@ -32471,15 +32987,18 @@ export default function App() {
               <div className="mt-8 flex flex-col sm:flex-row gap-4">
                 {/* Save only button on the left (previously print) */}
                 <button
+                  type="button"
+                  id="save-medical-record-btn"
                   onClick={async () => {
                     await saveMedicalRecord(true);
                   }}
                   disabled={loading}
                   className={cn(
-                    "px-6 py-4 font-bold rounded-xl transition-all border flex items-center justify-center gap-2 shrink-0 shadow-lg shadow-blue-500/10",
+                    "px-6 py-4 font-bold rounded-xl transition-all border flex items-center justify-center gap-2 shrink-0 shadow-lg shadow-blue-500/10 cursor-pointer active:scale-[0.99]",
                     darkMode
                       ? "bg-blue-600 hover:bg-blue-700 text-white border-blue-700"
                       : "bg-blue-600 hover:bg-blue-700 text-white border-blue-600",
+                    loading && "opacity-60 cursor-not-allowed",
                   )}
                 >
                   <Save className="w-5 h-5" />
@@ -32603,16 +33122,36 @@ export default function App() {
                       </>
                     )}
                   </div>
-                  {/* Save and print button on the right (previously save) */}
+                  {/* Save and print button on the right */}
                   <button
+                    type="button"
+                    id="save-and-print-medical-record-btn"
                     onClick={async () => {
-                      const success = await saveMedicalRecord();
+                      const hasDiopters =
+                        currentMedicalRecord.od?.sph ||
+                        currentMedicalRecord.od?.cyl ||
+                        currentMedicalRecord.os?.sph ||
+                        currentMedicalRecord.os?.cyl;
+
+                      if (hasDiopters && !currentMedicalRecord.dp) {
+                        setBookingError("Lipsește distanța interpupilară (DP) pentru prescripție!");
+                        setErrorMessage("Atenție: Introduceți distanța interpupilară (DP) pentru a printa prescripția!");
+                        return;
+                      }
+
+                      const success = await saveMedicalRecord(false);
                       if (success) {
-                        printPrescription();
+                        try {
+                          printPrescription();
+                          setSuccessMessage("Fișa a fost salvată și prescripția a fost trimisă la tipărire!");
+                        } catch (pErr) {
+                          console.error("Print prescription error:", pErr);
+                          setErrorMessage("Eroare la generarea prescripției pentru tipărire!");
+                        }
                       }
                     }}
                     disabled={loading}
-                    className="flex-1 px-6 py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all shadow-lg shadow-emerald-900/20 disabled:opacity-50 flex items-center justify-center gap-2 text-center"
+                    className="flex-1 px-6 py-4 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold rounded-xl transition-all shadow-lg shadow-emerald-900/20 disabled:opacity-50 flex items-center justify-center gap-2 text-center cursor-pointer"
                   >
                     {loading ? (
                       "Se salvează..."
