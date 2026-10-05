@@ -7,10 +7,23 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Normalize URLs in case Vercel rewrites strip the /api prefix
+// Normalize URLs in case Vercel rewrites strip the /api prefix for API routes only
+const KNOWN_API_ENDPOINTS = [
+  "/notify-login",
+  "/notify-booking",
+  "/users",
+  "/login",
+  "/currency-history",
+  "/bnr-rates",
+  "/verify-recaptcha",
+];
+
 app.use((req, _res, next) => {
   if (req.url && !req.url.startsWith("/api")) {
-    req.url = "/api" + (req.url.startsWith("/") ? req.url : "/" + req.url);
+    const isApiEndpoint = KNOWN_API_ENDPOINTS.some((ep) => req.url.startsWith(ep));
+    if (isApiEndpoint) {
+      req.url = "/api" + (req.url.startsWith("/") ? req.url : "/" + req.url);
+    }
   }
   next();
 });

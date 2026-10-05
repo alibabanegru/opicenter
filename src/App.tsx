@@ -154,6 +154,7 @@ import {
   signOut,
   signInWithEmailAndPassword,
   setPersistence,
+  browserLocalPersistence,
   browserSessionPersistence,
   User as FirebaseUser,
 } from "firebase/auth";
@@ -1114,8 +1115,7 @@ export default function App() {
 
   const [profile, setProfileState] = useState<UserProfile | null>(() => {
     try {
-      localStorage.removeItem("clinic_user");
-      const saved = sessionStorage.getItem("clinic_user");
+      const saved = sessionStorage.getItem("clinic_user") || localStorage.getItem("clinic_user");
       if (!saved) return null;
       const parsed = JSON.parse(saved);
       if (
@@ -1153,7 +1153,7 @@ export default function App() {
   const [patientLoginEmail, setPatientLoginEmail] = useState("");
   const [googleUser, setGoogleUser] = useState<FirebaseUser | null>(() => {
     try {
-      const saved = sessionStorage.getItem("clinic_user");
+      const saved = sessionStorage.getItem("clinic_user") || localStorage.getItem("clinic_user");
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed?.role === "patient") {
@@ -1456,12 +1456,14 @@ export default function App() {
   };
 
   useEffect(() => {
-    setPersistence(auth, browserSessionPersistence).catch(() => {});
+    setPersistence(auth, browserLocalPersistence).catch(() => {
+      setPersistence(auth, browserSessionPersistence).catch(() => {});
+    });
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setGoogleUser(user);
 
-        const savedProfileStr = sessionStorage.getItem("clinic_user");
+        const savedProfileStr = sessionStorage.getItem("clinic_user") || localStorage.getItem("clinic_user");
         let initialProfile: UserProfile | null = null;
         if (savedProfileStr) {
           try {
@@ -1486,6 +1488,7 @@ export default function App() {
           };
           setProfile(newProfile);
           sessionStorage.setItem("clinic_user", JSON.stringify(newProfile));
+          localStorage.setItem("clinic_user", JSON.stringify(newProfile));
 
           try {
             addDoc(collection(db, "connection_logs"), {
@@ -1500,7 +1503,7 @@ export default function App() {
           }
         }
       } else {
-        const savedProfileStr = sessionStorage.getItem("clinic_user");
+        const savedProfileStr = sessionStorage.getItem("clinic_user") || localStorage.getItem("clinic_user");
         if (savedProfileStr) {
           try {
             const savedProfile = JSON.parse(savedProfileStr);
@@ -1600,7 +1603,9 @@ export default function App() {
       }
 
       setRecaptchaVerifying(false);
-      await setPersistence(auth, browserSessionPersistence);
+      await setPersistence(auth, browserLocalPersistence).catch(() => {
+        return setPersistence(auth, browserSessionPersistence).catch(() => {});
+      });
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
       await signInWithPopup(auth, provider);
@@ -4696,6 +4701,27 @@ export default function App() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [tempConfigs, setTempConfigs] = useState<ScheduleConfig[]>([]);
+  const [isCheckingDbConnection, setIsCheckingDbConnection] = useState(false);
+
+  const handleRetryDbConnection = async () => {
+    setIsCheckingDbConnection(true);
+    try {
+      await getDocFromServer(doc(db, "settings", "clinic"));
+      setDbError(null);
+      setSuccessMessage("Conexiunea cu baza de date Firebase este activă și funcțională!");
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      if (msg.toLowerCase().includes("quota")) {
+        setErrorMessage(
+          "Serverul Firebase raportează încă limită depășită (Quota exceeded). Dacă ați trecut recent pe planul Blaze, propagarea poate dura câteva minute până la 1 oră.",
+        );
+      } else {
+        setErrorMessage("Eroare verificare conexiune: " + msg);
+      }
+    } finally {
+      setIsCheckingDbConnection(false);
+    }
+  };
 
   useEffect(() => {
     if (isConfigModalOpen) {
@@ -7132,6 +7158,7 @@ export default function App() {
         setProfile(newProfile);
         setShowAdminAppointments(false);
         sessionStorage.setItem("clinic_user", JSON.stringify(newProfile));
+        localStorage.setItem("clinic_user", JSON.stringify(newProfile));
         setPassword("");
         setSelectedLoginUser(null);
         setLoginError(false);
@@ -20005,6 +20032,7 @@ export default function App() {
       };
       setProfile(newProfile);
       sessionStorage.setItem("clinic_user", JSON.stringify(newProfile));
+      localStorage.setItem("clinic_user", JSON.stringify(newProfile));
     };
 
     return (
@@ -20472,6 +20500,7 @@ export default function App() {
               };
               setProfile(newProfile);
               sessionStorage.setItem("clinic_user", JSON.stringify(newProfile));
+              localStorage.setItem("clinic_user", JSON.stringify(newProfile));
             }}
             className={cn(
               "flex items-center gap-2 py-2 px-3.5 rounded-xl font-bold text-xs transition-all border cursor-pointer shadow-2xs active:scale-95",
@@ -20836,12 +20865,12 @@ export default function App() {
       )}
     >
       {dbError && (
-        <div className="bg-amber-600 dark:bg-amber-700 text-white p-3 text-center font-bold text-xs flex items-center justify-center gap-2 sticky top-0 z-50 shadow-md">
+        <div className="bg-amber-600 dark:bg-amber-700 text-white p-3 text-center font-bold text-xs flex flex-wrap items-center justify-center gap-2 sticky top-0 z-50 shadow-md">
           <AlertTriangle className="w-4.5 h-4.5 text-white animate-bounce shrink-0" />
-          <span>
+          <span className="max-w-4xl text-left sm:text-center">
             {dbError.toLowerCase().includes("quota") ? (
               <>
-                ⚠️ <strong>Limita zilnică Firestore (Free Quota) a fost depășită pentru astăzi!</strong> Aplicația continuă să ruleze folosind datele salvate în memoria cache. Noile adăugări sau modificări pot să nu fie salvate permanent pe server până când cotele se resetează sau se trece la planul Pay-As-You-Go.
+                ⚠️ <strong>Limita zilnică Firestore (Free Quota) a fost depășită pentru astăzi!</strong> Aplicația rulează normal folosind datele salvate în memoria cache. Dacă ați activat recent planul <strong>Blaze</strong>, serverele Google au adesea o scurtă întârziere de propagare până când elimină cota pe baza de date. Puteți verifica oricând conexiunea directă folosind butonul din dreapta.
               </>
             ) : (
               <>
@@ -20850,9 +20879,24 @@ export default function App() {
               </>
             )}
           </span>
-          <button onClick={() => setDbError(null)} className="ml-4 bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded text-[10px] uppercase font-black transition-colors">
-            X
-          </button>
+          <div className="flex items-center gap-2 shrink-0 ml-2">
+            <button
+              onClick={handleRetryDbConnection}
+              disabled={isCheckingDbConnection}
+              className="bg-white/20 hover:bg-white/30 text-white px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+              title="Verifică dacă baza de date s-a conectat"
+            >
+              <RefreshCw className={cn("w-3 h-3", isCheckingDbConnection && "animate-spin")} />
+              {isCheckingDbConnection ? "Se verifică..." : "Verifică conexiunea"}
+            </button>
+            <button
+              onClick={() => setDbError(null)}
+              className="bg-white/20 hover:bg-white/30 px-2 py-1 rounded text-[10px] uppercase font-black transition-colors cursor-pointer"
+              title="Închide acest avertisment"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
       {showScreenSaver && profile?.role !== "tv" && (
