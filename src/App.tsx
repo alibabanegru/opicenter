@@ -17038,11 +17038,19 @@ export default function App() {
           currentMedicalRecord.axialLength?.od ||
           (isSamePrescription ? prevForm?.axialLengthOd : "") ||
           patientFormGeneral?.axialLengthOd ||
+          (currentMedicalRecord.prescriptionHistory?.find((h: any) => h.axialLength?.od)?.axialLength?.od || "") ||
+          (currentMedicalRecord.axialLengthHistory && currentMedicalRecord.axialLengthHistory.length > 0
+            ? currentMedicalRecord.axialLengthHistory[currentMedicalRecord.axialLengthHistory.length - 1]?.od || ""
+            : "") ||
           "",
         axialLengthOs:
           currentMedicalRecord.axialLength?.os ||
           (isSamePrescription ? prevForm?.axialLengthOs : "") ||
           patientFormGeneral?.axialLengthOs ||
+          (currentMedicalRecord.prescriptionHistory?.find((h: any) => h.axialLength?.os)?.axialLength?.os || "") ||
+          (currentMedicalRecord.axialLengthHistory && currentMedicalRecord.axialLengthHistory.length > 0
+            ? currentMedicalRecord.axialLengthHistory[currentMedicalRecord.axialLengthHistory.length - 1]?.os || ""
+            : "") ||
           "",
         correctedIopOd:
           currentMedicalRecord.correctedIop?.od ||
@@ -18291,6 +18299,7 @@ export default function App() {
     ((documentForm: any, currentMedicalRecord: any) => {
       const doc = new jsPDF();
       const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
 
     const cleanStr = (str: any) => {
       if (!str) return "";
@@ -18716,6 +18725,301 @@ export default function App() {
       },
     );
     doc.setFont("helvetica", "normal");
+
+    // Check if axial length values were entered in the form or exist in the patient's record / history
+    const parseAxialNum = (v: any): number => {
+      if (typeof v === "number") return isNaN(v) ? 0 : v;
+      if (!v || typeof v !== "string") return 0;
+      const parsed = parseFloat(v.replace(/,/g, ".").replace(/[^0-9.]/g, ""));
+      return isNaN(parsed) ? 0 : parsed;
+    };
+
+    const formAxialOd = (documentForm.axialLengthOd || "").trim();
+    const formAxialOs = (documentForm.axialLengthOs || "").trim();
+    const parsedFormAxialOd = parseAxialNum(formAxialOd);
+    const parsedFormAxialOs = parseAxialNum(formAxialOs);
+
+    const recordAxialOd = currentMedicalRecord?.axialLength?.od || "";
+    const recordAxialOs = currentMedicalRecord?.axialLength?.os || "";
+    const parsedRecordAxialOd = parseAxialNum(recordAxialOd);
+    const parsedRecordAxialOs = parseAxialNum(recordAxialOs);
+
+    const hasAnyAxialData =
+      parsedFormAxialOd > 0 ||
+      parsedFormAxialOs > 0 ||
+      parsedRecordAxialOd > 0 ||
+      parsedRecordAxialOs > 0 ||
+      (currentMedicalRecord?.axialLengthHistory && currentMedicalRecord.axialLengthHistory.length > 0) ||
+      (currentMedicalRecord?.prescriptionHistory &&
+        currentMedicalRecord.prescriptionHistory.some((h: any) =>
+          parseAxialNum(h.axialLength?.od) > 0 || parseAxialNum(h.axialLength?.os) > 0
+        ));
+
+    if (hasAnyAxialData) {
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.text("pag 1/2", pageWidth / 2, pageHeight - 8, { align: "center" });
+
+      doc.addPage("a4", "portrait");
+
+      // Effective record for Myopia charts calculation
+      const effectiveRec: MedicalRecord = {
+        ...(currentMedicalRecord || {}),
+        id: currentMedicalRecord?.id || "temp_rec",
+        patientName:
+          currentMedicalRecord?.patientName ||
+          cleanStr(`${documentForm.lastName || ""} ${documentForm.firstName || ""}`.trim()) ||
+          "Pacient",
+        patientBirthDate: currentMedicalRecord?.patientBirthDate || "",
+        patientAge:
+          currentMedicalRecord?.patientAge ||
+          documentForm.ageSimple ||
+          (documentForm.ageDetailed ? parseInt(documentForm.ageDetailed, 10) : 0),
+        patientSex:
+          currentMedicalRecord?.patientSex ||
+          (documentForm.patientCnp ? getSexFromCNP(documentForm.patientCnp) : null) ||
+          "F",
+        axialLength: {
+          od: formAxialOd || recordAxialOd || "",
+          os: formAxialOs || recordAxialOs || "",
+        },
+      };
+
+      const sex: "M" | "F" = effectiveRec.patientSex === "M" ? "M" : "F";
+      const riskLabels = sex === "M" ? BOYS_RISK : GIRLS_RISK;
+      const chartD = sex === "M" ? MYOPIA_BOYS_DATA : MYOPIA_GIRLS_DATA;
+
+      const odData = getComprehensivePatientAxialData("OD", effectiveRec);
+      const osData = getComprehensivePatientAxialData("OS", effectiveRec);
+
+      const parseDateSafeLocal = (dStr: any): Date | null => {
+        if (!dStr) return null;
+        if (dStr instanceof Date) return isNaN(dStr.getTime()) ? null : dStr;
+        if (typeof dStr === "string") {
+          let d = new Date(dStr);
+          if (!isNaN(d.getTime())) return d;
+        }
+        return null;
+      };
+
+      const docDate = new Date();
+      const bDate = parseDateSafeLocal(effectiveRec.patientBirthDate);
+      let calculatedAge =
+        typeof effectiveRec.patientAge === "number"
+          ? effectiveRec.patientAge
+          : parseFloat(effectiveRec.patientAge || "0");
+      if (bDate) {
+        const diffY = (docDate.getTime() - bDate.getTime()) / (365.2425 * 86400000);
+        if (diffY >= 0 && diffY <= 120) calculatedAge = Math.round(diffY * 100) / 100;
+      }
+
+      if (parsedFormAxialOd > 0 && !odData.some((d) => Math.abs(d.axialLength - parsedFormAxialOd) < 0.01)) {
+        odData.push({
+          date: docDate.toISOString(),
+          age: calculatedAge,
+          axialLength: parsedFormAxialOd,
+          isFromHistory: false,
+          historyItem: null,
+          eye: "OD",
+        });
+      }
+
+      if (parsedFormAxialOs > 0 && !osData.some((d) => Math.abs(d.axialLength - parsedFormAxialOs) < 0.01)) {
+        osData.push({
+          date: docDate.toISOString(),
+          age: calculatedAge,
+          axialLength: parsedFormAxialOs,
+          isFromHistory: false,
+          historyItem: null,
+          eye: "OS",
+        });
+      }
+
+      const sortedOd = [...odData].sort((a, b) => a.age - b.age);
+      const sortedOs = [...osData].sort((a, b) => a.age - b.age);
+
+      let odPercentileStr = "";
+      if (sortedOd.length > 0) {
+        const lastVal = sortedOd[sortedOd.length - 1];
+        const agePoint = chartD.reduce((prev, curr) =>
+          Math.abs(curr.age - lastVal.age) < Math.abs(prev.age - lastVal.age) ? curr : prev,
+        );
+        const percentilesList = [98, 95, 90, 75, 50, 25, 10, 5, 2];
+        let closestP = 2;
+        for (const p of percentilesList) {
+          if (lastVal.axialLength >= (agePoint as any)[`p${p}`]) {
+            closestP = p;
+            break;
+          }
+        }
+        odPercentileStr = `Percentila ${closestP} (${riskLabels[`p${closestP}`]})`;
+      }
+
+      let osPercentileStr = "";
+      if (sortedOs.length > 0) {
+        const lastVal = sortedOs[sortedOs.length - 1];
+        const agePoint = chartD.reduce((prev, curr) =>
+          Math.abs(curr.age - lastVal.age) < Math.abs(prev.age - lastVal.age) ? curr : prev,
+        );
+        const percentilesList = [98, 95, 90, 75, 50, 25, 10, 5, 2];
+        let closestP = 2;
+        for (const p of percentilesList) {
+          if (lastVal.axialLength >= (agePoint as any)[`p${p}`]) {
+            closestP = p;
+            break;
+          }
+        }
+        osPercentileStr = `Percentila ${closestP} (${riskLabels[`p${closestP}`]})`;
+      }
+
+      // Top Clinic Header on Page 2
+      doc.setFontSize(7.5);
+      doc.setFont("helvetica", "normal");
+      doc.text("S.C. Optinoe Oftalmo Negreanu S.R.L. Cui 39902033 J3/1880/2018", 14, 11);
+      doc.text("Judetul: Arges, Pitesti, Str. Calea Bucuresti, bl.30, sc. A, ap.2", 14, 15);
+
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "bold");
+      doc.text(
+        `Nr. fisa / registru: ${documentForm.documentNumber || ""}`,
+        pageWidth - 14,
+        11,
+        { align: "right" },
+      );
+
+      // Page 2 Title
+      doc.setFontSize(13);
+      doc.setFont("helvetica", "bold");
+      doc.text("Management Miopie - Grafic Lungime Axială", pageWidth / 2, 23, { align: "center" });
+
+      // Patient Info Subtitle
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      const sexDisplay = sex === "M" ? "Masculin (Băiat)" : "Feminin (Fată)";
+      const displayAge = effectiveRec.patientBirthDate
+        ? calculateDetailedAge(effectiveRec.patientBirthDate)
+        : (documentForm.ageDetailed || documentForm.ageSimple || `${effectiveRec.patientAge || ""} ani`);
+      const dateFormatted = `${dZi}.${dLunaNumeric}.${dAn}`;
+      doc.text(
+        cleanStrForMyopia(
+          `Pacient: ${cleanStr(effectiveRec.patientName)} | Sex: ${sexDisplay} | Vârstă: ${displayAge} | Data: ${dateFormatted}`,
+        ),
+        pageWidth / 2,
+        28.5,
+        { align: "center" },
+      );
+
+      // Graph Dimensions
+      const chartWidth = 182;
+      const chartHeight = 92;
+      const chartStartX = 14;
+
+      // OD Section
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(37, 99, 235);
+      doc.text(cleanStrForMyopia("Ochi Drept (OD)"), 14, 35);
+      doc.setTextColor(0);
+
+      const latestOd = sortedOd.length > 0 ? sortedOd[sortedOd.length - 1] : null;
+      if (latestOd) {
+        doc.setFontSize(8.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(37, 99, 235);
+        doc.text(
+          `Valoare măsurată: ${latestOd.axialLength.toFixed(2)} mm (vârstă: ${latestOd.age.toFixed(1)} ani)`,
+          pageWidth - 14,
+          35,
+          { align: "right" },
+        );
+        doc.setTextColor(0);
+      }
+
+      drawMyopiaGraph(doc, chartStartX, 37, chartWidth, chartHeight, sex, sortedOd);
+
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.text(
+        cleanStrForMyopia(`Analiză Risc OD: ${odPercentileStr || "Nicio valoare înregistrată."}`),
+        14,
+        133.5,
+      );
+
+      // OS Section
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(16, 185, 129);
+      doc.text(cleanStrForMyopia("Ochi Stâng (OS)"), 14, 142);
+      doc.setTextColor(0);
+
+      const latestOs = sortedOs.length > 0 ? sortedOs[sortedOs.length - 1] : null;
+      if (latestOs) {
+        doc.setFontSize(8.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(16, 185, 129);
+        doc.text(
+          `Valoare măsurată: ${latestOs.axialLength.toFixed(2)} mm (vârstă: ${latestOs.age.toFixed(1)} ani)`,
+          pageWidth - 14,
+          142,
+          { align: "right" },
+        );
+        doc.setTextColor(0);
+      }
+
+      drawMyopiaGraph(doc, chartStartX, 144, chartWidth, chartHeight, sex, sortedOs);
+
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "bold");
+      doc.text(
+        cleanStrForMyopia(`Analiză Risc OS: ${osPercentileStr || "Nicio valoare înregistrată."}`),
+        14,
+        240.5,
+      );
+
+      // Bottom Section on Page 2
+      doc.setLineWidth(0.2);
+      doc.setDrawColor(200, 200, 200);
+      doc.line(14, 246, pageWidth - 14, 246);
+      doc.setDrawColor(0, 0, 0);
+
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "italic");
+      doc.text(
+        cleanStrForMyopia(
+          "Protocol clinic de urmărire a alungirii axiale conform curbelor de percentilă (Tideman et al., Erasmus University).",
+        ),
+        pageWidth / 2,
+        251,
+        { align: "center" },
+      );
+
+      // Date & Medic
+      doc.setFontSize(8.5);
+      doc.setFont("helvetica", "normal");
+      doc.text("Data:", 14, 261);
+      doc.setLineWidth(0.2);
+      doc.setDrawColor(180, 180, 180);
+      doc.line(24, 269.5, 64, 269.5);
+      doc.line(pageWidth - 74, 269.5, pageWidth - 14, 269.5);
+      doc.setLineWidth(1.0);
+      doc.setDrawColor(0, 0, 0);
+
+      doc.setFont("helvetica", "bold");
+      doc.text(`${dZi}.${dLunaNumeric}.${dAn}`, 44, 268.5, { align: "center" });
+
+      doc.setFont("helvetica", "normal");
+      doc.text("MEDIC CONSULTANT", pageWidth - 44, 261, { align: "center" });
+      doc.setFont("helvetica", "bold");
+      doc.text(cleanStr(documentForm.doctorName || ""), pageWidth - 44, 268.5, { align: "center" });
+
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.text("pag 2/2", pageWidth / 2, pageHeight - 8, { align: "center" });
+    } else {
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.text("pag 1/1", pageWidth / 2, pageHeight - 8, { align: "center" });
+    }
 
     const pdfName =
       `Raport_Medical_${cleanStr(documentForm.lastName || "")}_${cleanStr(documentForm.firstName || "")}`

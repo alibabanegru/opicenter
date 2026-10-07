@@ -799,21 +799,28 @@ export const SYMPTOM_OPTIONS = [
 ];
 
 export const DEFAULT_DIAGNOSTICS = [
-  "Miopie",
-  "Astigmatism",
-  "Hipermetropie",
-  "Presbiopie",
-  "Cataractă senilă",
-  "Glaucom primitiv cu unghi deschis",
-  "Glaucom secundar",
-  "Conjunctivită acută",
-  "Blefarită cronică",
-  "Degenerescență maculară (DMLV)",
-  "Sindrom de ochi uscat",
-  "Chalazion acut",
-  "Hordeolum (Ulcior)",
-  "Pterigion",
-  "Pingueculă",
+  "Miopie (diagnostic CIM - H52.1)",
+  "Astigmatism (diagnostic CIM - H52.2)",
+  "Hipermetropie (diagnostic CIM - H52.0)",
+  "Presbiopie (diagnostic CIM - H52.4)",
+  "Anizometropie (diagnostic CIM - H52.3)",
+  "Spasm de acomodare (diagnostic CIM - H52.51)",
+  "Pareză de acomodare (diagnostic CIM - H52.52)",
+  "Tulburări de acomodare (diagnostic CIM - H52.5)",
+  "Alte vicii de refracție (diagnostic CIM - H52.6)",
+  "Viciu de refracție, nespecificat (diagnostic CIM - H52.7)",
+  "Miopie degenerativă (diagnostic CIM - H44.2)",
+  "Cataractă senilă (diagnostic CIM - H25.9)",
+  "Glaucom primitiv cu unghi deschis (diagnostic CIM - H40.1)",
+  "Glaucom secundar (diagnostic CIM - H40.5)",
+  "Conjunctivită acută (diagnostic CIM - H10.1)",
+  "Blefarită cronică (diagnostic CIM - H01.0)",
+  "Degenerescență maculară (DMLV) (diagnostic CIM - H35.3)",
+  "Sindrom de ochi uscat (diagnostic CIM - H04.1)",
+  "Chalazion acut (diagnostic CIM - H00.1)",
+  "Hordeolum (Ulcior) (diagnostic CIM - H00.0)",
+  "Pterigion (diagnostic CIM - H11.0)",
+  "Pingueculă (diagnostic CIM - H11.1)",
 ];
 
 export const DEFAULT_RECOMMENDATIONS = [
@@ -1126,6 +1133,11 @@ export const getEyeDiag = (eye: EyePrescription, prefix: string) => {
 
   if (!hasSph && !hasCyl && !hasAdd) return "";
 
+  const isOD = prefix.toUpperCase().includes("OD");
+  const isOS = prefix.toUpperCase().includes("OS");
+  const myopiaCode = isOD ? "H52.11" : isOS ? "H52.12" : "H52.1";
+  const hyperCode = isOD ? "H52.01" : isOS ? "H52.02" : "H52.0";
+
   let parts = [];
 
   if (hasCyl) {
@@ -1137,15 +1149,15 @@ export const getEyeDiag = (eye: EyePrescription, prefix: string) => {
     if (Math.abs(p1) < 0.01 || Math.abs(p2) < 0.01) {
       const nonZeroMeridian = Math.abs(p1) < 0.01 ? p2 : p1;
       if (nonZeroMeridian < 0) {
-        parts.push("Astigmatism miopic simplu");
+        parts.push("Astigmatism miopic simplu (diagnostic CIM - H52.22)");
       } else if (nonZeroMeridian > 0) {
-        parts.push("Astigmatism hipermetropic simplu");
+        parts.push("Astigmatism hipermetropic simplu (diagnostic CIM - H52.22)");
       } else {
         parts.push("Emetropie");
       }
     } else {
       if (p1 * p2 < 0) {
-        parts.push("Astigmatism mixt");
+        parts.push("Astigmatism mixt (diagnostic CIM - H52.2)");
       } else if (p1 < 0 && p2 < 0) {
         if (sphVal < 0) {
           const absSph = Math.abs(sphVal);
@@ -1164,12 +1176,23 @@ export const getEyeDiag = (eye: EyePrescription, prefix: string) => {
             severity = "forte";
             grad = "gr. IV";
           }
-          parts.push(`Miopie ${severity} (${grad}), astigmatism miopic compus`);
+          const finalMyopiaCode = absSph > 6 ? "H44.2" : myopiaCode;
+          parts.push(`Miopie ${severity} (${grad}) (diagnostic CIM - ${finalMyopiaCode}), astigmatism miopic compus (diagnostic CIM - H52.22)`);
         } else {
-          parts.push("Astigmatism miopic compus");
+          parts.push("Astigmatism miopic compus (diagnostic CIM - H52.22)");
         }
       } else if (p1 > 0 && p2 > 0) {
-        parts.push("Astigmatism hipermetropic compus");
+        if (sphVal > 0) {
+          const absSph = Math.abs(sphVal);
+          let severity = "";
+          if (absSph <= 3) severity = "mică";
+          else if (absSph <= 6) severity = "medie";
+          else if (absSph <= 9) severity = "mare";
+          else severity = "forte";
+          parts.push(`Hipermetropie ${severity} (diagnostic CIM - ${hyperCode}), astigmatism hipermetropic compus (diagnostic CIM - H52.22)`);
+        } else {
+          parts.push("Astigmatism hipermetropic compus (diagnostic CIM - H52.22)");
+        }
       }
     }
   } else {
@@ -1197,28 +1220,29 @@ export const getEyeDiag = (eye: EyePrescription, prefix: string) => {
             severity = "forte";
             grad = "gr. IV";
           }
-          parts.push(`Miopie ${severity} (${grad})`);
+          const finalMyopiaCode = absSph > 6 ? "H44.2" : myopiaCode;
+          parts.push(`Miopie ${severity} (${grad}) (diagnostic CIM - ${finalMyopiaCode})`);
         } else {
           if (absSph <= 3) severity = "mică";
           else if (absSph <= 6) severity = "medie";
           else if (absSph <= 9) severity = "mare";
           else severity = "forte";
-          parts.push(`${type} ${severity}`);
+          parts.push(`${type} ${severity} (diagnostic CIM - ${hyperCode})`);
         }
       }
     }
   }
 
   if (hasAdd) {
-    parts.push("Presbiopie");
+    parts.push("Presbiopie (diagnostic CIM - H52.4)");
   }
 
   const vaWithVal = parseFloat(eye.va_with);
   if (!isNaN(vaWithVal)) {
-    if (vaWithVal >= 0.5 && vaWithVal <= 0.7) parts.push("Ambliopie usoara");
+    if (vaWithVal >= 0.5 && vaWithVal <= 0.7) parts.push("Ambliopie usoara (diagnostic CIM - H53.0)");
     else if (vaWithVal >= 0.2 && vaWithVal <= 0.4)
-      parts.push("Ambliopie moderata");
-    else if (vaWithVal < 0.2) parts.push("Ambliopie severa");
+      parts.push("Ambliopie moderata (diagnostic CIM - H53.0)");
+    else if (vaWithVal < 0.2) parts.push("Ambliopie severa (diagnostic CIM - H53.0)");
   }
 
   if (parts.length === 0) return "";
@@ -1312,9 +1336,9 @@ export const updateDiagnosticSuggestions = (
   if (!isNaN(sphOD) && !isNaN(sphOS)) {
     const diff = Math.abs(sphOD - sphOS);
     if (diff >= 1 && diff <= 2) {
-      lines.push("Anizometropie mica");
-    } else if (diff > 2 && diff <= 3) {
-      lines.push("Anizometropie clinic semnificativă");
+      lines.push("Anizometropie mica (diagnostic CIM - H52.3)");
+    } else if (diff > 2) {
+      lines.push("Anizometropie clinic semnificativă (diagnostic CIM - H52.3)");
     }
   }
 
