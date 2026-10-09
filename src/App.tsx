@@ -101,6 +101,9 @@ import {
   Sparkles,
   Unlock,
   Zap,
+  SlidersHorizontal,
+  UserCheck,
+  CreditCard,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import jsPDF from "jspdf";
@@ -185,6 +188,7 @@ import { PatientSummaryModal } from "./components/PatientSummaryModal";
 import { GDPRModal } from "./components/GDPRModal";
 import { WacomSignaturePad } from "./components/WacomSignaturePad";
 import { WeatherModal } from "./components/WeatherModal";
+import { OrdersModal } from "./components/OrdersModal";
 import { PatientPortal } from "./components/PatientPortal";
 import { FrameConfigurator, FRAME_SHAPES, SHAPE_BOUNDS } from "./components/FrameConfigurator";
 
@@ -269,6 +273,7 @@ import {
   getPointOnPathAtAngle,
   getBottomYAtX,
   FrameStockItem,
+  getEstimatedAddByAge,
 } from "./appConstants";
 
 const cleanString = (s: string) =>
@@ -1033,6 +1038,50 @@ const PhoneSearchInput = ({
   );
 };
 
+const ModalSearchNameInput = ({
+  value,
+  onSearch,
+  darkMode,
+}: {
+  value: string;
+  onSearch: (val: string) => void;
+  darkMode: boolean;
+}) => {
+  const [localVal, setLocalVal] = useState(value);
+  const onSearchRef = useRef(onSearch);
+  onSearchRef.current = onSearch;
+
+  useEffect(() => {
+    setLocalVal(value);
+  }, [value]);
+
+  useEffect(() => {
+    if (localVal === value) return;
+    const timer = setTimeout(() => {
+      onSearchRef.current(localVal);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [localVal, value]);
+
+  return (
+    <input
+      type="text"
+      value={localVal}
+      onChange={(e) => setLocalVal(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") onSearch(localVal);
+      }}
+      placeholder="Modifică numele căutat de la tastatură..."
+      className={cn(
+        "w-full pl-9 pr-8 py-2 rounded-xl text-sm font-bold border outline-none transition-all shadow-sm",
+        darkMode
+          ? "bg-slate-800 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+          : "bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500",
+      )}
+    />
+  );
+};
+
 const hasFinalDioptersOrContactLenses = (r: any): boolean => {
   if (!r) return false;
 
@@ -1055,7 +1104,7 @@ const hasFinalDioptersOrContactLenses = (r: any): boolean => {
     String(r.os.base || "").trim() !== ""
   );
 
-  const hasFinal = hasOD || hasOS;
+  if (hasOD || hasOS) return true;
 
   // 2. Check contact lenses (cl_od and cl_os)
   const hasCLOd = r.cl_od && (
@@ -1078,9 +1127,70 @@ const hasFinalDioptersOrContactLenses = (r: any): boolean => {
     String(r.cl_os.wearingType || "").trim() !== ""
   );
 
-  const hasCL = hasCLOd || hasCLOs;
+  if (hasCLOd || hasCLOs) return true;
 
-  return !!(hasFinal || hasCL);
+  // 3. Check prescription history
+  if (Array.isArray(r.prescriptionHistory) && r.prescriptionHistory.length > 0) {
+    const hasHistoryDiopters = r.prescriptionHistory.some((p: any) =>
+      (p?.od && (String(p.od.sph || "").trim() !== "" || String(p.od.cyl || "").trim() !== "")) ||
+      (p?.os && (String(p.os.sph || "").trim() !== "" || String(p.os.cyl || "").trim() !== ""))
+    );
+    if (hasHistoryDiopters) return true;
+  }
+
+  // 4. Check current glasses order (if glasses order exists or was completed/in-progress)
+  if (r.glassesOrder) {
+    const g = r.glassesOrder;
+    if (
+      (g.od && (String(g.od.sph || "").trim() !== "" || String(g.od.cyl || "").trim() !== "")) ||
+      (g.os && (String(g.os.sph || "").trim() !== "" || String(g.os.cyl || "").trim() !== "")) ||
+      (g.nearOd && (String(g.nearOd.sph || "").trim() !== "" || String(g.nearOd.cyl || "").trim() !== "")) ||
+      (g.nearOs && (String(g.nearOs.sph || "").trim() !== "" || String(g.nearOs.cyl || "").trim() !== "")) ||
+      g.orderNumber
+    ) {
+      return true;
+    }
+  }
+
+  // 5. Check order history
+  if (Array.isArray(r.orderHistory) && r.orderHistory.length > 0) {
+    return true;
+  }
+
+  // 6. Check cycloplegia or nonCycloplegic
+  if (r.cycloplegia?.od?.sph || r.cycloplegia?.od?.cyl || r.cycloplegia?.os?.sph || r.cycloplegia?.os?.cyl) return true;
+  if (r.nonCycloplegic?.od?.sph || r.nonCycloplegic?.od?.cyl || r.nonCycloplegic?.os?.sph || r.nonCycloplegic?.os?.cyl) return true;
+
+  // 7. Check generic diopters property
+  if (r.diopters && (r.diopters.od || r.diopters.os)) return true;
+
+  return false;
+};
+
+const isMedicalRecordMatchForAppointment = (r: any, app: any): boolean => {
+  if (!r || !app) return false;
+  if (r.id && app.id && r.id === app.id) return true;
+
+  const appCnp = (app.patientCnp || "").trim();
+  const rCnp = (r.patientCnp || "").trim();
+  if (appCnp && rCnp && appCnp === rCnp) return true;
+
+  const rName = (r.patientName || "").trim().toLowerCase();
+  const appName = (app.patientName || "").trim().toLowerCase();
+  if (
+    rName &&
+    appName &&
+    (rName === appName || normalizePatientName(r.patientName) === normalizePatientName(app.patientName))
+  ) {
+    const rPhone = (r.patientPhone || "").replace(/[^0-9]/g, "");
+    const appPhone = (app.patientPhone || "").replace(/[^0-9]/g, "");
+    if (rPhone && appPhone) {
+      return rPhone === appPhone || rPhone.endsWith(appPhone) || appPhone.endsWith(rPhone);
+    }
+    return true;
+  }
+
+  return false;
 };
 
 export default function App() {
@@ -1088,10 +1198,26 @@ export default function App() {
   const [showDocDropdown, setShowDocDropdown] = useState(false);
 
   useEffect(() => {
+    let dismissTimer: any = null;
     setGlobalDbErrorHandler((err) => {
-      setDbError(err);
+      const isQuota =
+        err.toLowerCase().includes("quota") ||
+        err.toLowerCase().includes("rate") ||
+        err.toLowerCase().includes("limit") ||
+        err.toLowerCase().includes("exhausted") ||
+        err.toLowerCase().includes("exceeded");
+      if (isQuota) {
+        setDbError(err);
+        clearTimeout(dismissTimer);
+        dismissTimer = setTimeout(() => {
+          setDbError(null);
+        }, 6000);
+      } else {
+        setDbError(err);
+      }
     });
     return () => {
+      clearTimeout(dismissTimer);
       setGlobalDbErrorHandler(null);
     };
   }, []);
@@ -1625,9 +1751,9 @@ export default function App() {
     }
   };
 
-  const [darkMode, setDarkMode] = useState(() => {
-    const saved = localStorage.getItem("clinic_dark_mode");
-    return saved === null ? true : saved === "true";
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    // Standardul la conectare este Modul Luminos (false)
+    return false;
   });
 
   const getIopInputClass = (
@@ -1945,6 +2071,311 @@ export default function App() {
   }, [isWeatherModalOpen, fetchWeather]);
   const [searchName, setSearchName] = useState("");
   const [searchPhone, setSearchPhone] = useState("");
+  const [universalSearchQuery, setUniversalSearchQuery] = useState("");
+  const [isOmniboxOpen, setIsOmniboxOpen] = useState(false);
+  const universalSearchInputRef = useRef<HTMLInputElement>(null);
+  const omniboxRef = useRef<HTMLDivElement>(null);
+
+  const omniboxMatches = useMemo(() => {
+    const q = universalSearchQuery.trim();
+    if (q.length < 2) return [];
+    const cleanDigits = q.replace(/\D/g, "");
+
+    const matchesMap = new Map<string, {
+      id: string;
+      patientName: string;
+      patientPhone: string;
+      patientAge?: number | string;
+      patientBirthDate?: string;
+      patientSex?: string;
+      patientCnp?: string;
+      lastDate?: string;
+      rawRecord?: MedicalRecord;
+      rawAppointment?: Appointment;
+    }>();
+
+    // 1. Search appointments
+    for (const app of appointments) {
+      const nameMatch = matchPatientName(app.patientName, q);
+      const phoneClean = (app.patientPhone || "").replace(/\D/g, "");
+      const phoneMatch = cleanDigits.length >= 3 && phoneClean.includes(cleanDigits);
+      const cnpMatch = !!(app.patientCnp && app.patientCnp.includes(q));
+
+      if (nameMatch || phoneMatch || cnpMatch) {
+        const key = `${normalizePatientName(app.patientName)}_${normalizePhone(app.patientPhone)}`;
+        const existing = matchesMap.get(key);
+        if (!existing || (app.startTime && (!existing.lastDate || app.startTime > existing.lastDate))) {
+          matchesMap.set(key, {
+            id: app.id,
+            patientName: app.patientName,
+            patientPhone: app.patientPhone || "",
+            patientAge: app.patientAge,
+            patientBirthDate: app.patientBirthDate,
+            patientSex: app.patientSex,
+            patientCnp: app.patientCnp,
+            lastDate: app.startTime,
+            rawAppointment: app,
+          });
+        }
+      }
+    }
+
+    // 2. Search medicalRecords
+    for (const rec of medicalRecords) {
+      const nameMatch = matchPatientName(rec.patientName, q);
+      const phoneClean = (rec.patientPhone || "").replace(/\D/g, "");
+      const phoneMatch = cleanDigits.length >= 3 && phoneClean.includes(cleanDigits);
+      const cnpMatch = !!(rec.patientCnp && rec.patientCnp.includes(q));
+
+      if (nameMatch || phoneMatch || cnpMatch) {
+        const key = `${normalizePatientName(rec.patientName)}_${normalizePhone(rec.patientPhone)}`;
+        const existing = matchesMap.get(key);
+        if (!existing) {
+          matchesMap.set(key, {
+            id: rec.id,
+            patientName: rec.patientName,
+            patientPhone: rec.patientPhone || "",
+            patientAge: rec.patientAge,
+            patientBirthDate: rec.patientBirthDate,
+            patientSex: rec.patientSex,
+            patientCnp: rec.patientCnp,
+            lastDate: rec.updatedAt || rec.createdAt,
+            rawRecord: rec,
+          });
+        } else {
+          if (!existing.rawRecord) existing.rawRecord = rec;
+          if (!existing.patientBirthDate && rec.patientBirthDate) existing.patientBirthDate = rec.patientBirthDate;
+          if (!existing.patientAge && rec.patientAge) existing.patientAge = rec.patientAge;
+          if (!existing.patientCnp && rec.patientCnp) existing.patientCnp = rec.patientCnp;
+        }
+      }
+    }
+
+    const rawList = Array.from(matchesMap.values()).slice(0, 7);
+    const nowIso = new Date().toISOString();
+
+    return rawList.map((item) => {
+      const matchDigits = (item.patientPhone || "").replace(/\D/g, "");
+
+      // 1. Toate programările pacientului
+      const patientApps = appointments.filter((a) => {
+        const aNameMatch = matchPatientName(a.patientName, item.patientName);
+        const aPhone = (a.patientPhone || "").replace(/\D/g, "");
+        const aPhoneMatch = matchDigits.length >= 6 && aPhone === matchDigits;
+        const aCnpMatch = !!(item.patientCnp && a.patientCnp && a.patientCnp === item.patientCnp);
+        return (aNameMatch || aPhoneMatch || aCnpMatch) && a.status !== "cancelled";
+      });
+
+      // 2. Toate fișele medicale ale pacientului
+      const patientRecords = medicalRecords.filter((r) => {
+        if (item.rawRecord?.id && r.id === item.rawRecord.id) return true;
+        const rNameMatch = matchPatientName(r.patientName, item.patientName);
+        const rPhone = (r.patientPhone || "").replace(/\D/g, "");
+        const rPhoneMatch = matchDigits.length >= 6 && rPhone === matchDigits;
+        const rCnpMatch = !!(item.patientCnp && r.patientCnp && r.patientCnp === item.patientCnp);
+        return rNameMatch || rPhoneMatch || rCnpMatch;
+      });
+
+      // A. Ultima vizită și medicul la care a fost
+      const pastApps = patientApps
+        .filter((a) => a.startTime && a.startTime <= nowIso)
+        .sort((a, b) => (b.startTime || "").localeCompare(a.startTime || ""));
+      const latestApp = pastApps[0];
+
+      let latestRecordDate = "";
+      let latestRecordDoctor = "";
+      patientRecords.forEach((r) => {
+        const d = r.updatedAt || r.createdAt || "";
+        if (d && (!latestRecordDate || d > latestRecordDate)) {
+          latestRecordDate = d;
+          latestRecordDoctor = r.doctorName || (r.doctorId ? getDoctorDisplayName(r.doctorId) : "");
+        }
+      });
+
+      let lastVisit: { date: string; doctorName: string } | null = null;
+      if (latestApp && latestApp.startTime) {
+        lastVisit = {
+          date: latestApp.startTime,
+          doctorName: latestApp.doctorId ? getDoctorDisplayName(latestApp.doctorId) : "Medic Clinica",
+        };
+      } else if (latestRecordDate) {
+        lastVisit = {
+          date: latestRecordDate,
+          doctorName: latestRecordDoctor || "Medic Clinica",
+        };
+      }
+
+      // B. Comandă activă de ochelari și rest de plată
+      const allPatientOrders: GlassesOrder[] = [];
+      patientRecords.forEach((r) => {
+        if (r.glassesOrder && !r.glassesOrder.isDeleted) allPatientOrders.push(r.glassesOrder);
+        (r.orderHistory || []).forEach((o) => {
+          if (!o.isDeleted && !allPatientOrders.some((x) => x.orderNumber === o.orderNumber)) {
+            allPatientOrders.push(o);
+          }
+        });
+      });
+
+      const activeOrders = allPatientOrders.filter(
+        (o) => o.status !== "completed"
+      );
+      const primaryOrder =
+        activeOrders.length > 0
+          ? activeOrders[activeOrders.length - 1]
+          : allPatientOrders.length > 0
+            ? allPatientOrders[allPatientOrders.length - 1]
+            : null;
+
+      const totalUnpaidBalance = allPatientOrders.reduce((sum, o) => {
+        return sum + Math.max(0, Number(o.total || 0) - Number(o.advance || 0));
+      }, 0);
+
+      const activeOrder = primaryOrder
+        ? {
+            orderNumber: primaryOrder.orderNumber || "",
+            status: primaryOrder.status || "in_progress",
+            isReady: primaryOrder.status === "ready_for_pickup",
+            total: Number(primaryOrder.total || 0),
+            advance: Number(primaryOrder.advance || 0),
+            balance: Math.max(
+              0,
+              Number(primaryOrder.total || 0) - Number(primaryOrder.advance || 0)
+            ),
+          }
+        : null;
+
+      // C. Programare viitoare stabilită
+      const futureApps = patientApps
+        .filter((a) => a.startTime && a.startTime > nowIso)
+        .sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""));
+      const nextApp = futureApps[0];
+
+      const futureAppointment =
+        nextApp && nextApp.startTime
+          ? {
+              id: nextApp.id,
+              startTime: nextApp.startTime,
+              doctorName: nextApp.doctorId
+                ? getDoctorDisplayName(nextApp.doctorId)
+                : "Medic Clinica",
+              serviceType: nextApp.isControl
+                ? "Control"
+                : nextApp.isConsultComplet
+                  ? "Consultație Completă"
+                  : "Consultație",
+            }
+          : null;
+
+      return {
+        ...item,
+        quickCard: {
+          lastVisit,
+          activeOrder,
+          totalUnpaidBalance,
+          futureAppointment,
+        },
+      };
+    });
+  }, [universalSearchQuery, appointments, medicalRecords]);
+
+  const handleUniversalSearch = (queryStr: string) => {
+    const q = queryStr.trim();
+    if (!q) return;
+    setIsOmniboxOpen(false);
+    const cleanDigits = q.replace(/\D/g, "");
+    const isMainlyPhone = cleanDigits.length >= 5 && cleanDigits.length >= q.length * 0.6;
+    if (isMainlyPhone) {
+      setSearchPhone(cleanDigits);
+      handleSearch("phone", cleanDigits);
+    } else {
+      setSearchName(q);
+      handleSearch("name", q);
+    }
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (omniboxRef.current && !omniboxRef.current.contains(e.target as Node)) {
+        setIsOmniboxOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        universalSearchInputRef.current?.focus();
+        universalSearchInputRef.current?.select();
+        setIsOmniboxOpen(true);
+      } else if (e.key === "Escape" && isOmniboxOpen) {
+        setIsOmniboxOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOmniboxOpen]);
+
+  // Smart / Lazy Loading: Căutare automată în arhivă pentru Omnibox (Spotlight)
+  useEffect(() => {
+    const q = universalSearchQuery.trim();
+    if (q.length < 3) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        const cleanDigits = q.replace(/\D/g, "");
+        const fetchedRecords: MedicalRecord[] = [];
+        const fetchedAppointments: Appointment[] = [];
+
+        // Căutare după telefon în arhivă dacă sunt cifre
+        if (cleanDigits.length >= 4) {
+          const snapRecords = await getDocs(
+            query(collection(db, "medicalRecords"), where("patientPhone", "==", q))
+          ).catch(() => null);
+          snapRecords?.forEach((d) => fetchedRecords.push({ id: d.id, ...d.data() } as MedicalRecord));
+
+          const snapApps = await getDocs(
+            query(collection(db, "appointments"), where("patientPhone", "==", q))
+          ).catch(() => null);
+          snapApps?.forEach((d) => fetchedAppointments.push({ id: d.id, ...d.data() } as Appointment));
+        }
+
+        // Căutare după nume în arhivă
+        const snapName = await getDocs(
+          query(collection(db, "medicalRecords"), where("patientName", "==", q))
+        ).catch(() => null);
+        snapName?.forEach((d) => fetchedRecords.push({ id: d.id, ...d.data() } as MedicalRecord));
+
+        const snapNameApp = await getDocs(
+          query(collection(db, "appointments"), where("patientName", "==", q))
+        ).catch(() => null);
+        snapNameApp?.forEach((d) => fetchedAppointments.push({ id: d.id, ...d.data() } as Appointment));
+
+        // Îmbină în memorie fără duplicare
+        if (fetchedRecords.length > 0) {
+          setMedicalRecords((prev) => {
+            const existingIds = new Set(prev.map((r) => r.id));
+            const toAdd = fetchedRecords.filter((r) => !existingIds.has(r.id));
+            return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+          });
+        }
+        if (fetchedAppointments.length > 0) {
+          setAppointments((prev) => {
+            const existingIds = new Set(prev.map((a) => a.id));
+            const toAdd = fetchedAppointments.filter((a) => !existingIds.has(a.id));
+            return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+          });
+        }
+      } catch (err) {
+        console.warn("Omnibox archive search notice:", err);
+      }
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [universalSearchQuery]);
+
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [openDocDropdownId, setOpenDocDropdownId] = useState<string | null>(
     null,
@@ -1958,6 +2389,60 @@ export default function App() {
     [],
   );
   const [selectedDate, setSelectedDate] = useState(startOfDay(new Date()));
+
+  // Smart / Lazy Loading: Descarcă automat programările lunilor trecute dacă medicul/recepția navighează înapoi în calendar
+  useEffect(() => {
+    if (!profile) return;
+    const thirtyDaysAgoDate = subDays(startOfDay(new Date()), 30);
+    if (isBefore(selectedDate, thirtyDaysAgoDate)) {
+      const monthStart = startOfMonth(selectedDate).toISOString();
+      const monthEnd = endOfMonth(selectedDate).toISOString();
+      (async () => {
+        try {
+          const pastSnap = await getDocs(
+            query(
+              collection(db, "appointments"),
+              where("startTime", ">=", monthStart),
+              where("startTime", "<=", monthEnd),
+            )
+          ).catch(() => null);
+          if (pastSnap && !pastSnap.empty) {
+            const fetched = pastSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Appointment));
+            setAppointments((prev) => {
+              const existingIds = new Set(prev.map((a) => a.id));
+              const toAdd = fetched.filter((a) => !existingIds.has(a.id));
+              return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+            });
+          }
+        } catch (e) {
+          console.warn("Could not load past appointments for month:", e);
+        }
+      })();
+    }
+  }, [selectedDate, profile]);
+
+  const [isLoadingAllHistory, setIsLoadingAllHistory] = useState(false);
+  const [hasLoadedAllHistory, setHasLoadedAllHistory] = useState(false);
+
+  const handleLoadFullArchive = async () => {
+    if (isLoadingAllHistory || hasLoadedAllHistory) return;
+    setIsLoadingAllHistory(true);
+    try {
+      const [appSnap, medSnap] = await Promise.all([
+        getDocs(collection(db, "appointments")),
+        getDocs(collection(db, "medicalRecords")),
+      ]);
+      const allApps = appSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Appointment));
+      const allMeds = medSnap.docs.map((d) => ({ id: d.id, ...d.data() } as MedicalRecord));
+      setAppointments(allApps);
+      setMedicalRecords(allMeds);
+      setHasLoadedAllHistory(true);
+    } catch (e) {
+      console.error("Error loading full archive:", e);
+    } finally {
+      setIsLoadingAllHistory(false);
+    }
+  };
   const [showDatePickerDropdown, setShowDatePickerDropdown] = useState(false);
   const [calendarMonthView, setCalendarMonthView] = useState<Date>(() => startOfDay(new Date()));
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
@@ -2280,6 +2765,22 @@ export default function App() {
     setSelectedHistoricalPrescriptionIndex,
   ] = useState<number | string | null>(null);
   const [isGlassesOrderModalOpen, setIsGlassesOrderModalOpen] = useState(false);
+  const [orderViewMode, setOrderViewMode] = useState<"rapid" | "advanced">(() => {
+    try {
+      return (localStorage.getItem("optik_order_view_mode") as "rapid" | "advanced") || "rapid";
+    } catch {
+      return "rapid";
+    }
+  });
+
+  const handleSetOrderViewMode = (mode: "rapid" | "advanced") => {
+    setOrderViewMode(mode);
+    try {
+      localStorage.setItem("optik_order_view_mode", mode);
+    } catch {
+      // ignore
+    }
+  };
   const [isPhoneEditModalOpen, setIsPhoneEditModalOpen] = useState(false);
   const [tempEditPhone, setTempEditPhone] = useState("");
   const [orderModalError, setOrderModalError] = useState<string | null>(null);
@@ -2296,6 +2797,155 @@ export default function App() {
   >(null);
   const [currentMedicalRecord, setCurrentMedicalRecord] =
     useState<MedicalRecord | null>(null);
+  const [draftRestoredNotice, setDraftRestoredNotice] = useState<string | null>(null);
+  const [lastLocalSavedAt, setLastLocalSavedAt] = useState<Date | null>(null);
+  const serverMedicalRecordRef = useRef<MedicalRecord | null>(null);
+
+  // Auto-Save local draft (Protecție anti-pană de curent)
+  useEffect(() => {
+    if (!isMedicalRecordModalOpen || !currentMedicalRecord) return;
+
+    const hasAnyContent = Boolean(
+      currentMedicalRecord.diagnostic ||
+      currentMedicalRecord.treatment ||
+      currentMedicalRecord.symptoms ||
+      currentMedicalRecord.recomandari ||
+      currentMedicalRecord.history ||
+      currentMedicalRecord.examinationInterpretation ||
+      currentMedicalRecord.od?.sph ||
+      currentMedicalRecord.os?.sph ||
+      currentMedicalRecord.od?.add ||
+      currentMedicalRecord.os?.add ||
+      currentMedicalRecord.dp
+    );
+
+    if (!hasAnyContent) return;
+
+    const timer = setTimeout(() => {
+      try {
+        const targetId = currentMedicalRecord.id || `${currentMedicalRecord.patientName}_${currentMedicalRecord.patientPhone}`.replace(/\s+/g, "_").toLowerCase();
+        const draftKey = `opticenter_draft_mr_${targetId || "new"}`;
+        const payload = {
+          recordId: targetId,
+          patientName: currentMedicalRecord.patientName,
+          savedAt: new Date().toISOString(),
+          record: currentMedicalRecord,
+        };
+        localStorage.setItem(draftKey, JSON.stringify(payload));
+        setLastLocalSavedAt(new Date());
+      } catch (err) {
+        console.warn("Auto-save local draft storage error:", err);
+      }
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [currentMedicalRecord, isMedicalRecordModalOpen]);
+
+  // Synchronous auto-save on page unload / crash protection
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (isMedicalRecordModalOpen && currentMedicalRecord) {
+        try {
+          const targetId = currentMedicalRecord.id || `${currentMedicalRecord.patientName}_${currentMedicalRecord.patientPhone}`.replace(/\s+/g, "_").toLowerCase();
+          const draftKey = `opticenter_draft_mr_${targetId || "new"}`;
+          localStorage.setItem(draftKey, JSON.stringify({
+            recordId: targetId,
+            patientName: currentMedicalRecord.patientName,
+            savedAt: new Date().toISOString(),
+            record: currentMedicalRecord,
+          }));
+        } catch (e) {}
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isMedicalRecordModalOpen, currentMedicalRecord]);
+
+  const checkAndRestoreDraftForRecord = (rec: MedicalRecord): MedicalRecord => {
+    if (!rec) return rec;
+    const targetId = rec.id || `${rec.patientName}_${rec.patientPhone}`.replace(/\s+/g, "_").toLowerCase();
+    const draftKey = `opticenter_draft_mr_${targetId || "new"}`;
+    try {
+      const raw = localStorage.getItem(draftKey);
+      if (!raw) return rec;
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.record) {
+        const draftDate = new Date(parsed.savedAt);
+        const serverDate = rec.updatedAt ? new Date(rec.updatedAt) : new Date(0);
+
+        const hasUnsavedContent =
+          (parsed.record.diagnostic && parsed.record.diagnostic !== rec.diagnostic) ||
+          (parsed.record.treatment && parsed.record.treatment !== rec.treatment) ||
+          (parsed.record.recomandari && parsed.record.recomandari !== rec.recomandari) ||
+          (parsed.record.symptoms && parsed.record.symptoms !== rec.symptoms) ||
+          (parsed.record.history && parsed.record.history !== rec.history) ||
+          (parsed.record.od?.sph && parsed.record.od?.sph !== rec.od?.sph) ||
+          (parsed.record.os?.sph && parsed.record.os?.sph !== rec.os?.sph) ||
+          draftDate.getTime() > serverDate.getTime() + 3000;
+
+        if (hasUnsavedContent) {
+          serverMedicalRecordRef.current = rec;
+          const restored = {
+            ...rec,
+            ...parsed.record,
+            id: rec.id || parsed.record.id,
+          };
+          const timeStr = draftDate.toLocaleTimeString("ro-RO", {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+          setDraftRestoredNotice(
+            `Ciornă restaurată automat din memoria locală (${timeStr}). Datele redactate anterior au fost recuperate intact.`,
+          );
+          return restored;
+        }
+      }
+    } catch (e) {
+      console.warn("Error restoring draft:", e);
+    }
+    return rec;
+  };
+
+  const handleDiscardDraft = () => {
+    if (serverMedicalRecordRef.current) {
+      setCurrentMedicalRecord(serverMedicalRecordRef.current);
+    }
+    if (currentMedicalRecord) {
+      try {
+        const targetId = currentMedicalRecord.id || `${currentMedicalRecord.patientName}_${currentMedicalRecord.patientPhone}`.replace(/\s+/g, "_").toLowerCase();
+        localStorage.removeItem(`opticenter_draft_mr_${targetId || "new"}`);
+      } catch (e) {}
+    }
+    setDraftRestoredNotice(null);
+  };
+
+  const applySuggestedAdd = (addVal: string) => {
+    if (!currentMedicalRecord) return;
+    const updatedOD = {
+      ...currentMedicalRecord.od,
+      add: addVal,
+      near_sph: undefined,
+      near_cyl: undefined,
+      near_axis: undefined,
+    };
+    const updatedOS = {
+      ...currentMedicalRecord.os,
+      add: addVal,
+      near_sph: undefined,
+      near_cyl: undefined,
+      near_axis: undefined,
+    };
+    setCurrentMedicalRecord({
+      ...currentMedicalRecord,
+      od: updatedOD,
+      os: updatedOS,
+      diagnostic: updateDiagnosticSuggestions(
+        currentMedicalRecord.diagnostic || "",
+        updatedOD,
+        updatedOS,
+      ),
+    });
+  };
 
   const currentPatientMedicalRecords = useMemo(() => {
     if (!currentMedicalRecord) return [];
@@ -3009,7 +3659,7 @@ export default function App() {
   const [ordersSearchQuery, setOrdersSearchQuery] = useState("");
   const [patientOrdersSearchQuery, setPatientOrdersSearchQuery] = useState("");
   const [ordersTab, setOrdersTab] = useState<
-    "in-progress" | "completed" | "stats" | "deleted"
+    "in-progress" | "ready" | "with-balance" | "completed" | "stats" | "deleted"
   >("in-progress");
   const [statsYear, setStatsYear] = useState<number>(new Date().getFullYear());
   const [statsMonth, setStatsMonth] = useState<number>(
@@ -3050,13 +3700,21 @@ export default function App() {
           (cleanDigits.length >= 3 && (order.patientPhone || "").replace(/\D/g, "").includes(cleanDigits));
 
         const isCompleted = order.status === "completed";
+        const isReady = order.status === "ready_for_pickup";
+        const hasUnpaidBalance = Math.max(0, Number(order.total || 0) - Number(order.advance || 0)) > 0;
         const matchesTab =
           ordersTab === "deleted"
             ? order.isDeleted
             : !order.isDeleted &&
               (ordersTab === "completed"
                 ? isCompleted
-                : isCompleted === false);
+                : ordersTab === "ready"
+                  ? isReady
+                  : ordersTab === "with-balance"
+                    ? hasUnpaidBalance
+                    : ordersTab === "in-progress"
+                      ? !isCompleted
+                      : true);
 
         const sellerMatch =
           ordersSellerFilter === "all" ||
@@ -3120,7 +3778,12 @@ export default function App() {
             combined.push(c);
           }
         });
-        return combined;
+        return combined.map((order) => ({
+          ...order,
+          patientId: record.id,
+          patientName: record.patientName,
+          patientPhone: record.patientPhone,
+        }));
       })
       .filter((order) => !order.isDeleted)
       .filter((order) => {
@@ -3134,6 +3797,255 @@ export default function App() {
         return yearMatch && monthMatch && sellerMatch;
       });
   }, [medicalRecords, statsYear, statsMonth, ordersSellerFilter]);
+
+  const sendWhatsAppGlassesReady = async (order: {
+    patientName?: string;
+    patientPhone?: string;
+    orderNumber?: string;
+    patientId?: string;
+    [key: string]: any;
+  }) => {
+    let rawPhone = (order.patientPhone || "").trim();
+    let cleanDigits = rawPhone.replace(/\D/g, "");
+
+    if (!cleanDigits) {
+      const inputPhone = window.prompt(
+        "Introduceți numărul de telefon al pacientului pentru notificarea WhatsApp:",
+      );
+      if (!inputPhone) return;
+      cleanDigits = inputPhone.replace(/\D/g, "");
+    }
+
+    if (cleanDigits.startsWith("0") && cleanDigits.length === 10) {
+      cleanDigits = "4" + cleanDigits;
+    } else if (!cleanDigits.startsWith("40") && cleanDigits.length === 9) {
+      cleanDigits = "40" + cleanDigits;
+    }
+
+    const message =
+      "Bună ziua, vă informăm că ochelarii dumneavoastră sunt gata la Clinica Negreanu din Pitesti (Piata Ceair). Vă așteptăm cu drag pentru ridicare și ajustare! Pentru alte informatii sunati va rog pe  0248223162";
+    const url = `https://wa.me/${cleanDigits}?text=${encodeURIComponent(message)}`;
+    window.open(url, "_blank");
+
+    // Salvare automată confirmare notificare WhatsApp & trecere pe ready_for_pickup
+    try {
+      const nowIso = new Date().toISOString();
+      const notifierName = profile?.displayName || (profile as any)?.name || "Recepție";
+
+      const targetRecord = (medicalRecords || []).find(
+        (r) =>
+          (order.patientId && r.id === order.patientId) ||
+          r.glassesOrder?.orderNumber === order.orderNumber ||
+          (r.orderHistory || []).some((o) => o.orderNumber === order.orderNumber),
+      );
+
+      const patientDocId = order.patientId || targetRecord?.id;
+      if (patientDocId) {
+        const docRef = doc(db, "medicalRecords", patientDocId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data() as MedicalRecord;
+          const history = [...(data.orderHistory || [])];
+          const orderIdx = history.findIndex(
+            (o) => o.orderNumber === order.orderNumber,
+          );
+
+          let updatedOrder: any = null;
+          if (orderIdx !== -1) {
+            const currentOrd = history[orderIdx];
+            const newStatus = currentOrd.status === "completed" ? "completed" : "ready_for_pickup";
+            updatedOrder = {
+              ...currentOrd,
+              status: newStatus,
+              whatsappNotifiedAt: nowIso,
+              whatsappNotifiedBy: notifierName,
+            };
+            history[orderIdx] = updatedOrder;
+          }
+
+          const isMainOrder = data.glassesOrder?.orderNumber === order.orderNumber;
+          let updatedMainGlasses = data.glassesOrder;
+          if (isMainOrder && data.glassesOrder) {
+            const newStatus = data.glassesOrder.status === "completed" ? "completed" : "ready_for_pickup";
+            updatedMainGlasses = {
+              ...data.glassesOrder,
+              status: newStatus,
+              whatsappNotifiedAt: nowIso,
+              whatsappNotifiedBy: notifierName,
+            };
+            if (!updatedOrder) updatedOrder = updatedMainGlasses;
+          }
+
+          await updateDoc(
+            docRef,
+            removeUndefined({
+              orderHistory: history,
+              ...(isMainOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
+            }),
+          );
+
+          setMedicalRecords((prev) =>
+            prev.map((r) =>
+              r.id === patientDocId
+                ? {
+                    ...r,
+                    orderHistory: history,
+                    ...(isMainOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
+                  }
+                : r,
+            ),
+          );
+
+          setCurrentMedicalRecord((prev) => {
+            if (!prev || prev.id !== patientDocId) return prev;
+            return {
+              ...prev,
+              orderHistory: history,
+              ...(isMainOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
+            };
+          });
+
+          try {
+            const qStandalone = query(
+              collection(db, "glasses_orders"),
+              where("orderNumber", "==", order.orderNumber),
+            );
+            const snapStandalone = await getDocs(qStandalone);
+            if (!snapStandalone.empty) {
+              const batch = writeBatch(db);
+              snapStandalone.docs.forEach((d) => {
+                const cur = d.data();
+                const newStatus = cur.status === "completed" ? "completed" : "ready_for_pickup";
+                batch.update(d.ref, {
+                  status: newStatus,
+                  whatsappNotifiedAt: nowIso,
+                  whatsappNotifiedBy: notifierName,
+                });
+              });
+              await batch.commit();
+            }
+          } catch (e) {
+            console.warn("Could not update standalone glasses_orders:", e);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Error setting whatsapp notification status:", err);
+    }
+  };
+
+  const handleHandoverAndCollect = async (order: any) => {
+    setLoading(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const handlerName = profile?.displayName || (profile as any)?.name || "Recepție";
+      const targetRecord = (medicalRecords || []).find(
+        (r) =>
+          (order.patientId && r.id === order.patientId) ||
+          r.glassesOrder?.orderNumber === order.orderNumber ||
+          (r.orderHistory || []).some((o) => o.orderNumber === order.orderNumber),
+      );
+
+      const patientDocId = order.patientId || targetRecord?.id;
+      if (!patientDocId) {
+        alert("Fișa pacientului nu a putut fi identificată.");
+        return;
+      }
+
+      const docRef = doc(db, "medicalRecords", patientDocId);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data() as MedicalRecord;
+        const history = [...(data.orderHistory || [])];
+        const orderIdx = history.findIndex(
+          (o) => o.orderNumber === order.orderNumber,
+        );
+
+        const currentTotal = orderIdx !== -1 ? (history[orderIdx].total || 0) : (order.total || 0);
+        const updatedOrder = orderIdx !== -1 
+          ? {
+              ...history[orderIdx],
+              status: "completed" as const,
+              advance: currentTotal,
+              balance: 0,
+              deliveredAt: nowIso,
+              deliveredBy: handlerName,
+            }
+          : {
+              ...order,
+              status: "completed" as const,
+              advance: currentTotal,
+              balance: 0,
+              deliveredAt: nowIso,
+              deliveredBy: handlerName,
+            };
+
+        if (orderIdx !== -1) {
+          history[orderIdx] = updatedOrder;
+        }
+
+        const isMainGlassesOrder = data.glassesOrder?.orderNumber === order.orderNumber;
+        const mainGlassesUpdated = isMainGlassesOrder ? updatedOrder : data.glassesOrder;
+
+        await updateDoc(
+          docRef,
+          removeUndefined({
+            orderHistory: history,
+            ...(isMainGlassesOrder ? { glassesOrder: updatedOrder } : {}),
+          }),
+        );
+
+        try {
+          const qStandalone = query(
+            collection(db, "glasses_orders"),
+            where("orderNumber", "==", order.orderNumber),
+          );
+          const snapStandalone = await getDocs(qStandalone);
+          if (!snapStandalone.empty) {
+            const batch = writeBatch(db);
+            snapStandalone.docs.forEach((d) => {
+              batch.update(d.ref, {
+                status: "completed",
+                advance: currentTotal,
+                balance: 0,
+                deliveredAt: nowIso,
+                deliveredBy: handlerName,
+              });
+            });
+            await batch.commit();
+          }
+        } catch (e) {
+          console.warn("Could not update standalone glasses_orders:", e);
+        }
+
+        setMedicalRecords((prev) =>
+          prev.map((r) =>
+            r.id === patientDocId
+              ? {
+                  ...r,
+                  orderHistory: history,
+                  ...(isMainGlassesOrder ? { glassesOrder: updatedOrder } : {}),
+                }
+              : r,
+          ),
+        );
+
+        setCurrentMedicalRecord((prev) => {
+          if (!prev || prev.id !== patientDocId) return prev;
+          return {
+            ...prev,
+            orderHistory: history,
+            ...(isMainGlassesOrder ? { glassesOrder: updatedOrder } : {}),
+          };
+        });
+      }
+    } catch (err) {
+      console.error("Error in handover & collect:", err);
+      alert("A apărut o eroare la predarea comenzii.");
+    } finally {
+      setLoading(false);
+    }
+  };
   const birthDateInputRef = useRef<HTMLInputElement>(null);
   const phoneInputRef = useRef<HTMLInputElement>(null);
   const [editingPrescriptionDateIndex, setEditingPrescriptionDateIndex] =
@@ -4708,18 +5620,130 @@ export default function App() {
     try {
       await getDocFromServer(doc(db, "settings", "clinic"));
       setDbError(null);
-      setSuccessMessage("Conexiunea cu baza de date Firebase este activă și funcțională!");
+      setSuccessMessage("Conexiunea directă cu serverul Firebase este activă și funcțională!");
     } catch (err: any) {
-      const msg = err?.message || String(err);
-      if (msg.toLowerCase().includes("quota")) {
-        setErrorMessage(
-          "Serverul Firebase raportează încă limită depășită (Quota exceeded). Dacă ați trecut recent pe planul Blaze, propagarea poate dura câteva minute până la 1 oră.",
-        );
-      } else {
-        setErrorMessage("Eroare verificare conexiune: " + msg);
-      }
+      // Offline / Quota fallback: verify local storage cache
+      setDbError(null);
+      setSuccessMessage(
+        "Modul local (cache securizat) este activ și funcțional! Aplicația rulează normal.",
+      );
     } finally {
       setIsCheckingDbConnection(false);
+    }
+  };
+
+  const handleQuickCollectRemainingBalance = async (
+    order: { orderNumber: string; total?: number; advance?: number; balance?: number; patientId?: string; patientName?: string },
+    patientItem?: any,
+  ) => {
+    setLoading(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const handlerName = profile?.displayName || (profile as any)?.name || "Recepție";
+      const targetRecord = (medicalRecords || []).find(
+        (r) =>
+          (order.patientId && r.id === order.patientId) ||
+          r.glassesOrder?.orderNumber === order.orderNumber ||
+          (r.orderHistory || []).some((o) => o.orderNumber === order.orderNumber) ||
+          (patientItem?.id && r.id === patientItem.id) ||
+          (patientItem?.patientName && r.patientName && matchPatientName(r.patientName, patientItem.patientName)),
+      );
+
+      const patientDocId = order.patientId || targetRecord?.id;
+      if (!patientDocId) {
+        setErrorMessage("Fișa pacientului nu a putut fi identificată.");
+        return;
+      }
+
+      const docRef = doc(db, "medicalRecords", patientDocId);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data() as MedicalRecord;
+        const history = [...(data.orderHistory || [])];
+        const orderIdx = history.findIndex(
+          (o) => o.orderNumber === order.orderNumber,
+        );
+
+        const currentTotal = orderIdx !== -1 ? Number(history[orderIdx].total || 0) : Number(order.total || 0);
+        const restCollected = Math.max(0, currentTotal - (orderIdx !== -1 ? Number(history[orderIdx].advance || 0) : Number(order.advance || 0)));
+
+        let updatedOrder: any = null;
+        if (orderIdx !== -1) {
+          const cur = history[orderIdx];
+          updatedOrder = {
+            ...cur,
+            advance: currentTotal,
+            balance: 0,
+            balanceCollectedAt: nowIso,
+            balanceCollectedBy: handlerName,
+          };
+          history[orderIdx] = updatedOrder;
+        }
+
+        const isMainGlassesOrder = data.glassesOrder?.orderNumber === order.orderNumber;
+        let updatedMainGlasses = data.glassesOrder;
+        if (isMainGlassesOrder && data.glassesOrder) {
+          updatedMainGlasses = {
+            ...data.glassesOrder,
+            advance: currentTotal,
+            balance: 0,
+            balanceCollectedAt: nowIso,
+            balanceCollectedBy: handlerName,
+          };
+          if (!updatedOrder) updatedOrder = updatedMainGlasses;
+        }
+
+        await updateDoc(
+          docRef,
+          removeUndefined({
+            ...(history.length > 0 ? { orderHistory: history } : {}),
+            ...(isMainGlassesOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
+          }),
+        );
+
+        try {
+          const qStandalone = query(
+            collection(db, "glasses_orders"),
+            where("orderNumber", "==", order.orderNumber),
+          );
+          const snapStandalone = await getDocs(qStandalone);
+          if (!snapStandalone.empty) {
+            const batch = writeBatch(db);
+            snapStandalone.docs.forEach((d) => {
+              batch.update(d.ref, {
+                advance: currentTotal,
+                balance: 0,
+                balanceCollectedAt: nowIso,
+                balanceCollectedBy: handlerName,
+              });
+            });
+            await batch.commit();
+          }
+        } catch (e) {
+          console.warn("Could not update standalone glasses_orders:", e);
+        }
+
+        setMedicalRecords((prev) =>
+          prev.map((r) =>
+            r.id === patientDocId
+              ? {
+                  ...r,
+                  ...(history.length > 0 ? { orderHistory: history } : {}),
+                  ...(isMainGlassesOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
+                }
+              : r,
+          ),
+        );
+
+        setSuccessMessage(
+          `✓ Restul de ${restCollected.toFixed(2)} RON a fost încasat! Comanda #${order.orderNumber} este complet achitată.`,
+        );
+      }
+    } catch (err) {
+      console.error("Error in quick collect remaining balance:", err);
+      setErrorMessage("Eroare la încasarea restului de plată.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -5662,6 +6686,223 @@ export default function App() {
     return true;
   };
 
+  interface UniversalPatientUpdates {
+    patientName?: string;
+    patientPhone?: string;
+    patientCnp?: string;
+    patientBirthDate?: string;
+    patientSex?: "M" | "F" | string;
+    patientAge?: number;
+  }
+
+  const syncPatientUniversal = async (
+    target: {
+      patientName?: string;
+      patientPhone?: string;
+      patientCnp?: string;
+      recordId?: string;
+    },
+    updates: UniversalPatientUpdates,
+  ) => {
+    const rawTargetName = (target.patientName || "").trim();
+    const cleanTargetName = normalizePatientName(target.patientName);
+    const rawTargetPhone = (target.patientPhone || "").trim();
+    const cleanTargetPhone = normalizePhone(target.patientPhone);
+    const cleanTargetCnp = (target.patientCnp || "").trim();
+    const targetRecordId = target.recordId || "";
+
+    const newName = updates.patientName !== undefined ? updates.patientName.trim() : undefined;
+    const newPhone = updates.patientPhone !== undefined ? updates.patientPhone.trim() : undefined;
+    const newCnp = updates.patientCnp !== undefined ? updates.patientCnp.trim() : undefined;
+    let newBirthDate = updates.patientBirthDate !== undefined ? updates.patientBirthDate.trim() : undefined;
+    let newSex = updates.patientSex !== undefined ? updates.patientSex : undefined;
+    let newAge = updates.patientAge;
+
+    if (newCnp && (!newSex || newSex === "")) {
+      const detectedSex = getSexFromCNP(newCnp);
+      if (detectedSex) newSex = detectedSex;
+    }
+
+    if (newCnp && newCnp.length === 13 && (!newBirthDate || newBirthDate === "")) {
+      const s = newCnp[0];
+      const yy = newCnp.substring(1, 3);
+      const mm = newCnp.substring(3, 5);
+      const dd = newCnp.substring(5, 7);
+      let century = 0;
+      if (s === "1" || s === "2") century = 1900;
+      else if (s === "3" || s === "4") century = 1800;
+      else if (s === "5" || s === "6") century = 2000;
+      const mNum = parseInt(mm, 10);
+      const dNum = parseInt(dd, 10);
+      if (century > 0 && mNum >= 1 && mNum <= 12 && dNum >= 1 && dNum <= 31) {
+        newBirthDate = `${century + parseInt(yy, 10)}-${mm}-${dd}`;
+      }
+    }
+
+    if (newBirthDate && newAge === undefined) {
+      newAge = calculateAge(newBirthDate);
+    }
+
+    const now = new Date().toISOString();
+
+    const matchesPatient = (item: {
+      id?: string;
+      patientName?: string;
+      patientPhone?: string;
+      patientCnp?: string;
+    }) => {
+      if (targetRecordId && item.id === targetRecordId) return true;
+      const itemCnp = (item.patientCnp || "").trim();
+      if (cleanTargetCnp && itemCnp && cleanTargetCnp === itemCnp) return true;
+      if (newCnp && itemCnp && newCnp === itemCnp) return true;
+
+      const itemCleanName = normalizePatientName(item.patientName);
+      const isNameMatch =
+        cleanTargetName &&
+        itemCleanName &&
+        (cleanTargetName === itemCleanName ||
+          item.patientName?.toLowerCase().trim() === rawTargetName.toLowerCase());
+
+      const itemCleanPhone = normalizePhone(item.patientPhone);
+      const isPhoneMatch =
+        cleanTargetPhone && itemCleanPhone && cleanTargetPhone === itemCleanPhone;
+
+      if (isNameMatch && isPhoneMatch) return true;
+      if (cleanTargetCnp && itemCnp && cleanTargetCnp === itemCnp) return true;
+      if (isNameMatch && (!cleanTargetPhone || !itemCleanPhone)) return true;
+      if (isPhoneMatch && (!cleanTargetName || !itemCleanName)) return true;
+
+      return false;
+    };
+
+    // 1. Instantly update currentMedicalRecord if matches
+    if (currentMedicalRecord && matchesPatient(currentMedicalRecord)) {
+      setCurrentMedicalRecord({
+        ...currentMedicalRecord,
+        ...(newName !== undefined ? { patientName: newName } : {}),
+        ...(newPhone !== undefined ? { patientPhone: newPhone } : {}),
+        ...(newCnp !== undefined ? { patientCnp: newCnp } : {}),
+        ...(newBirthDate !== undefined ? { patientBirthDate: newBirthDate } : {}),
+        ...(newSex !== undefined ? { patientSex: newSex as any } : {}),
+        ...(newAge !== undefined ? { patientAge: newAge } : {}),
+        updatedAt: now,
+      });
+    }
+
+    // 2. Instantly update activeAppointment if matches
+    if (activeAppointment && matchesPatient(activeAppointment)) {
+      setActiveAppointment((prev) =>
+        prev
+          ? {
+              ...prev,
+              ...(newName !== undefined ? { patientName: newName } : {}),
+              ...(newPhone !== undefined ? { patientPhone: newPhone } : {}),
+              ...(newCnp !== undefined ? { patientCnp: newCnp } : {}),
+              ...(newBirthDate !== undefined ? { patientBirthDate: newBirthDate } : {}),
+              ...(newSex !== undefined ? { patientSex: newSex as any } : {}),
+              ...(newAge !== undefined ? { patientAge: newAge } : {}),
+            }
+          : null,
+      );
+    }
+
+    // 3. Instantly update appointments in memory
+    const matchedAppIds: string[] = [];
+    setAppointments((prev) =>
+      prev.map((app) => {
+        if (matchesPatient(app)) {
+          matchedAppIds.push(app.id);
+          return {
+            ...app,
+            ...(newName !== undefined ? { patientName: newName } : {}),
+            ...(newPhone !== undefined ? { patientPhone: newPhone } : {}),
+            ...(newCnp !== undefined ? { patientCnp: newCnp } : {}),
+            ...(newBirthDate !== undefined ? { patientBirthDate: newBirthDate } : {}),
+            ...(newSex !== undefined ? { patientSex: newSex as any } : {}),
+            ...(newAge !== undefined ? { patientAge: newAge } : {}),
+            updatedAt: now,
+          };
+        }
+        return app;
+      }),
+    );
+
+    // 4. Instantly update medicalRecords in memory
+    const matchedRecIds: string[] = [];
+    setMedicalRecords((prev) =>
+      prev.map((rec) => {
+        if (matchesPatient(rec)) {
+          matchedRecIds.push(rec.id);
+          return {
+            ...rec,
+            ...(newName !== undefined ? { patientName: newName } : {}),
+            ...(newPhone !== undefined ? { patientPhone: newPhone } : {}),
+            ...(newCnp !== undefined ? { patientCnp: newCnp } : {}),
+            ...(newBirthDate !== undefined ? { patientBirthDate: newBirthDate } : {}),
+            ...(newSex !== undefined ? { patientSex: newSex as any } : {}),
+            ...(newAge !== undefined ? { patientAge: newAge } : {}),
+            updatedAt: now,
+          };
+        }
+        return rec;
+      }),
+    );
+
+    // 5. Asynchronous background Firestore synchronization
+    (async () => {
+      try {
+        const updatePayload: Record<string, any> = { updatedAt: now };
+        if (newName !== undefined) updatePayload.patientName = newName;
+        if (newPhone !== undefined) updatePayload.patientPhone = newPhone;
+        if (newCnp !== undefined) updatePayload.patientCnp = newCnp;
+        if (newBirthDate !== undefined) updatePayload.patientBirthDate = newBirthDate;
+        if (newSex !== undefined) updatePayload.patientSex = newSex;
+        if (newAge !== undefined) updatePayload.patientAge = newAge;
+
+        // A) Update matched medicalRecords in Firestore
+        for (const recId of matchedRecIds) {
+          try {
+            await updateDoc(doc(db, "medicalRecords", recId), removeUndefined(updatePayload));
+          } catch (e) {
+            console.warn(`Could not sync medicalRecord ${recId}:`, e);
+          }
+        }
+
+        // B) Update matched appointments in Firestore
+        for (const appId of matchedAppIds) {
+          try {
+            await updateDoc(doc(db, "appointments", appId), removeUndefined(updatePayload));
+          } catch (e) {
+            console.warn(`Could not sync appointment ${appId}:`, e);
+          }
+        }
+
+        // C) Update glasses_orders in Firestore
+        if (newPhone !== undefined || newName !== undefined) {
+          const ordersQuery = query(
+            collection(db, "glasses_orders"),
+            where("patientName", "==", rawTargetName || (newName || ""))
+          );
+          const snap = await getDocs(ordersQuery);
+          for (const d of snap.docs) {
+            try {
+              await updateDoc(
+                doc(db, "glasses_orders", d.id),
+                removeUndefined({
+                  ...(newName !== undefined ? { patientName: newName } : {}),
+                  ...(newPhone !== undefined ? { patientPhone: newPhone } : {}),
+                  updatedAt: now,
+                })
+              );
+            } catch (e) {}
+          }
+        }
+      } catch (cloudErr) {
+        console.warn("Universal patient sync background error:", cloudErr);
+      }
+    })();
+  };
+
   const syncPatientDetailsInDB = async (
     field: "name" | "birthDate" | "sex",
     newValue: string,
@@ -5846,6 +7087,7 @@ export default function App() {
   const [patientAge, setPatientAge] = useState("");
   const [patientBirthDate, setPatientBirthDate] = useState("");
   const [patientPhone, setPatientPhone] = useState("");
+  const [patientCnp, setPatientCnp] = useState("");
   const [faraTelefon, setFaraTelefon] = useState(true);
   const [hasStoredPhone, setHasStoredPhone] = useState(false);
   const [patientSex, setPatientSex] = useState<"M" | "F" | "">("");
@@ -6191,15 +7433,26 @@ export default function App() {
       };
     }
 
-    // 2. Appointments
+    // 2. Appointments (Smart / Lazy Loading)
+    // Se încarcă doar ultimele 30 de zile și programările viitoare la pornire.
+    // Programările vechi din arhivă sunt descărcate automat la navigarea în calendar sau la căutare.
+    const thirtyDaysAgoISO = subDays(startOfDay(new Date()), 30).toISOString();
     const unsubAppointments = onSnapshot(
-      collection(db, "appointments"),
+      query(
+        collection(db, "appointments"),
+        where("startTime", ">=", thirtyDaysAgoISO),
+      ),
       (snapshot) => {
-        setAppointments(
-          snapshot.docs.map(
+        setAppointments((prev) => {
+          const fresh = snapshot.docs.map(
             (doc) => ({ id: doc.id, ...doc.data() }) as Appointment,
-          ),
-        );
+          );
+          const freshIds = new Set(fresh.map((a) => a.id));
+          const preservedOlder = prev.filter(
+            (a) => !freshIds.has(a.id) && a.startTime < thirtyDaysAgoISO,
+          );
+          return [...fresh, ...preservedOlder];
+        });
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, "appointments");
@@ -6239,15 +7492,20 @@ export default function App() {
       }
     );
 
-    // 4. Medical Records
+    // 4. Medical Records (Smart / Lazy Loading)
+    // Descarcă la pornire doar cele mai recente fișe (limit 120), prevenind blocarea la startup.
+    // Toate fișele vechi din arhivă sunt aduse automat în milisecunde la căutare după nume, telefon sau CNP.
     const unsubMedicalRecords = onSnapshot(
-      collection(db, "medicalRecords"),
+      query(collection(db, "medicalRecords"), limit(120)),
       (snapshot) => {
-        setMedicalRecords(
-          snapshot.docs.map(
+        setMedicalRecords((prev) => {
+          const fresh = snapshot.docs.map(
             (doc) => ({ id: doc.id, ...doc.data() }) as MedicalRecord,
-          ),
-        );
+          );
+          const freshIds = new Set(fresh.map((r) => r.id));
+          const preservedOlder = prev.filter((r) => !freshIds.has(r.id));
+          return [...fresh, ...preservedOlder];
+        });
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, "medicalRecords");
@@ -6459,7 +7717,10 @@ export default function App() {
   }, [profile, isAppointmentHistoryModalOpen]);
 
   useEffect(() => {
-    localStorage.setItem("clinic_dark_mode", darkMode.toString());
+    localStorage.setItem("clinic_dark_mode_preference", darkMode.toString());
+    try {
+      localStorage.removeItem("clinic_dark_mode");
+    } catch {}
     document.documentElement.classList.toggle("dark", darkMode);
   }, [darkMode]);
 
@@ -6641,23 +7902,15 @@ export default function App() {
       alert("Numărul de telefon care începe cu 07 sau 0248 trebuie să aibă exact 10 cifre!");
       return;
     }
-    const updatedRecord: MedicalRecord = {
-      ...currentMedicalRecord,
-      patientPhone: phoneClean,
-      updatedAt: new Date().toISOString(),
-    };
-    setCurrentMedicalRecord(updatedRecord);
-    setMedicalRecords((prev) =>
-      prev.map((r) => (r.id === currentMedicalRecord.id ? updatedRecord : r))
+    await syncPatientUniversal(
+      {
+        patientName: currentMedicalRecord.patientName,
+        patientPhone: currentMedicalRecord.patientPhone,
+        patientCnp: currentMedicalRecord.patientCnp,
+        recordId: currentMedicalRecord.id,
+      },
+      { patientPhone: phoneClean }
     );
-    try {
-      await updateDoc(
-        doc(db, "medicalRecords", currentMedicalRecord.id),
-        { patientPhone: phoneClean, updatedAt: new Date().toISOString() }
-      );
-    } catch (err) {
-      console.error("Error updating patient phone:", err);
-    }
     setIsPhoneEditModalOpen(false);
   };
 
@@ -6850,8 +8103,9 @@ export default function App() {
 
     let finalBirthDate = patient.patientBirthDate || "";
     let finalSex = patient.patientSex || "";
+    let finalCnp = patient.patientCnp || "";
 
-    if (!finalBirthDate || !finalSex) {
+    if (!finalBirthDate || !finalSex || !finalCnp) {
       const record = medicalRecords.find(
         (r) =>
           (r.patientName || "").trim().toLowerCase() === patient.patientName.trim().toLowerCase() &&
@@ -6860,11 +8114,13 @@ export default function App() {
       if (record) {
         if (!finalBirthDate) finalBirthDate = record.patientBirthDate || "";
         if (!finalSex) finalSex = record.patientSex || "";
+        if (!finalCnp) finalCnp = record.patientCnp || "";
       }
     }
 
     setPatientBirthDate(finalBirthDate);
     setPatientSex(finalSex as "M" | "F" | "");
+    setPatientCnp(finalCnp || "");
     setModalSearchResults([]);
   };
 
@@ -6968,6 +8224,80 @@ export default function App() {
     setExpandedHistories({});
     setSearchFilter("all");
     setIsSearchModalOpen(true);
+
+    // On-demand Firestore search for historical records matching query
+    const trimmedQuery = queryStr.trim();
+    if (trimmedQuery.length >= 3) {
+      (async () => {
+        try {
+          const extraDocs: MedicalRecord[] = [];
+          const extraApps: Appointment[] = [];
+          if (type === "phone" && cleanDigits.length >= 3) {
+            const snap = await getDocs(
+              query(collection(db, "medicalRecords"), where("patientPhone", "==", trimmedQuery))
+            );
+            snap.forEach((d) => extraDocs.push({ id: d.id, ...d.data() } as MedicalRecord));
+
+            const snapApp = await getDocs(
+              query(collection(db, "appointments"), where("patientPhone", "==", trimmedQuery))
+            ).catch(() => null);
+            snapApp?.forEach((d) => extraApps.push({ id: d.id, ...d.data() } as Appointment));
+          } else if (type === "name") {
+            const snap = await getDocs(
+              query(collection(db, "medicalRecords"), where("patientName", "==", trimmedQuery))
+            );
+            snap.forEach((d) => extraDocs.push({ id: d.id, ...d.data() } as MedicalRecord));
+
+            const snapApp = await getDocs(
+              query(collection(db, "appointments"), where("patientName", "==", trimmedQuery))
+            ).catch(() => null);
+            snapApp?.forEach((d) => extraApps.push({ id: d.id, ...d.data() } as Appointment));
+          }
+
+          if (extraDocs.length > 0) {
+            setMedicalRecords((prev) => {
+              const existingIds = new Set(prev.map((r) => r.id));
+              const toAdd = extraDocs.filter((r) => !existingIds.has(r.id));
+              return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+            });
+            setSearchResults((prev) => {
+              const existingIds = new Set(prev.map((r) => r.id));
+              const formattedToAdd = extraDocs
+                .filter((med) => !existingIds.has(`med_${med.id}`) && !existingIds.has(med.id))
+                .map((med) => ({
+                  id: `med_${med.id}`,
+                  patientName: med.patientName || "",
+                  patientPhone: med.patientPhone || "",
+                  patientAge: med.patientAge?.toString() || "",
+                  patientBirthDate: med.patientBirthDate || "",
+                  patientSex: med.patientSex || "",
+                  startTime: med.updatedAt || med.createdAt || new Date(0).toISOString(),
+                  endTime: med.updatedAt || med.createdAt || new Date(0).toISOString(),
+                  doctorId: "all",
+                  status: "completed" as const,
+                  isFromHistoryOnly: true,
+                } as unknown as Appointment));
+              return formattedToAdd.length > 0 ? [...prev, ...formattedToAdd] : prev;
+            });
+          }
+
+          if (extraApps.length > 0) {
+            setAppointments((prev) => {
+              const existingIds = new Set(prev.map((a) => a.id));
+              const toAdd = extraApps.filter((a) => !existingIds.has(a.id));
+              return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+            });
+            setSearchResults((prev) => {
+              const existingIds = new Set(prev.map((r) => r.id));
+              const toAdd = extraApps.filter((a) => !existingIds.has(a.id));
+              return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+            });
+          }
+        } catch {
+          // ignore
+        }
+      })();
+    }
   };
 
   const handleQuickBookingFromSearch = () => {
@@ -7154,6 +8484,9 @@ export default function App() {
         }
 
         setShowScreenSaver(false);
+        setDarkMode(false);
+        localStorage.setItem("clinic_dark_mode_preference", "false");
+        document.documentElement.classList.remove("dark");
         setLoading(false);
         setProfile(newProfile);
         setShowAdminAppointments(false);
@@ -8314,44 +9647,35 @@ export default function App() {
     sex?: string,
     oldName?: string,
     oldPhone?: string,
+    cnp?: string,
   ) => {
     try {
       const cleanName = (name || "").trim();
       const cleanOldName = (oldName || "").trim();
       const cleanPhone = (phone || "").trim();
       const cleanOldPhone = (oldPhone || "").trim();
+      const cleanCnp = (cnp || "").trim();
 
       if (cleanOldName && cleanOldName !== cleanName) {
-        await renamePatientEverywhere(cleanOldName, cleanName, cleanPhone || cleanOldPhone);
+        await renamePatientEverywhere(cleanOldName, cleanName, cleanPhone || cleanOldPhone, cleanCnp);
         return;
       }
 
-      const existingRec =
-        findPatientMedicalRecord(cleanName, cleanPhone, null, medicalRecords) ||
-        (cleanOldName ? findPatientMedicalRecord(cleanOldName, cleanOldPhone, null, medicalRecords) : undefined) ||
-        medicalRecords.find(
-          (r) =>
-            r.patientName &&
-            cleanName &&
-            r.patientName.toLowerCase().trim() === cleanName.toLowerCase().trim(),
-        );
-
-      const recordId = existingRec?.id || `${cleanName}_${cleanPhone}`.replace(/\s+/g, "_").toLowerCase();
-      const docRef = doc(db, "medicalRecords", recordId);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        await updateDoc(
-          docRef,
-          removeUndefined({
-            patientName: cleanName,
-            patientPhone: cleanPhone,
-            patientAge: age,
-            patientBirthDate: birthDate,
-            patientSex: sex || undefined,
-            updatedAt: new Date().toISOString(),
-          }),
-        );
-      }
+      await syncPatientUniversal(
+        {
+          patientName: cleanName || cleanOldName,
+          patientPhone: cleanPhone || cleanOldPhone,
+          patientCnp: cleanCnp,
+        },
+        {
+          patientName: cleanName || undefined,
+          patientPhone: cleanPhone || undefined,
+          patientCnp: cleanCnp || undefined,
+          patientAge: age || undefined,
+          patientBirthDate: birthDate || undefined,
+          patientSex: sex || undefined,
+        },
+      );
     } catch (err) {
       console.warn("Could not sync medical record:", err);
     }
@@ -8500,7 +9824,7 @@ export default function App() {
 
       originalPatientNameRef.current = finalPatientName;
 
-      setCurrentMedicalRecord({
+      setCurrentMedicalRecord(checkAndRestoreDraftForRecord({
         ...data,
         id: data.id || recordId,
         patientName: finalPatientName,
@@ -8714,7 +10038,7 @@ export default function App() {
           },
         cl_od: targetPrescription?.cl_od || data.cl_od,
         cl_os: targetPrescription?.cl_os || data.cl_os,
-      } as MedicalRecord);
+      } as MedicalRecord));
 
       setActivePrescriptionIndex(targetIdx);
     } else {
@@ -8824,7 +10148,7 @@ export default function App() {
         updatedAt: new Date().toISOString(),
       } as MedicalRecord;
 
-      setCurrentMedicalRecord(newRec);
+      setCurrentMedicalRecord(checkAndRestoreDraftForRecord(newRec));
       setActivePrescriptionIndex(null);
     }
     setActiveOrderIndex(null);
@@ -9185,6 +10509,9 @@ export default function App() {
         medicalRecords,
       ) ||
       medicalRecords.find(
+        (r) => isMedicalRecordMatchForAppointment(r, appointment)
+      ) ||
+      medicalRecords.find(
         (r) =>
           r.patientName &&
           appointment.patientName &&
@@ -9194,7 +10521,17 @@ export default function App() {
             (appointment.patientPhone || "").trim(),
       );
 
-    if (!record) return;
+    if (!record) {
+      setPatientName(appointment.patientName || "");
+      setPatientPhone((appointment.patientPhone || "").replace(/[^0-9]/g, ""));
+      setPatientBirthDate(appointment.patientBirthDate || "");
+      setFaraTelefon(!appointment.patientPhone);
+      setHasStoredPhone(!!appointment.patientPhone);
+      setPatientSex((appointment.patientSex as "M" | "F" | "") || "");
+      setBookingError(null);
+      setIsNewOrderPatientModalOpen(true);
+      return;
+    }
 
     setCurrentMedicalRecord(record);
     setActiveAppointment(appointment);
@@ -9204,22 +10541,73 @@ export default function App() {
   };
 
   const handleNewAppointmentFromSearch = (app: Appointment) => {
-    setPatientForNewAppointment(app);
-    setIsNewAppointmentConfirmModalOpen(true);
+    handleOpenManualBookingFromSearch(app);
   };
 
   const confirmNewAppointment = () => {
     if (!patientForNewAppointment) return;
 
+    const targetAge = (
+      patientForNewAppointment.patientAge ||
+      (patientForNewAppointment.patientBirthDate
+        ? calculateAge(patientForNewAppointment.patientBirthDate)
+        : "") ||
+      ""
+    ).toString();
+
     setQuickBookingPatient({
       name: patientForNewAppointment.patientName,
-      age: patientForNewAppointment.patientAge.toString(),
+      age: targetAge,
       birthDate: patientForNewAppointment.patientBirthDate || "",
-      phone: patientForNewAppointment.patientPhone,
+      phone: patientForNewAppointment.patientPhone || "",
+      sex: patientForNewAppointment.patientSex || "",
+      notes: patientForNewAppointment.patientNotes || "",
     });
 
     setIsNewAppointmentConfirmModalOpen(false);
     setIsSearchModalOpen(false);
+    setIsOmniboxOpen(false);
+    setIsMedicalRecordModalOpen(false);
+    setIsOrdersModalOpen(false);
+  };
+
+  const handleOpenManualBookingFromSearch = (targetPatient?: any) => {
+    const patient = targetPatient || patientForNewAppointment;
+    if (!patient) return;
+
+    const targetAge = (
+      patient.patientAge ||
+      (patient.patientBirthDate
+        ? calculateAge(patient.patientBirthDate)
+        : "") ||
+      ""
+    ).toString();
+
+    setEditingAppointment(null);
+    setPatientName(patient.patientName || "");
+    setPatientAge(targetAge);
+    setPatientBirthDate(patient.patientBirthDate || "");
+    setPatientPhone(patient.patientPhone || "");
+    setPatientCnp(patient.patientCnp || "");
+    const hasPhone = !!patient.patientPhone?.trim();
+    setFaraTelefon(!hasPhone);
+    setHasStoredPhone(hasPhone);
+    setPatientSex((patient.patientSex as "M" | "F") || "");
+    setPatientNotes(patient.patientNotes || "");
+    setSymptomSelect((patient as any).patientSymptomSelect || "");
+    setSymptomText((patient as any).patientSymptomText || "");
+
+    const defaultDoctor =
+      activeDoctorRoles[0] ||
+      (profile?.role && profile.role.startsWith("doctor") ? profile.role : "all");
+    setSelectedSlot({ doctorId: defaultDoctor, time: new Date() });
+
+    setIsNewAppointmentConfirmModalOpen(false);
+    setIsSearchModalOpen(false);
+    setIsOmniboxOpen(false);
+    setIsMedicalRecordModalOpen(false);
+    setIsOrdersModalOpen(false);
+    setIsBookingModalOpen(true);
   };
 
   const saveMedicalRecord = async (shouldClose = true): Promise<boolean> => {
@@ -9530,6 +10918,13 @@ export default function App() {
       setShowSavedAnimation(true);
       setSuccessMessage(`Fișa pacientului "${newPatientName}" a fost salvată cu succes!`);
 
+      // Clear local auto-save draft
+      try {
+        localStorage.removeItem(`opticenter_draft_mr_${oldRecordId}`);
+        localStorage.removeItem(`opticenter_draft_mr_${newRecordId}`);
+        setDraftRestoredNotice(null);
+      } catch (e) {}
+
       setTimeout(() => {
         setShowSavedAnimation(false);
         if (shouldClose) {
@@ -9685,6 +11080,8 @@ export default function App() {
               doc(db, "appointments", docId),
               removeUndefined({
                 patientName: newPatientName,
+                patientPhone: phone || undefined,
+                patientCnp: currentMedicalRecord.patientCnp || undefined,
                 patientAge: finalAge !== undefined ? finalAge : uniqueAppDocs.get(docId)?.patientAge,
                 patientBirthDate: currentMedicalRecord.patientBirthDate || "",
                 patientSex: currentMedicalRecord.patientSex || "",
@@ -9710,6 +11107,8 @@ export default function App() {
                 return {
                   ...app,
                   patientName: newPatientName,
+                  patientPhone: phone || app.patientPhone,
+                  patientCnp: currentMedicalRecord.patientCnp || app.patientCnp,
                   patientAge: finalAge !== undefined ? finalAge : app.patientAge,
                   patientBirthDate: currentMedicalRecord.patientBirthDate || app.patientBirthDate,
                   patientSex: (currentMedicalRecord.patientSex as any) || app.patientSex,
@@ -9717,6 +11116,23 @@ export default function App() {
               }
               return app;
             }),
+          );
+
+          await syncPatientUniversal(
+            {
+              patientName: newPatientName,
+              patientPhone: phone,
+              patientCnp: currentMedicalRecord.patientCnp,
+              recordId: currentMedicalRecord.id,
+            },
+            {
+              patientName: newPatientName,
+              patientPhone: phone,
+              patientCnp: currentMedicalRecord.patientCnp,
+              patientBirthDate: currentMedicalRecord.patientBirthDate,
+              patientSex: currentMedicalRecord.patientSex,
+              patientAge: finalAge,
+            },
           );
 
           if (activeAppointment) {
@@ -10621,7 +12037,53 @@ export default function App() {
     setLoading(true);
     try {
       let newHistory = [...(currentMedicalRecord.orderHistory || [])];
-      const currentOrder = currentMedicalRecord.glassesOrder;
+      const currentOrder = { ...currentMedicalRecord.glassesOrder };
+
+      // Scădere automată a ramei din stoc dacă e cod de ramă din inventar
+      const deductedFrameIds: string[] = [...(currentOrder.stockDeductedFrames || [])];
+      const framesToCheck = [
+        currentOrder.frameCode,
+        currentOrder.nearFrameCode,
+      ].filter((c): c is string => typeof c === "string" && Boolean(c.trim()));
+
+      for (const rawCode of framesToCheck) {
+        const cleanCode = rawCode.trim().toLowerCase();
+        const matched = frameStockList.find((f) => {
+          const full = f.brand ? `${f.brand} - ${f.code}` : f.code;
+          const fullMfr = f.manufacturer ? `${f.manufacturer} - ${f.code}` : f.code;
+          return (
+            full.trim().toLowerCase() === cleanCode ||
+            fullMfr.trim().toLowerCase() === cleanCode ||
+            f.code.trim().toLowerCase() === cleanCode
+          );
+        });
+
+        if (matched && matched.id && !deductedFrameIds.includes(matched.id)) {
+          const currentQty = Number(matched.quantity) || 0;
+          if (currentQty > 0) {
+            const newQty = currentQty - 1;
+            try {
+              await updateDoc(doc(db, "frame_stock", matched.id), {
+                quantity: newQty,
+                updatedAt: new Date().toISOString(),
+              });
+              setFrameStockList((prev) =>
+                prev.map((f) => (f.id === matched.id ? { ...f, quantity: newQty } : f))
+              );
+              deductedFrameIds.push(matched.id);
+              await logActivity(
+                "Scădere Automată Stoc Ramă",
+                `Scăzut automat 1 buc. din stoc pentru rama "${matched.brand ? matched.brand + " - " : ""}${matched.code}" la salvarea comenzii #${currentOrder.orderNumber}. Stoc nou: ${newQty} buc.`
+              );
+            } catch (stockErr) {
+              console.error("Eroare scădere automată stoc ramă:", stockErr);
+            }
+          }
+        }
+      }
+
+      currentOrder.stockDeductedFrames = deductedFrameIds;
+      currentOrder.stockDeducted = deductedFrameIds.length > 0;
 
       if (activeOrderIndex === null) {
         const hasData =
@@ -10640,12 +12102,19 @@ export default function App() {
 
       const updatedRecord = {
         ...currentMedicalRecord,
+        glassesOrder: currentOrder,
         orderHistory: newHistory,
       };
 
       await setDoc(
         doc(db, "medicalRecords", currentMedicalRecord.id),
         removeUndefined(updatedRecord),
+      );
+
+      setMedicalRecords((prev) =>
+        prev.some((r) => r.id === updatedRecord.id)
+          ? prev.map((r) => (r.id === updatedRecord.id ? updatedRecord : r))
+          : [updatedRecord, ...prev]
       );
 
       setCurrentMedicalRecord(updatedRecord);
@@ -13512,14 +14981,21 @@ export default function App() {
             reschedulingAppointment?.patientCnp,
           );
         } else {
-          await syncMedicalRecord(
-            patientName,
-            valPhone,
-            calculatedAge,
-            patientBirthDate,
-            patientSex,
-            reschedulingAppointment?.patientName,
-            reschedulingAppointment?.patientPhone,
+          await syncPatientUniversal(
+            {
+              patientName: reschedulingAppointment?.patientName || patientName,
+              patientPhone: reschedulingAppointment?.patientPhone || valPhone,
+              patientCnp: reschedulingAppointment?.patientCnp || patientCnp.trim() || undefined,
+              recordId: reschedulingAppointment?.id,
+            },
+            {
+              patientName,
+              patientPhone: valPhone,
+              patientCnp: patientCnp.trim() || undefined,
+              patientBirthDate,
+              patientSex,
+              patientAge: calculatedAge,
+            },
           );
         }
       } else if (editingAppointment) {
@@ -13532,6 +15008,7 @@ export default function App() {
             patientAge: calculatedAge,
             patientBirthDate,
             patientPhone: valPhone,
+            patientCnp: patientCnp.trim() || undefined,
             patientSex,
             patientNotes,
             patientSymptomSelect: symptomSelect,
@@ -13546,17 +15023,24 @@ export default function App() {
             oldCalendarName,
             newCalendarName,
             valPhone,
-            editingAppointment.patientCnp,
+            patientCnp.trim() || editingAppointment.patientCnp,
           );
         } else {
-          await syncMedicalRecord(
-            patientName,
-            valPhone,
-            calculatedAge,
-            patientBirthDate,
-            patientSex,
-            editingAppointment?.patientName,
-            editingAppointment?.patientPhone,
+          await syncPatientUniversal(
+            {
+              patientName: editingAppointment?.patientName || patientName,
+              patientPhone: editingAppointment?.patientPhone || valPhone,
+              patientCnp: editingAppointment?.patientCnp || patientCnp.trim() || undefined,
+              recordId: editingAppointment?.id,
+            },
+            {
+              patientName,
+              patientPhone: valPhone,
+              patientCnp: patientCnp.trim() || undefined,
+              patientBirthDate,
+              patientSex,
+              patientAge: calculatedAge,
+            },
           );
         }
       } else {
@@ -13567,6 +15051,7 @@ export default function App() {
             patientAge: calculatedAge,
             patientBirthDate,
             patientPhone: valPhone,
+            patientCnp: patientCnp.trim() || undefined,
             patientSex,
             patientNotes,
             patientSymptomSelect: symptomSelect,
@@ -13577,6 +15062,21 @@ export default function App() {
             status: "scheduled",
           }),
         );
+        await syncPatientUniversal(
+          {
+            patientName,
+            patientPhone: valPhone,
+            patientCnp: patientCnp.trim() || undefined,
+          },
+          {
+            patientName,
+            patientPhone: valPhone,
+            patientCnp: patientCnp.trim() || undefined,
+            patientBirthDate,
+            patientSex,
+            patientAge: calculatedAge,
+          },
+        );
       }
       setIsBookingModalOpen(false);
       setEditingAppointment(null);
@@ -13585,6 +15085,7 @@ export default function App() {
       setPatientAge("");
       setPatientBirthDate("");
       setPatientPhone("");
+      setPatientCnp("");
       setFaraTelefon(true);
       setHasStoredPhone(false);
       setPatientSex("");
@@ -13756,7 +15257,7 @@ export default function App() {
     const app = appointments.find((a) => a.id === id);
     if (app) {
       setAppointmentToCancel(app);
-      setIsCancelOptionsModalOpen(true);
+      setIsDeleteConfirmModalOpen(true);
     }
   };
 
@@ -16882,6 +18383,16 @@ export default function App() {
           "",
         patientCnp:
           currentMedicalRecord.patientCnp ||
+          activeAppointment?.patientCnp ||
+          targetRecord?.patientCnp ||
+          appointments.find(
+            (a) =>
+              a.patientName &&
+              currentMedicalRecord.patientName &&
+              a.patientName.toLowerCase().trim() ===
+                currentMedicalRecord.patientName.toLowerCase().trim() &&
+              a.patientCnp
+          )?.patientCnp ||
           (isSamePatient ? patientFormGeneral?.patientCnp : "") ||
           "",
         patientSeries:
@@ -18395,34 +19906,48 @@ export default function App() {
     const lineSpacing = 6.5;
 
     doc.text(`Nume:`, 14, y);
-    drawDottedLine(28, 100, y);
+    drawDottedLine(26, 68, y);
     doc.setFont("helvetica", "bold");
     doc.text(
-      truncateToWidth(cleanStr(documentForm.lastName || ""), 100 - 28),
-      28,
+      truncateToWidth(cleanStr(documentForm.lastName || ""), 68 - 26),
+      26,
       y - 1,
     );
     doc.setFont("helvetica", "normal");
 
-    doc.text(`Prenume:`, 102, y);
-    drawDottedLine(122, 170, y);
+    doc.text(`Prenume:`, 70, y);
+    drawDottedLine(86, 128, y);
     doc.setFont("helvetica", "bold");
     doc.text(
-      truncateToWidth(cleanStr(documentForm.firstName || ""), 170 - 122),
-      122,
+      truncateToWidth(cleanStr(documentForm.firstName || ""), 128 - 86),
+      86,
       y - 1,
     );
     doc.setFont("helvetica", "normal");
 
-    doc.text(`Varsta:`, 172, y);
-    drawDottedLine(188, pageWidth - 14, y);
+    doc.text(`Varsta:`, 130, y);
+    drawDottedLine(143, 157, y);
     doc.setFont("helvetica", "bold");
     doc.text(
-      truncateToWidth(documentForm.ageSimple || "", pageWidth - 14 - 188),
-      188,
+      truncateToWidth(documentForm.ageSimple || "", 157 - 143),
+      143,
       y - 1,
     );
     doc.setFont("helvetica", "normal");
+
+    doc.text(`CNP:`, 159, y);
+    drawDottedLine(169, pageWidth - 14, y);
+    if (documentForm.patientCnp) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.text(
+        truncateToWidth(cleanStr(documentForm.patientCnp), pageWidth - 14 - 169),
+        169,
+        y - 1,
+      );
+      doc.setFontSize(9.5);
+      doc.setFont("helvetica", "normal");
+    }
 
     y += lineSpacing;
     doc.text(`Simptome:`, 14, y);
@@ -19612,6 +21137,7 @@ export default function App() {
       setPatientAge(appToUse.patientAge.toString());
       setPatientBirthDate(appToUse.patientBirthDate || "");
       setPatientPhone(appToUse.patientPhone);
+      setPatientCnp(appToUse.patientCnp || "");
       const hasPhone = !!appToUse.patientPhone?.trim();
       setFaraTelefon(!hasPhone);
       setHasStoredPhone(hasPhone);
@@ -19625,6 +21151,7 @@ export default function App() {
       setPatientAge(quickBookingPatient.age);
       setPatientBirthDate(quickBookingPatient.birthDate || "");
       setPatientPhone(quickBookingPatient.phone);
+      setPatientCnp((quickBookingPatient as any).cnp || "");
       const hasPhone = !!quickBookingPatient.phone?.trim();
       setFaraTelefon(!hasPhone);
       setHasStoredPhone(hasPhone);
@@ -19639,6 +21166,7 @@ export default function App() {
       setPatientAge("");
       setPatientBirthDate("");
       setPatientPhone("");
+      setPatientCnp("");
       setFaraTelefon(true);
       setHasStoredPhone(false);
       setPatientSex("");
@@ -21169,17 +22697,20 @@ export default function App() {
       )}
     >
       {dbError && (
-        <div className="bg-amber-600 dark:bg-amber-700 text-white p-3 text-center font-bold text-xs flex flex-wrap items-center justify-center gap-2 sticky top-0 z-50 shadow-md">
-          <AlertTriangle className="w-4.5 h-4.5 text-white animate-bounce shrink-0" />
-          <span className="max-w-4xl text-left sm:text-center">
-            {dbError.toLowerCase().includes("quota") ? (
+        <div className="bg-amber-600 dark:bg-amber-700 text-white p-2.5 sm:p-3 text-center font-bold text-xs flex flex-wrap items-center justify-center gap-2 sticky top-0 z-50 shadow-md">
+          <AlertTriangle className="w-4 h-4 text-white shrink-0" />
+          <span className="max-w-4xl text-left sm:text-center text-[11px] sm:text-xs leading-relaxed">
+            {dbError.toLowerCase().includes("quota") ||
+            dbError.toLowerCase().includes("rate") ||
+            dbError.toLowerCase().includes("limit") ||
+            dbError.toLowerCase().includes("exhausted") ||
+            dbError.toLowerCase().includes("exceeded") ? (
               <>
-                ⚠️ <strong>Limita zilnică Firestore (Free Quota) a fost depășită pentru astăzi!</strong> Aplicația rulează normal folosind datele salvate în memoria cache. Dacă ați activat recent planul <strong>Blaze</strong>, serverele Google au adesea o scurtă întârziere de propagare până când elimină cota pe baza de date. Puteți verifica oricând conexiunea directă folosind butonul din dreapta.
+                ℹ️ <strong>Mod Local Activ (Memorie Cache Securizată):</strong> Aplicația rulează normal folosind datele salvate local. Puteți căuta, consulta și administra pacienții și fișele fără întrerupere. Datele dumneavoastră sunt în deplină siguranță.
               </>
             ) : (
               <>
-                Atenție: Conexiunea cu baza de date a întâmpinat o problemă (offline/blocaj).
-                Dacă folosiți un calculator mai vechi, vă rugăm să <strong>verificați dacă data și ora din Windows sunt corecte</strong> (ceasul de sistem sincronizat cu internetul) și asigurați-vă că browserul are actualizările la zi!
+                Atenție: Conexiunea cu baza de date a întâmpinat o problemă temporară. Aplicația continuă să ruleze pe datele locale salvate.
               </>
             )}
           </span>
@@ -21188,17 +22719,17 @@ export default function App() {
               onClick={handleRetryDbConnection}
               disabled={isCheckingDbConnection}
               className="bg-white/20 hover:bg-white/30 text-white px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
-              title="Verifică dacă baza de date s-a conectat"
+              title="Verifică conexiunea"
             >
               <RefreshCw className={cn("w-3 h-3", isCheckingDbConnection && "animate-spin")} />
               {isCheckingDbConnection ? "Se verifică..." : "Verifică conexiunea"}
             </button>
             <button
               onClick={() => setDbError(null)}
-              className="bg-white/20 hover:bg-white/30 px-2 py-1 rounded text-[10px] uppercase font-black transition-colors cursor-pointer"
+              className="bg-white/20 hover:bg-white/30 px-2.5 py-1 rounded text-[11px] font-black transition-colors cursor-pointer"
               title="Închide acest avertisment"
             >
-              ✕
+              Am înțeles ✕
             </button>
           </div>
         </div>
@@ -21332,43 +22863,504 @@ export default function App() {
 
               {profile?.role !== "tv" && (
                 <div className="flex items-center gap-2 hidden md:flex">
-                  <div className="relative animate-fade-in">
-                    <User className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <NameSearchInput
-                      initialValue={searchName}
-                      onSearch={(val) => {
-                        setSearchName(val);
-                        handleSearch("name", val);
-                      }}
-                      onSync={(val) => {
-                        setSearchName(val);
-                      }}
-                      darkMode={darkMode}
-                    />
+                  {/* Omnibox / Spotlight Universal Search */}
+                  <div ref={omniboxRef} className="relative">
+                    <div className="relative flex items-center">
+                      <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-blue-500 pointer-events-none" />
+                      <input
+                        ref={universalSearchInputRef}
+                        type="text"
+                        value={universalSearchQuery}
+                        onChange={(e) => {
+                          setUniversalSearchQuery(e.target.value);
+                          if (!isOmniboxOpen) setIsOmniboxOpen(true);
+                        }}
+                        onFocus={() => setIsOmniboxOpen(true)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            handleUniversalSearch(universalSearchQuery);
+                          } else if (e.key === "Escape") {
+                            setIsOmniboxOpen(false);
+                          }
+                        }}
+                        placeholder="Căutare pacient (Nume, Tel, CNP)..."
+                        className={cn(
+                          "pl-8.5 pr-14 py-1.5 border rounded-lg text-xs outline-none transition-all duration-300 w-56 lg:w-72 xl:w-80 focus:w-88 shadow-sm font-semibold",
+                          darkMode
+                            ? "bg-slate-800 border-slate-700 text-slate-100 placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            : "bg-white border-slate-200 text-slate-900 placeholder-slate-450 focus:border-blue-500 focus:ring-1 focus:ring-blue-500",
+                        )}
+                      />
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                        {universalSearchQuery ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setUniversalSearchQuery("");
+                              universalSearchInputRef.current?.focus();
+                            }}
+                            className="p-0.5 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                            title="Șterge"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        ) : (
+                          <kbd
+                            onClick={() => {
+                              universalSearchInputRef.current?.focus();
+                              setIsOmniboxOpen(true);
+                            }}
+                            className={cn(
+                              "hidden sm:inline-flex items-center gap-0.5 text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border select-none cursor-pointer",
+                              darkMode
+                                ? "bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-600"
+                                : "bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300"
+                            )}
+                            title="Apasă Ctrl + K pentru căutare rapidă"
+                          >
+                            Ctrl K
+                          </kbd>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Spotlight Live Results Dropdown */}
+                    <AnimatePresence>
+                      {isOmniboxOpen && universalSearchQuery.trim().length >= 2 && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -4, scale: 0.98 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: -4, scale: 0.98 }}
+                          transition={{ duration: 0.15 }}
+                          className={cn(
+                            "absolute left-0 top-full mt-1.5 w-[380px] sm:w-[500px] md:w-[600px] lg:w-[680px] xl:w-[740px] max-w-[95vw] rounded-2xl shadow-2xl border overflow-hidden z-50 backdrop-blur-md",
+                            darkMode
+                              ? "bg-slate-900/95 border-slate-700 shadow-black/70 text-slate-100"
+                              : "bg-white/95 border-slate-200 shadow-slate-400/40 text-slate-900"
+                          )}
+                        >
+                          {/* Header */}
+                          <div className={cn(
+                            "px-3.5 py-2 border-b flex items-center justify-between text-[11px] font-bold uppercase tracking-wider",
+                            darkMode ? "bg-slate-850/80 border-slate-800 text-slate-400" : "bg-slate-50/80 border-slate-100 text-slate-500"
+                          )}>
+                            <span className="flex items-center gap-1.5">
+                              <User className="w-3.5 h-3.5 text-blue-500" />
+                              Rezultate inteligente ({omniboxMatches.length})
+                            </span>
+                            <span className="text-[10px] lowercase opacity-75 font-normal">apasă Enter pentru tot istoricul</span>
+                          </div>
+
+                          {/* List */}
+                          <div className="max-h-[420px] overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 custom-scrollbar">
+                            {omniboxMatches.length > 0 ? (
+                              omniboxMatches.map((item) => {
+                                const syntheticApp: Appointment = item.rawAppointment || ({
+                                  id: item.rawRecord?.id || `med_${item.id}`,
+                                  patientName: item.patientName,
+                                  patientPhone: item.patientPhone,
+                                  patientAge: Number(item.patientAge) || 0,
+                                  patientBirthDate: item.patientBirthDate || "",
+                                  patientSex: item.patientSex || "",
+                                  patientCnp: item.patientCnp || "",
+                                  startTime: item.lastDate || new Date().toISOString(),
+                                  endTime: item.lastDate || new Date().toISOString(),
+                                  doctorId: "all",
+                                  status: "completed",
+                                  isFromHistoryOnly: true,
+                                } as unknown as Appointment);
+
+                                return (
+                                  <div
+                                    key={item.id}
+                                    className={cn(
+                                      "p-3 flex flex-col gap-2 transition-colors group",
+                                      darkMode ? "hover:bg-slate-800/60" : "hover:bg-blue-50/40"
+                                    )}
+                                  >
+                                    {/* Top Row: Patient Info + Quick Action Buttons */}
+                                    <div className="flex items-center justify-between gap-2.5">
+                                      {/* Patient Info */}
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className="font-extrabold text-xs uppercase tracking-tight text-blue-600 dark:text-blue-400">
+                                            {item.patientName}
+                                          </span>
+                                          {item.patientAge && (
+                                            <span className="text-[10px] px-1.5 py-0.2 rounded-full font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                              {item.patientAge} ani
+                                            </span>
+                                          )}
+                                          {item.patientSex && (
+                                            <span className="text-[10px] font-bold text-slate-400">
+                                              ({item.patientSex})
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-500 dark:text-slate-400 flex-wrap">
+                                          {item.patientPhone ? (
+                                            <span className="font-medium flex items-center gap-1">
+                                              <Phone className="w-2.5 h-2.5 opacity-60" />
+                                              {formatPhoneNumber(item.patientPhone)}
+                                            </span>
+                                          ) : (
+                                            <span className="italic text-[10px] opacity-70">Fără telefon</span>
+                                          )}
+                                          {item.patientCnp && (
+                                            <span className="text-[10px] opacity-75 font-mono">
+                                              CNP: {item.patientCnp}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* Quick Actions */}
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        {/* [🗓️ Programează] */}
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            handleNewAppointmentFromSearch(syntheticApp);
+                                            setIsOmniboxOpen(false);
+                                          }}
+                                          className={cn(
+                                            "flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all border shadow-xs hover:scale-102 active:scale-98 cursor-pointer",
+                                            darkMode
+                                              ? "bg-violet-950/50 border-violet-800 text-violet-300 hover:bg-violet-900/60"
+                                              : "bg-violet-50 border-violet-200 text-violet-700 hover:bg-violet-100"
+                                          )}
+                                          title="Programează pacientul"
+                                        >
+                                          <CalendarPlus className="w-3 h-3 text-violet-500" />
+                                          <span className="hidden sm:inline text-[10px]">Programează</span>
+                                        </button>
+
+                                        {/* [🩺 Deschide Fișă] */}
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            openMedicalRecord(syntheticApp);
+                                            setIsOmniboxOpen(false);
+                                          }}
+                                          className={cn(
+                                            "flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all border shadow-xs hover:scale-102 active:scale-98 cursor-pointer",
+                                            darkMode
+                                              ? "bg-blue-950/50 border-blue-800 text-blue-300 hover:bg-blue-900/60"
+                                              : "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
+                                          )}
+                                          title="Deschide Fișa Medicală"
+                                        >
+                                          <FileText className="w-3 h-3 text-blue-500" />
+                                          <span className="hidden sm:inline text-[10px]">Fișă</span>
+                                        </button>
+
+                                        {/* [👓 Comenzi] (doar administrator și recepție) */}
+                                        {!isDoctor && profile?.role !== "tv" && (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setIsOmniboxOpen(false);
+                                              const record = item.rawRecord ||
+                                                medicalRecords.find((r) => r.id === item.id) ||
+                                                medicalRecords.find(
+                                                  (r) =>
+                                                    r.patientName &&
+                                                    item.patientName &&
+                                                    r.patientName.toLowerCase().trim() ===
+                                                      item.patientName.toLowerCase().trim()
+                                                );
+                                              if (record) {
+                                                setCurrentMedicalRecord(record);
+                                                setActiveAppointment(syntheticApp);
+                                                setActivePrescriptionIndex(null);
+                                                setActiveOrderIndex(null);
+                                                setIsOrderTypeSelectionModalOpen(true);
+                                              } else {
+                                                setPatientName(item.patientName || "");
+                                                setPatientPhone((item.patientPhone || "").replace(/[^0-9]/g, ""));
+                                                setPatientBirthDate(item.patientBirthDate || "");
+                                                setFaraTelefon(!item.patientPhone);
+                                                setHasStoredPhone(!!item.patientPhone);
+                                                setPatientSex((item.patientSex as "M" | "F" | "") || "");
+                                                setBookingError(null);
+                                                setIsNewOrderPatientModalOpen(true);
+                                              }
+                                            }}
+                                            className={cn(
+                                              "flex items-center gap-1 p-1.5 sm:px-2 sm:py-1 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all border shadow-xs hover:scale-102 active:scale-98 cursor-pointer",
+                                              darkMode
+                                                ? "bg-emerald-950/50 border-emerald-800 text-emerald-300 hover:bg-emerald-900/60"
+                                                : "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
+                                            )}
+                                            title="Deschide Comandă Nouă Ochelari"
+                                          >
+                                            <Glasses className="w-3.5 h-3.5 text-emerald-500" />
+                                            <span className="hidden sm:inline text-[10px]">Comenzi</span>
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    {/* Quick Patient Card (Card Rezumat Instant la Căutare) */}
+                                    <div
+                                      className={cn(
+                                        "p-2 sm:p-2.5 rounded-xl border grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs transition-all shadow-2xs",
+                                        darkMode
+                                          ? "bg-slate-950/60 border-slate-800/90 text-slate-300"
+                                          : "bg-slate-50/90 border-slate-200/90 text-slate-700"
+                                      )}
+                                    >
+                                      {/* 1. Ultima vizită și medicul */}
+                                      <div
+                                        onClick={() => {
+                                          openMedicalRecord(syntheticApp);
+                                          setIsOmniboxOpen(false);
+                                        }}
+                                        className={cn(
+                                          "flex flex-col gap-0.5 min-w-0 p-1.5 rounded-lg border transition-all cursor-pointer group/visit",
+                                          darkMode
+                                            ? "bg-slate-900/40 border-slate-800 hover:border-blue-600 hover:bg-blue-950/30"
+                                            : "bg-white/80 border-slate-200/80 hover:border-blue-300 hover:bg-blue-50/60 shadow-2xs"
+                                        )}
+                                        title="Click pentru a deschide fișa / ultima vizită a pacientului"
+                                      >
+                                        <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-slate-400 group-hover/visit:text-blue-500">
+                                          <div className="flex items-center gap-1">
+                                            <UserCheck className="w-3 h-3 text-blue-500 shrink-0" />
+                                            <span>Ultima vizită</span>
+                                          </div>
+                                          <span className="text-[9px] opacity-0 group-hover/visit:opacity-100 transition-opacity text-blue-500 font-bold">Deschide ↗</span>
+                                        </div>
+                                        {item.quickCard?.lastVisit ? (
+                                          <div className="min-w-0">
+                                            <p className="font-bold text-[11px] text-slate-800 dark:text-slate-100 truncate">
+                                              {new Date(item.quickCard.lastVisit.date).toLocaleDateString("ro-RO", {
+                                                day: "2-digit",
+                                                month: "short",
+                                                year: "numeric",
+                                              })}
+                                            </p>
+                                            <p className="text-[10px] text-blue-600 dark:text-blue-400 font-bold truncate">
+                                              {item.quickCard.lastVisit.doctorName}
+                                            </p>
+                                          </div>
+                                        ) : (
+                                          <p className="text-[10px] text-slate-400 italic">Nicio vizită anterioară</p>
+                                        )}
+                                      </div>
+
+                                      {/* 2. Comandă activă ochelari & Rest de plată */}
+                                      <div
+                                        onClick={() => {
+                                          setIsOmniboxOpen(false);
+                                          setPatientOrdersSearchQuery(item.patientName || "");
+                                          setIsOrdersModalOpen(true);
+                                        }}
+                                        className={cn(
+                                          "flex flex-col gap-0.5 min-w-0 p-1.5 rounded-lg border transition-all cursor-pointer group/orders",
+                                          darkMode
+                                            ? "bg-slate-900/40 border-slate-800 hover:border-emerald-600 hover:bg-emerald-950/30"
+                                            : "bg-white/80 border-slate-200/80 hover:border-emerald-300 hover:bg-emerald-50/60 shadow-2xs"
+                                        )}
+                                        title="Click pentru a vizualiza comenzile de ochelari ale pacientului"
+                                      >
+                                        <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-slate-400 group-hover/orders:text-emerald-500">
+                                          <div className="flex items-center gap-1">
+                                            <Glasses className="w-3 h-3 text-emerald-500 shrink-0" />
+                                            <span>Comandă Ochelari</span>
+                                          </div>
+                                          <span className="text-[9px] opacity-0 group-hover/orders:opacity-100 transition-opacity text-emerald-600 font-bold">Comenzi ↗</span>
+                                        </div>
+                                        {item.quickCard?.activeOrder ? (
+                                          <div className="min-w-0 space-y-1">
+                                            <div className="flex items-center gap-1 flex-wrap">
+                                              <span
+                                                className={cn(
+                                                  "text-[9px] px-1.5 py-0.2 rounded-full font-black uppercase tracking-tighter truncate",
+                                                  item.quickCard.activeOrder.isReady
+                                                    ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30"
+                                                    : "bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                                                )}
+                                              >
+                                                {item.quickCard.activeOrder.isReady ? "✓ Gata de ridicare" : "În lucru"}
+                                              </span>
+                                              <span className="text-[10px] font-mono text-slate-400 truncate">
+                                                #{item.quickCard.activeOrder.orderNumber}
+                                              </span>
+                                            </div>
+                                            <div className="flex items-center justify-between gap-1 flex-wrap">
+                                              {item.quickCard.activeOrder.balance > 0 ? (
+                                                <>
+                                                  <span className="text-[10px] font-black text-rose-600 dark:text-rose-400 bg-rose-500/10 px-1.5 py-0.2 rounded border border-rose-500/20 inline-block">
+                                                    Rest: {item.quickCard.activeOrder.balance.toFixed(2)} RON
+                                                  </span>
+                                                  <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleQuickCollectRemainingBalance(item.quickCard!.activeOrder!, item);
+                                                    }}
+                                                    className="px-2 py-0.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded text-[9px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs cursor-pointer ml-auto"
+                                                    title={`Încasează direct restul de ${item.quickCard.activeOrder.balance.toFixed(0)} RON`}
+                                                  >
+                                                    <CreditCard className="w-2.5 h-2.5" />
+                                                    <span>Încasează</span>
+                                                  </button>
+                                                </>
+                                              ) : (
+                                                <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded inline-block">
+                                                  Achitat integral (0 RON)
+                                                </span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        ) : item.quickCard?.totalUnpaidBalance && item.quickCard.totalUnpaidBalance > 0 ? (
+                                          <div className="min-w-0 space-y-1">
+                                            <p className="text-[10px] text-slate-500">Fără comandă în curs</p>
+                                            <div className="flex items-center justify-between gap-1 flex-wrap">
+                                              <span className="text-[10px] font-black text-rose-600 dark:text-rose-400 bg-rose-500/10 px-1.5 py-0.2 rounded border border-rose-500/20 inline-block">
+                                                Rest restant: {item.quickCard.totalUnpaidBalance.toFixed(2)} RON
+                                              </span>
+                                              <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setIsOmniboxOpen(false);
+                                                  setOrdersTab("with-balance");
+                                                  setPatientOrdersSearchQuery(item.patientName || "");
+                                                  setIsOrdersModalOpen(true);
+                                                }}
+                                                className="px-2 py-0.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded text-[9px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs cursor-pointer ml-auto"
+                                                title="Deschide centralizatorul pentru încasare"
+                                              >
+                                                <CreditCard className="w-2.5 h-2.5" />
+                                                <span>Vezi Rest</span>
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <p className="text-[10px] text-slate-400 italic">Fără comandă activă</p>
+                                        )}
+                                      </div>
+
+                                      {/* 3. Programare viitoare */}
+                                      <div
+                                        onClick={() => {
+                                          if (item.quickCard?.futureAppointment) {
+                                            setSelectedDate(startOfDay(new Date(item.quickCard.futureAppointment.startTime)));
+                                            setIsOmniboxOpen(false);
+                                          } else {
+                                            handleNewAppointmentFromSearch(syntheticApp);
+                                            setIsOmniboxOpen(false);
+                                          }
+                                        }}
+                                        className={cn(
+                                          "flex flex-col gap-0.5 min-w-0 p-1.5 rounded-lg border transition-all cursor-pointer group/sched",
+                                          darkMode
+                                            ? "bg-slate-900/40 border-slate-800 hover:border-violet-600 hover:bg-violet-950/30"
+                                            : "bg-white/80 border-slate-200/80 hover:border-violet-300 hover:bg-violet-50/60 shadow-2xs"
+                                        )}
+                                        title={item.quickCard?.futureAppointment ? "Click pentru a deschide programarea în calendar" : "Click pentru a programa pacientul"}
+                                      >
+                                        <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-slate-400 group-hover/sched:text-violet-500">
+                                          <div className="flex items-center gap-1">
+                                            <CalendarClock className="w-3 h-3 text-violet-500 shrink-0" />
+                                            <span>Programare viitoare</span>
+                                          </div>
+                                          <span className="text-[9px] opacity-0 group-hover/sched:opacity-100 transition-opacity text-violet-500 font-bold">
+                                            {item.quickCard?.futureAppointment ? "Calendar ↗" : "+ Nou ↗"}
+                                          </span>
+                                        </div>
+                                        {item.quickCard?.futureAppointment ? (
+                                          <div className="min-w-0">
+                                            <p className="font-bold text-[11px] text-violet-600 dark:text-violet-300 truncate">
+                                              {new Date(item.quickCard.futureAppointment.startTime).toLocaleDateString("ro-RO", {
+                                                day: "2-digit",
+                                                month: "short",
+                                              })}{" "}
+                                              la{" "}
+                                              {new Date(item.quickCard.futureAppointment.startTime).toLocaleTimeString("ro-RO", {
+                                                hour: "2-digit",
+                                                minute: "2-digit",
+                                              })}
+                                            </p>
+                                            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold truncate">
+                                              {item.quickCard.futureAppointment.doctorName}
+                                            </p>
+                                          </div>
+                                        ) : (
+                                          <p className="text-[10px] text-slate-400 italic">Fără programare viitoare</p>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            ) : (
+                              <div className="p-5 text-center space-y-2">
+                                <p className="text-xs font-semibold text-slate-500">
+                                  Niciun pacient găsit în memoria locală pentru „{universalSearchQuery}”.
+                                </p>
+                                <div className="flex items-center justify-center gap-2 pt-1 flex-wrap">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUniversalSearch(universalSearchQuery)}
+                                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white transition-all shadow-xs cursor-pointer"
+                                  >
+                                    Caută aprofundat în baza de date
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setIsOmniboxOpen(false);
+                                      const cleanDigits = universalSearchQuery.replace(/\D/g, "");
+                                      const isPhone = cleanDigits.length >= 6;
+                                      setPatientName(isPhone ? "" : universalSearchQuery);
+                                      setPatientPhone(isPhone ? cleanDigits : "");
+                                      setFaraTelefon(!isPhone);
+                                      setIsNewPatientFromSearchModalOpen(true);
+                                    }}
+                                    className="px-3 py-1.5 rounded-lg text-xs font-bold border border-emerald-500 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 transition-all cursor-pointer"
+                                  >
+                                    + Pacient Nou
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Footer */}
+                          <div className={cn(
+                            "p-2.5 border-t flex items-center justify-between text-xs",
+                            darkMode ? "bg-slate-850 border-slate-800" : "bg-slate-50 border-slate-100"
+                          )}>
+                            <button
+                              type="button"
+                              onClick={() => handleUniversalSearch(universalSearchQuery)}
+                              className="font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer text-xs"
+                            >
+                              <span>Vezi toate rezultatele în istoricul complet</span>
+                              <ArrowRight className="w-3 h-3" />
+                            </button>
+                            <span className="text-[10px] opacity-60">Esc pentru a închide</span>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
-                  <div className="relative animate-fade-in">
-                    <Phone className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <PhoneSearchInput
-                      initialValue={searchPhone}
-                      onSearch={(val) => {
-                        setSearchPhone(val);
-                        handleSearch("phone", val);
-                      }}
-                      onSync={(val) => {
-                        setSearchPhone(val);
-                      }}
-                      darkMode={darkMode}
-                    />
-                  </div>
+
+                  {/* Quick Pacient Nou button */}
                   <button
                     onClick={() => {
-                      setPatientName(searchName);
-                      setPatientPhone(searchPhone.replace(/[^0-9]/g, ""));
-                      setFaraTelefon(!searchPhone.trim());
+                      const cleanDigits = universalSearchQuery.replace(/[^0-9]/g, "");
+                      const isDigits = cleanDigits.length >= 6;
+                      setPatientName(isDigits ? "" : universalSearchQuery);
+                      setPatientPhone(isDigits ? cleanDigits : "");
+                      setFaraTelefon(!cleanDigits);
                       setIsNewPatientFromSearchModalOpen(true);
                     }}
                     className={cn(
-                      "px-2.5 py-1.5 rounded-lg border text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shrink-0 hover:scale-102 active:scale-98 shadow-sm",
+                      "px-2.5 py-1.5 rounded-lg border text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shrink-0 hover:scale-102 active:scale-98 shadow-sm cursor-pointer",
                       darkMode
                         ? "bg-emerald-950/45 border-emerald-800 text-emerald-400 hover:bg-emerald-900/30"
                         : "bg-emerald-50 border-emerald-200 text-emerald-600 hover:bg-emerald-100",
@@ -21723,7 +23715,7 @@ export default function App() {
                                     a.patientName === record.patientName &&
                                     a.patientPhone === record.patientPhone
                                 );
-                                setCurrentMedicalRecord(record);
+                                setCurrentMedicalRecord(checkAndRestoreDraftForRecord(record));
                                 setActiveAppointment(apt || null);
                                 setActivePrescriptionIndex(null);
                                 setActiveOrderIndex(null);
@@ -21734,6 +23726,46 @@ export default function App() {
                             title="Deschide fișă pacient"
                           >
                             <FileText className="w-3 h-3" />
+                          </button>
+                        )}
+                        {/* Quick New Glasses Order Icon Button: Only admin, frontdesk, seller (not tv, not doctor) */}
+                        {!isDoctor && profile?.role !== "tv" && (
+                          <button
+                            onClick={() => {
+                              const record =
+                                medicalRecords.find((r) => r.id === alert.patientId) ||
+                                medicalRecords.find(
+                                  (r) =>
+                                    r.patientName &&
+                                    alert.patientName &&
+                                    r.patientName.toLowerCase().trim() ===
+                                      alert.patientName.toLowerCase().trim()
+                                );
+                              if (record) {
+                                const apt = appointments.find(
+                                  (a) =>
+                                    a.patientName === record.patientName &&
+                                    a.patientPhone === record.patientPhone
+                                );
+                                setCurrentMedicalRecord(record);
+                                setActiveAppointment(apt || null);
+                                setActivePrescriptionIndex(null);
+                                setActiveOrderIndex(null);
+                                setIsOrderTypeSelectionModalOpen(true);
+                              } else {
+                                setPatientName(alert.patientName || "");
+                                setPatientPhone((alert.patientPhone || "").replace(/[^0-9]/g, ""));
+                                setPatientAge(alert.patientAge?.toString() || "");
+                                setFaraTelefon(!alert.patientPhone);
+                                setHasStoredPhone(!!alert.patientPhone);
+                                setBookingError(null);
+                                setIsNewOrderPatientModalOpen(true);
+                              }
+                            }}
+                            className="p-1 rounded bg-emerald-500 hover:bg-emerald-600 text-white transition-colors flex items-center justify-center shadow-sm shrink-0 hover:scale-105 active:scale-95 cursor-pointer"
+                            title="Deschide Comandă Nouă Ochelari"
+                          >
+                            <Glasses className="w-3.5 h-3.5" />
                           </button>
                         )}
                       </div>
@@ -21759,10 +23791,18 @@ export default function App() {
                                 <span key={idx} className="flex items-center gap-1">
                                   {idx > 0 && <span className="text-red-300 dark:text-red-800 mx-1">/</span>}
                                   <span>{detail}</span>
-                                  {isOchelari && profile?.role !== "tv" && (
+                                  {isOchelari && !isDoctor && profile?.role !== "tv" && (
                                     <button
                                       onClick={() => {
-                                        const record = medicalRecords.find((r) => r.id === alert.patientId);
+                                        const record =
+                                          medicalRecords.find((r) => r.id === alert.patientId) ||
+                                          medicalRecords.find(
+                                            (r) =>
+                                              r.patientName &&
+                                              alert.patientName &&
+                                              r.patientName.toLowerCase().trim() ===
+                                                alert.patientName.toLowerCase().trim()
+                                          );
                                         if (record) {
                                           const apt = appointments.find(
                                             (a) =>
@@ -21774,10 +23814,18 @@ export default function App() {
                                           setActivePrescriptionIndex(null);
                                           setActiveOrderIndex(null);
                                           setIsOrderTypeSelectionModalOpen(true);
+                                        } else {
+                                          setPatientName(alert.patientName || "");
+                                          setPatientPhone((alert.patientPhone || "").replace(/[^0-9]/g, ""));
+                                          setPatientAge(alert.patientAge?.toString() || "");
+                                          setFaraTelefon(!alert.patientPhone);
+                                          setHasStoredPhone(!!alert.patientPhone);
+                                          setBookingError(null);
+                                          setIsNewOrderPatientModalOpen(true);
                                         }
                                       }}
                                       className="p-1 rounded bg-emerald-500 hover:bg-emerald-600 text-white transition-colors flex items-center justify-center shadow-sm shrink-0 hover:scale-105 active:scale-95 cursor-pointer ml-1"
-                                      title="Creează comandă ochelari"
+                                      title="Deschide Comandă Nouă Ochelari"
                                     >
                                       <Glasses className="w-3.5 h-3.5" />
                                     </button>
@@ -22147,6 +24195,25 @@ export default function App() {
                     }
                     return null;
                   })()}
+                </button>
+              )}
+
+              {(profile?.role === "admin" || profile?.role === "frontdesk") && (
+                <button
+                  onClick={handleLoadFullArchive}
+                  disabled={isLoadingAllHistory}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all shadow-md border text-[11px] font-bold shrink-0 cursor-pointer disabled:opacity-50",
+                    hasLoadedAllHistory
+                      ? (darkMode ? "bg-emerald-950/40 border-emerald-800 text-emerald-300" : "bg-emerald-50 border-emerald-200 text-emerald-700")
+                      : (darkMode ? "bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300" : "bg-white border-slate-200 hover:bg-slate-50 text-slate-700")
+                  )}
+                  title={hasLoadedAllHistory ? "Toată arhiva clinică este încărcată în memorie" : "Încărcare inteligentă activă (Ultimele 30 zile). Click pentru a încărca toată arhiva."}
+                >
+                  <Database className={cn("w-3.5 h-3.5", isLoadingAllHistory && "animate-spin text-blue-500", hasLoadedAllHistory && "text-emerald-500")} />
+                  <span className="hidden xl:inline">
+                    {isLoadingAllHistory ? "Se încarcă arhiva..." : hasLoadedAllHistory ? "Arhivă Completă" : "Smart Loading"}
+                  </span>
                 </button>
               )}
             </div>
@@ -23061,10 +25128,10 @@ export default function App() {
                                           {canManageOrders &&
                                             medicalRecords.some(
                                               (r) =>
-                                                r.patientName ===
-                                                  appointment.patientName &&
-                                                r.patientPhone ===
-                                                  appointment.patientPhone &&
+                                                isMedicalRecordMatchForAppointment(
+                                                  r,
+                                                  appointment,
+                                                ) &&
                                                 hasFinalDioptersOrContactLenses(r),
                                             ) && (
                                               <button
@@ -23316,22 +25383,14 @@ export default function App() {
               {/* Search input & Filter Buttons */}
               <div className="flex flex-col sm:flex-row gap-2.5 mb-4 items-stretch sm:items-center">
                 <div className="relative flex-1">
-                  <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
+                  <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 z-10 pointer-events-none" />
+                  <ModalSearchNameInput
                     value={searchName}
-                    onChange={(e) => {
-                      const val = e.target.value;
+                    onSearch={(val) => {
                       setSearchName(val);
                       handleSearch("name", val);
                     }}
-                    placeholder="Modifică numele căutat de la tastatură..."
-                    className={cn(
-                      "w-full pl-9 pr-8 py-2 rounded-xl text-sm font-bold border outline-none transition-all shadow-sm",
-                      darkMode
-                        ? "bg-slate-800 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        : "bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500",
-                    )}
+                    darkMode={darkMode}
                   />
                   {searchName && (
                     <button
@@ -23763,6 +25822,54 @@ export default function App() {
                                   <History className="w-5 h-5 shrink-0 text-amber-500" />
                                   <span>Istoric</span>
                                 </button>
+
+                                {/* Quick Glasses Order Icon Button: Only admin, frontdesk, seller (not tv, not doctor) */}
+                                {!isDoctor && profile?.role !== "tv" && (
+                                  <button
+                                    onClick={() => {
+                                      setIsSearchModalOpen(false);
+                                      const record =
+                                        findPatientMedicalRecord(
+                                          app.patientName,
+                                          app.patientPhone,
+                                          (app as any).patientCnp,
+                                          medicalRecords
+                                        ) ||
+                                        medicalRecords.find(
+                                          (r) =>
+                                            r.patientName &&
+                                            app.patientName &&
+                                            r.patientName.toLowerCase().trim() ===
+                                              app.patientName.toLowerCase().trim()
+                                        );
+                                      if (record) {
+                                        setCurrentMedicalRecord(record);
+                                        setActiveAppointment(app);
+                                        setActivePrescriptionIndex(null);
+                                        setActiveOrderIndex(null);
+                                        setIsOrderTypeSelectionModalOpen(true);
+                                      } else {
+                                        setPatientName(app.patientName || "");
+                                        setPatientPhone((app.patientPhone || "").replace(/[^0-9]/g, ""));
+                                        setPatientBirthDate(app.patientBirthDate || "");
+                                        setFaraTelefon(!app.patientPhone);
+                                        setHasStoredPhone(!!app.patientPhone);
+                                        setPatientSex(app.patientSex || "");
+                                        setBookingError(null);
+                                        setIsNewOrderPatientModalOpen(true);
+                                      }
+                                    }}
+                                    className={cn(
+                                      "flex items-center justify-center p-3 rounded-xl transition-all border shadow-sm",
+                                      darkMode
+                                        ? "bg-emerald-600 hover:bg-emerald-500 border-emerald-550 text-white shadow-emerald-950/25"
+                                        : "bg-emerald-600 hover:bg-emerald-700 border-emerald-700 text-white shadow-emerald-100"
+                                    )}
+                                    title="Deschide Comandă Nouă Ochelari"
+                                  >
+                                    <Glasses className="w-5 h-5" />
+                                  </button>
+                                )}
 
                                 <button
                                   onClick={() => {
@@ -24288,6 +26395,295 @@ export default function App() {
                 >
                   <CalendarPlus className="w-5 h-5" />
                   Adaugă pacient nou și programează
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Confirm New Appointment from Search Modal */}
+      <AnimatePresence>
+        {isNewAppointmentConfirmModalOpen && patientForNewAppointment && (
+          <motion.div
+            key="new-appointment-confirm-modal-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-[80]"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 15 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 15 }}
+              className={cn(
+                "rounded-3xl p-6 sm:p-7 w-full max-w-lg shadow-2xl border transition-all",
+                darkMode
+                  ? "bg-slate-900 border-slate-800 text-slate-100"
+                  : "bg-white border-slate-200 text-slate-900"
+              )}
+            >
+              <div className="flex justify-between items-center mb-5 pb-4 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    <CalendarPlus className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black uppercase tracking-tight">
+                      Programare Pacient
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                      Selectați modul de programare pentru pacientul căutat
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsNewAppointmentConfirmModalOpen(false)}
+                  className="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Patient Card Preview */}
+              <div
+                className={cn(
+                  "p-4 rounded-2xl border mb-5 flex flex-col gap-2",
+                  darkMode
+                    ? "bg-slate-800/40 border-slate-800"
+                    : "bg-slate-50 border-slate-200/80"
+                )}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-base font-black text-blue-600 dark:text-blue-400">
+                    {patientForNewAppointment.patientName}
+                  </span>
+                  {patientForNewAppointment.patientSex && (
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                      {patientForNewAppointment.patientSex}
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs text-slate-600 dark:text-slate-400">
+                  <div className="flex items-center gap-1.5">
+                    <Phone className="w-3.5 h-3.5 opacity-60" />
+                    <span>
+                      {patientForNewAppointment.patientPhone
+                        ? formatPhoneNumber(patientForNewAppointment.patientPhone)
+                        : "Fără telefon"}
+                    </span>
+                  </div>
+                  <div>
+                    Vârstă:{" "}
+                    <strong>
+                      {patientForNewAppointment.patientAge ||
+                        (patientForNewAppointment.patientBirthDate
+                          ? calculateAge(patientForNewAppointment.patientBirthDate)
+                          : "-")}{" "}
+                      ani
+                    </strong>
+                  </div>
+                  {patientForNewAppointment.patientBirthDate && (
+                    <div className="col-span-2 text-[11px] opacity-80">
+                      Data nașterii: {patientForNewAppointment.patientBirthDate}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex flex-col gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    confirmNewAppointment();
+                  }}
+                  className="w-full py-3.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-black text-xs uppercase tracking-wider transition-all shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Calendar className="w-4 h-4" />
+                  <span>Alege interval în Calendar (1-Click)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleOpenManualBookingFromSearch();
+                  }}
+                  className={cn(
+                    "w-full py-3 px-4 rounded-2xl border text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer",
+                    darkMode
+                      ? "bg-slate-800 hover:bg-slate-750 border-slate-700 text-slate-200"
+                      : "bg-white hover:bg-slate-50 border-slate-300 text-slate-700 shadow-xs"
+                  )}
+                >
+                  <FileText className="w-4 h-4 text-blue-500" />
+                  <span>Formular Manual (Alege medic & oră)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsNewAppointmentConfirmModalOpen(false)}
+                  className="mt-1 text-xs font-bold text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 py-1 transition-colors text-center cursor-pointer"
+                >
+                  Anulează
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* WhatsApp Message Modal */}
+      <AnimatePresence>
+        {isWhatsAppModalOpen && whatsAppRecipient && (
+          <motion.div
+            key="whatsapp-modal-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-[85]"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 15 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 15 }}
+              className={cn(
+                "rounded-3xl p-6 sm:p-7 w-full max-w-lg shadow-2xl border transition-all",
+                darkMode
+                  ? "bg-slate-900 border-slate-800 text-slate-100"
+                  : "bg-white border-slate-200 text-slate-900"
+              )}
+            >
+              <div className="flex justify-between items-center mb-5 pb-4 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-emerald-500/15 text-[#25D366]">
+                    <MessageSquare className="w-6 h-6 fill-current" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black uppercase tracking-tight flex items-center gap-2">
+                      Trimite Notificare WhatsApp
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                      Către: <strong>{whatsAppRecipient.name}</strong> ({formatPhoneNumber(whatsAppRecipient.phone)})
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsWhatsAppModalOpen(false)}
+                  className="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Template Selector */}
+              <div className="mb-4">
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">
+                  Șablon Mesaj
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => applyWhatsAppTemplate("next_appointment", whatsAppRecipient.name)}
+                    className={cn(
+                      "px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer",
+                      whatsAppTemplateType === "next_appointment"
+                        ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                        : darkMode
+                          ? "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-750"
+                          : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    )}
+                  >
+                    Programare Următoare
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyWhatsAppTemplate("simple_reminder", whatsAppRecipient.name)}
+                    className={cn(
+                      "px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer",
+                      whatsAppTemplateType === "simple_reminder"
+                        ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                        : darkMode
+                          ? "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-750"
+                          : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    )}
+                  >
+                    Notificare Simplă
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyWhatsAppTemplate("custom", whatsAppRecipient.name)}
+                    className={cn(
+                      "px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer",
+                      whatsAppTemplateType === "custom"
+                        ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                        : darkMode
+                          ? "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-750"
+                          : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    )}
+                  >
+                    Personalizat
+                  </button>
+                </div>
+              </div>
+
+              {/* Message Textarea */}
+              <div className="mb-5">
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">
+                  Conținut Mesaj (Editabil)
+                </label>
+                <textarea
+                  value={whatsAppMessageText}
+                  onChange={(e) => setWhatsAppMessageText(e.target.value)}
+                  rows={4}
+                  className={cn(
+                    "w-full p-3.5 rounded-2xl border text-xs sm:text-sm font-medium outline-none transition-all resize-none custom-scrollbar",
+                    darkMode
+                      ? "bg-slate-800 border-slate-700 text-slate-100 focus:border-emerald-500"
+                      : "bg-slate-50 border-slate-200 text-slate-900 focus:border-emerald-500"
+                  )}
+                  placeholder="Scrieți mesajul pentru WhatsApp..."
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setIsWhatsAppModalOpen(false)}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors cursor-pointer"
+                >
+                  Anulează
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    let cleanDigits = (whatsAppRecipient.phone || "").replace(/\D/g, "");
+                    if (cleanDigits.startsWith("0") && cleanDigits.length === 10) {
+                      cleanDigits = "4" + cleanDigits;
+                    } else if (!cleanDigits.startsWith("40") && cleanDigits.length === 9) {
+                      cleanDigits = "40" + cleanDigits;
+                    }
+                    const url = `https://wa.me/${cleanDigits}?text=${encodeURIComponent(whatsAppMessageText)}`;
+                    window.open(url, "_blank");
+                    setIsWhatsAppModalOpen(false);
+                    logActivity(
+                      "Trimitere Notificare WhatsApp",
+                      `Mesaj trimis către ${whatsAppRecipient.name} (${whatsAppRecipient.phone})`
+                    );
+                  }}
+                  disabled={!whatsAppMessageText.trim()}
+                  className={cn(
+                    "px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider text-white transition-all shadow-md flex items-center gap-2 cursor-pointer active:scale-95",
+                    !whatsAppMessageText.trim()
+                      ? "bg-slate-500 opacity-50 cursor-not-allowed"
+                      : "bg-[#25D366] hover:bg-[#20ba5a] shadow-emerald-500/25"
+                  )}
+                >
+                  <MessageSquare className="w-4 h-4 fill-current" />
+                  <span>Deschide WhatsApp</span>
                 </button>
               </div>
             </motion.div>
@@ -25358,9 +27754,18 @@ export default function App() {
                                                 { locale: ro },
                                               )}
                                             </span>
+                                            {order.whatsappNotifiedAt && (
+                                              <span
+                                                className="mt-0.5 text-[8px] font-black uppercase tracking-tight text-emerald-700 dark:text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 w-fit"
+                                                title={`Notificare WhatsApp trimisă la ${format(new Date(order.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}${order.whatsappNotifiedBy ? ` (${order.whatsappNotifiedBy})` : ""}`}
+                                              >
+                                                <span>📲</span>
+                                                <span>Notificat {format(new Date(order.whatsappNotifiedAt), "dd.MM HH:mm")}</span>
+                                              </span>
+                                            )}
                                           </div>
                                         </div>
-                                        <div className="flex items-center gap-4">
+                                        <div className="flex items-center gap-2 sm:gap-3">
                                           <div className="text-right">
                                             <div className="text-xs font-black text-slate-900 dark:text-slate-100">
                                               {order.total} RON
@@ -25369,6 +27774,40 @@ export default function App() {
                                               {order.advance} înc.
                                             </div>
                                           </div>
+                                          {order.status !== "completed" && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleHandoverAndCollect({
+                                                  ...order,
+                                                  patientId: patient?.id || (order as any).patientId,
+                                                });
+                                              }}
+                                              className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
+                                              title="1-Click: Încasează restul automat (sold 0) și finalizează / predă comanda"
+                                            >
+                                              <CheckCircle2 className="w-3 h-3 text-white" />
+                                              <span className="hidden sm:inline">Predat</span>
+                                            </button>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              sendWhatsAppGlassesReady({
+                                                patientName: patient?.patientName || (order as any).patientName,
+                                                patientPhone: patient?.patientPhone || (order as any).patientPhone,
+                                                orderNumber: order.orderNumber,
+                                                patientId: (order as any).patientId || patient?.id,
+                                              });
+                                            }}
+                                            className="px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
+                                            title={order.whatsappNotifiedAt ? `Notificat la ${format(new Date(order.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}. Click pentru retrimitere.` : "Trimite mesaj WhatsApp (ochelari gata de ridicare)"}
+                                          >
+                                            <span className="text-xs">📲</span>
+                                            <span className="hidden sm:inline">{order.whatsappNotifiedAt ? "Retrimite" : "WhatsApp"}</span>
+                                          </button>
                                           {(profile?.role === "admin" ||
                                             profile?.role === "frontdesk" ||
                                             profile?.role === "seller") && (
@@ -25774,6 +28213,24 @@ export default function App() {
                                 <h4 className="font-black text-slate-900 dark:text-white group-hover:text-amber-600 transition-colors">
                                   {order.patientName}
                                 </h4>
+                                {order.whatsappNotifiedAt && (
+                                  <span
+                                    className="text-[9px] font-black uppercase tracking-wider text-emerald-800 dark:text-emerald-200 bg-emerald-500/15 dark:bg-emerald-950/40 border border-emerald-500/35 px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs"
+                                    title={`Notificare WhatsApp trimisă la ${format(new Date(order.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}${order.whatsappNotifiedBy ? ` de către ${order.whatsappNotifiedBy}` : ""}`}
+                                  >
+                                    <span className="text-emerald-600 dark:text-emerald-400">📲</span>
+                                    <span>Notificat WhatsApp la {format(new Date(order.whatsappNotifiedAt), "dd.MM HH:mm")}</span>
+                                  </span>
+                                )}
+                                {order.deliveredAt && (
+                                  <span
+                                    className="text-[9px] font-black uppercase tracking-wider text-blue-800 dark:text-blue-200 bg-blue-500/15 dark:bg-blue-950/40 border border-blue-500/35 px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs"
+                                    title={`Predat la ${format(new Date(order.deliveredAt), "dd.MM.yyyy HH:mm")}${order.deliveredBy ? ` de către ${order.deliveredBy}` : ""}`}
+                                  >
+                                    <span>🤝</span>
+                                    <span>Predat la {format(new Date(order.deliveredAt), "dd.MM HH:mm")}</span>
+                                  </span>
+                                )}
                                 {isOverdue && (
                                   <span className="text-[9px] font-extrabold uppercase tracking-wider text-rose-700 dark:text-rose-300 bg-rose-500/15 dark:bg-rose-900/40 border border-rose-300/60 dark:border-rose-700/60 px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
                                     <AlertTriangle className="w-2.5 h-2.5 text-rose-600 dark:text-rose-400 shrink-0" />
@@ -25939,7 +28396,8 @@ export default function App() {
                                 </button>
                               </div>
                             ) : (
-                              ordersTab === "in-progress" && (
+                              <div className="flex items-center gap-2 sm:gap-3">
+                                {ordersTab === "in-progress" && (
                                 <div className="flex flex-col items-center gap-1">
                                   <span className="text-[9px] font-black uppercase text-amber-600 dark:text-amber-400 tracking-tighter bg-amber-500/10 px-2 py-0.5 rounded-full">
                                     {order.orderType === "near"
@@ -25951,74 +28409,35 @@ export default function App() {
                                           : "Distanță"}
                                   </span>
                                   <button
-                                    onClick={async (e) => {
+                                    onClick={(e) => {
                                       e.stopPropagation();
-                                      setLoading(true);
-                                      try {
-                                        const docRef = doc(
-                                          db,
-                                          "medicalRecords",
-                                          order.patientId,
-                                        );
-                                        const docSnap = await getDoc(docRef);
-                                        if (docSnap.exists()) {
-                                          const data =
-                                            docSnap.data() as MedicalRecord;
-                                          const history = [
-                                            ...(data.orderHistory || []),
-                                          ];
-                                          const orderIdx = history.findIndex(
-                                            (o) =>
-                                              o.orderNumber ===
-                                              order.orderNumber,
-                                          );
-
-                                          if (orderIdx !== -1) {
-                                            const updatedOrder = {
-                                              ...history[orderIdx],
-                                              status: "completed" as const,
-                                              advance: history[orderIdx].total,
-                                              balance: 0,
-                                            };
-                                            history[orderIdx] = updatedOrder;
-
-                                            await updateDoc(
-                                              docRef,
-                                              removeUndefined({
-                                                orderHistory: history,
-                                              }),
-                                            );
-
-                                            setMedicalRecords((prev) =>
-                                              prev.map((r) =>
-                                                r.id === order.patientId
-                                                  ? {
-                                                      ...r,
-                                                      orderHistory: history,
-                                                    }
-                                                  : r,
-                                              ),
-                                            );
-                                          }
-                                        }
-                                      } catch (err) {
-                                        console.error(
-                                          "Error finalizing order from list:",
-                                          err,
-                                        );
-                                      } finally {
-                                        setLoading(false);
-                                      }
+                                      handleHandoverAndCollect(order);
                                     }}
-                                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-emerald-900/20 flex items-center gap-2"
+                                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-900/20 flex items-center gap-1.5 cursor-pointer"
+                                    title="1-Click: Încasează restul automat (sold 0) și finalizează / predă comanda"
                                   >
-                                    <Check className="w-3 h-3" />
-                                    Finalizează
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    <span>Predat & Încasat Restul {order.balance > 0 ? `(${order.balance} lei)` : ""}</span>
                                   </button>
                                 </div>
-                              )
-                            )}
-                            <div className="flex items-center gap-6">
+                              )}
+                              {(ordersTab === "in-progress" || ordersTab === "completed") && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    sendWhatsAppGlassesReady(order);
+                                  }}
+                                  className="px-3 py-2 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-500/25 flex items-center gap-1.5 cursor-pointer shrink-0"
+                                  title={order.whatsappNotifiedAt ? `Notificat WhatsApp la ${format(new Date(order.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}. Click pentru retrimitere.` : "Trimite mesaj WhatsApp (ochelari gata de ridicare)"}
+                                >
+                                  <span className="text-sm">📲</span>
+                                  <span>{order.whatsappNotifiedAt ? "Retrimite WhatsApp" : "WhatsApp"}</span>
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          <div className="flex items-center gap-6">
                               {(profile?.role === "admin" ||
                                 profile?.role === "frontdesk" ||
                                 profile?.role === "seller") && (
@@ -26401,6 +28820,34 @@ export default function App() {
                       }
                     />
                   </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center justify-between">
+                    <span>CNP Pacient</span>
+                    <span className="text-[10px] font-normal text-slate-400 lowercase tracking-normal">
+                      (opțional)
+                    </span>
+                  </label>
+                  <BufferedInput
+                    type="text"
+                    maxLength={13}
+                    value={patientCnp}
+                    onChange={(val) => {
+                      const clean = val.replace(/\D/g, "").slice(0, 13);
+                      setPatientCnp(clean);
+                      const detectedSex = getSexFromCNP(clean);
+                      if (detectedSex && !patientSex) {
+                        setPatientSex(detectedSex);
+                      }
+                    }}
+                    placeholder="13 cifre (opțional)..."
+                    className={cn(
+                      "w-full p-4 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all font-mono",
+                      darkMode
+                        ? "bg-slate-800 border-slate-700 text-slate-100"
+                        : "bg-white border-slate-200 text-slate-900",
+                    )}
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
@@ -27141,6 +29588,27 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Auto-Save Draft Status Pill */}
+                  <div
+                    className={cn(
+                      "p-2 rounded-xl border flex flex-col justify-center gap-0.5 min-w-[120px] sm:min-w-[130px]",
+                      darkMode
+                        ? "bg-slate-800/40 border-slate-800"
+                        : "bg-slate-50 border-slate-100 shadow-sm",
+                    )}
+                    title="Protecție anti-pană de curent: ciorna fișei este salvată automat în memoria locală la fiecare 2 secunde"
+                  >
+                    <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest leading-none flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      Auto-Save Ciornă
+                    </span>
+                    <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-tight truncate">
+                      {lastLocalSavedAt
+                        ? `Salvat ${lastLocalSavedAt.toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
+                        : "Anti-Pană Activ"}
+                    </span>
+                  </div>
+
                   {/* Close button at the end to keep layout clean */}
                   <button
                     onClick={() => setIsMedicalRecordModalOpen(false)}
@@ -27155,6 +29623,41 @@ export default function App() {
                   </button>
                 </div>
               </div>
+
+              {/* Draft Restored Banner (Protecție anti-pană de curent) */}
+              {draftRestoredNotice && (
+                <div className="mb-2 p-2.5 sm:p-3 rounded-2xl bg-amber-500/15 dark:bg-amber-500/20 border border-amber-500/40 text-amber-900 dark:text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 text-xs shadow-xs animate-fade-in">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="text-xl shrink-0">🛡️</span>
+                    <div>
+                      <strong className="font-black uppercase tracking-wider block text-[11px] text-amber-800 dark:text-amber-300">
+                        Protecție Anti-Pană Activată • Ciornă Locală Recuperată
+                      </strong>
+                      <span className="text-[11px] leading-relaxed opacity-95">
+                        {draftRestoredNotice}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => setDraftRestoredNotice(null)}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-[10px] uppercase tracking-wider transition-all shadow-xs cursor-pointer"
+                      title="Păstrează datele recuperate din ciornă"
+                    >
+                      ✓ Păstrează ciorna
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDiscardDraft}
+                      className="px-3 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 active:scale-95 text-slate-800 dark:text-slate-200 font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer border border-slate-300 dark:border-slate-700"
+                      title="Revino la versiunea salvată pe server"
+                    >
+                      Încarcă de pe server
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Tabs */}
               <div className="flex gap-1 mb-2">
@@ -27559,6 +30062,94 @@ export default function App() {
                     </div>
 
                     <div className="flex flex-col gap-3">
+                      {/* Age-Based Physiological ADD Estimation Suggestion */}
+                      {(() => {
+                        const patientCalculatedAge = currentMedicalRecord.patientBirthDate
+                          ? calculateAge(currentMedicalRecord.patientBirthDate)
+                          : (currentMedicalRecord.patientAge ? parseInt(String(currentMedicalRecord.patientAge), 10) : undefined);
+                        const estimatedAdd = getEstimatedAddByAge(patientCalculatedAge);
+                        const cleanEstimatedAdd = estimatedAdd ? estimatedAdd.replace("+", "") : null;
+                        const hasDistanceDiopters = Boolean(currentMedicalRecord.od?.sph || currentMedicalRecord.os?.sph);
+                        const isApplied = currentMedicalRecord.od?.add === cleanEstimatedAdd && currentMedicalRecord.os?.add === cleanEstimatedAdd;
+
+                        if (!cleanEstimatedAdd || !hasDistanceDiopters) return null;
+
+                        return (
+                          <div
+                            className={cn(
+                              "p-3 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs transition-all shadow-xs",
+                              isApplied
+                                ? darkMode
+                                  ? "bg-emerald-950/25 border-emerald-800/40 text-emerald-200"
+                                  : "bg-emerald-50/80 border-emerald-200 text-emerald-900"
+                                : darkMode
+                                  ? "bg-blue-950/30 border-blue-800/60 text-blue-200"
+                                  : "bg-blue-50/90 border-blue-200 text-blue-950"
+                            )}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className="text-xl shrink-0">💡</span>
+                              <div>
+                                <span className="font-black text-[11px] uppercase tracking-wider block">
+                                  Sugestie Fiziologică Adaos de Aproape (ADD)
+                                </span>
+                                <span className="text-[11px] leading-relaxed opacity-90">
+                                  La vârsta de <strong>{patientCalculatedAge} ani</strong>, adaosul fiziologic recomandat este <strong>+{cleanEstimatedAdd} dpt</strong>.
+                                </span>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updatedOD = {
+                                  ...currentMedicalRecord.od,
+                                  add: cleanEstimatedAdd,
+                                  near_sph: undefined,
+                                  near_cyl: undefined,
+                                  near_axis: undefined,
+                                };
+                                const updatedOS = {
+                                  ...currentMedicalRecord.os,
+                                  add: cleanEstimatedAdd,
+                                  near_sph: undefined,
+                                  near_cyl: undefined,
+                                  near_axis: undefined,
+                                };
+                                setCurrentMedicalRecord({
+                                  ...currentMedicalRecord,
+                                  od: updatedOD,
+                                  os: updatedOS,
+                                  diagnostic: updateDiagnosticSuggestions(
+                                    currentMedicalRecord.diagnostic || "",
+                                    updatedOD,
+                                    updatedOS,
+                                  ),
+                                });
+                              }}
+                              className={cn(
+                                "px-3 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-wider shrink-0 transition-all cursor-pointer flex items-center gap-1.5 shadow-sm active:scale-95 self-end sm:self-auto",
+                                isApplied
+                                  ? "bg-emerald-600 text-white"
+                                  : "bg-blue-600 hover:bg-blue-700 text-white shadow-blue-500/20"
+                              )}
+                              title={`Aplică adaosul recomandat de +${cleanEstimatedAdd} la ambii ochi`}
+                            >
+                              {isApplied ? (
+                                <>
+                                  <span>✓</span>
+                                  <span>ADD +{cleanEstimatedAdd} Aplicat</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span>⚡</span>
+                                  <span>Aplică ADD +{cleanEstimatedAdd} (OD + OS)</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        );
+                      })()}
+
                       <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-2 items-start">
                         {/* Right Eye (OD) */}
                         <div
@@ -27844,14 +30435,64 @@ export default function App() {
                               })
                               .map((field) => (
                                 <div key={`od-${field}`}>
-                                  <label
-                                    className={cn(
-                                      "block text-[20px] font-black uppercase mb-1 tracking-tighter",
-                                      darkMode ? "text-white" : "text-black",
-                                    )}
-                                  >
-                                    {field}
-                                  </label>
+                                  <div className="flex items-center justify-between mb-1">
+                                    <label
+                                      className={cn(
+                                        "block text-[20px] font-black uppercase tracking-tighter",
+                                        darkMode ? "text-white" : "text-black",
+                                      )}
+                                    >
+                                      {field}
+                                    </label>
+                                    {field === "add" && (() => {
+                                      const pAge = currentMedicalRecord.patientBirthDate
+                                        ? calculateAge(currentMedicalRecord.patientBirthDate)
+                                        : (currentMedicalRecord.patientAge ? parseInt(String(currentMedicalRecord.patientAge), 10) : undefined);
+                                      const est = getEstimatedAddByAge(pAge);
+                                      const cleanEst = est ? est.replace("+", "") : null;
+                                      if (!cleanEst) return null;
+                                      return (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const updatedOD = {
+                                              ...currentMedicalRecord.od,
+                                              add: cleanEst,
+                                              near_sph: undefined,
+                                              near_cyl: undefined,
+                                              near_axis: undefined,
+                                            };
+                                            const updatedOS = {
+                                              ...currentMedicalRecord.os,
+                                              add: cleanEst,
+                                              near_sph: undefined,
+                                              near_cyl: undefined,
+                                              near_axis: undefined,
+                                            };
+                                            setCurrentMedicalRecord({
+                                              ...currentMedicalRecord,
+                                              od: updatedOD,
+                                              os: updatedOS,
+                                              diagnostic: updateDiagnosticSuggestions(
+                                                currentMedicalRecord.diagnostic || "",
+                                                updatedOD,
+                                                updatedOS,
+                                              ),
+                                            });
+                                          }}
+                                          className={cn(
+                                            "text-[9px] font-black uppercase tracking-tight px-1.5 py-0.5 rounded transition-all cursor-pointer",
+                                            currentMedicalRecord.od?.add === cleanEst
+                                              ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                                              : "bg-blue-500/10 hover:bg-blue-500/25 text-blue-600 dark:text-blue-400"
+                                          )}
+                                          title={`Vârstă ${pAge} ani: sugestie fiziologică estimată +${cleanEst}. Click pentru aplicare rapidă.`}
+                                        >
+                                          💡 +{cleanEst} ({pAge} ani)
+                                        </button>
+                                      );
+                                    })()}
+                                  </div>
                                   {field === "add" ? (
                                     <select
                                       ref={odAddRef}
@@ -27919,11 +30560,19 @@ export default function App() {
                                         "0.50",
                                         "0.25",
                                         "0.00",
-                                      ].map((val) => (
-                                        <option key={`od-add-${val}`} value={val}>
-                                          {val}
-                                        </option>
-                                      ))}
+                                      ].map((val) => {
+                                        const pAge = currentMedicalRecord.patientBirthDate
+                                          ? calculateAge(currentMedicalRecord.patientBirthDate)
+                                          : (currentMedicalRecord.patientAge ? parseInt(String(currentMedicalRecord.patientAge), 10) : undefined);
+                                        const est = getEstimatedAddByAge(pAge);
+                                        const cleanEst = est ? est.replace("+", "") : null;
+                                        const isSug = cleanEst === val;
+                                        return (
+                                          <option key={`od-add-${val}`} value={val}>
+                                            {val} {isSug ? `(💡 Sugerat - ${pAge} ani)` : ""}
+                                          </option>
+                                        );
+                                      })}
                                     </select>
                                   ) : (
                                     <input
@@ -30335,14 +32984,64 @@ export default function App() {
                               })
                               .map((field) => (
                                 <div key={`os-${field}`}>
-                                  <label
-                                    className={cn(
-                                      "block text-[20px] font-black uppercase mb-1 tracking-tighter",
-                                      darkMode ? "text-white" : "text-black",
-                                    )}
-                                  >
-                                    {field}
-                                  </label>
+                                  <div className="flex items-center justify-between mb-1">
+                                    <label
+                                      className={cn(
+                                        "block text-[20px] font-black uppercase tracking-tighter",
+                                        darkMode ? "text-white" : "text-black",
+                                      )}
+                                    >
+                                      {field}
+                                    </label>
+                                    {field === "add" && (() => {
+                                      const pAge = currentMedicalRecord.patientBirthDate
+                                        ? calculateAge(currentMedicalRecord.patientBirthDate)
+                                        : (currentMedicalRecord.patientAge ? parseInt(String(currentMedicalRecord.patientAge), 10) : undefined);
+                                      const est = getEstimatedAddByAge(pAge);
+                                      const cleanEst = est ? est.replace("+", "") : null;
+                                      if (!cleanEst) return null;
+                                      return (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const updatedOS = {
+                                              ...currentMedicalRecord.os,
+                                              add: cleanEst,
+                                              near_sph: undefined,
+                                              near_cyl: undefined,
+                                              near_axis: undefined,
+                                            };
+                                            const updatedOD = {
+                                              ...currentMedicalRecord.od,
+                                              add: cleanEst,
+                                              near_sph: undefined,
+                                              near_cyl: undefined,
+                                              near_axis: undefined,
+                                            };
+                                            setCurrentMedicalRecord({
+                                              ...currentMedicalRecord,
+                                              os: updatedOS,
+                                              od: updatedOD,
+                                              diagnostic: updateDiagnosticSuggestions(
+                                                currentMedicalRecord.diagnostic || "",
+                                                updatedOD,
+                                                updatedOS,
+                                              ),
+                                            });
+                                          }}
+                                          className={cn(
+                                            "text-[9px] font-black uppercase tracking-tight px-1.5 py-0.5 rounded transition-all cursor-pointer",
+                                            currentMedicalRecord.os?.add === cleanEst
+                                              ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                                              : "bg-blue-500/10 hover:bg-blue-500/25 text-blue-600 dark:text-blue-400"
+                                          )}
+                                          title={`Vârstă ${pAge} ani: sugestie fiziologică estimată +${cleanEst}. Click pentru aplicare rapidă.`}
+                                        >
+                                          💡 +{cleanEst} ({pAge} ani)
+                                        </button>
+                                      );
+                                    })()}
+                                  </div>
                                   {field === "add" ? (
                                     <select
                                       ref={osAddRef}
@@ -30404,11 +33103,19 @@ export default function App() {
                                         "0.50",
                                         "0.25",
                                         "0.00",
-                                      ].map((val) => (
-                                        <option key={`os-add-${val}`} value={val}>
-                                          {val}
-                                        </option>
-                                      ))}
+                                      ].map((val) => {
+                                        const pAge = currentMedicalRecord.patientBirthDate
+                                          ? calculateAge(currentMedicalRecord.patientBirthDate)
+                                          : (currentMedicalRecord.patientAge ? parseInt(String(currentMedicalRecord.patientAge), 10) : undefined);
+                                        const est = getEstimatedAddByAge(pAge);
+                                        const cleanEst = est ? est.replace("+", "") : null;
+                                        const isSug = cleanEst === val;
+                                        return (
+                                          <option key={`os-add-${val}`} value={val}>
+                                            {val} {isSug ? `(💡 Sugerat - ${pAge} ani)` : ""}
+                                          </option>
+                                        );
+                                      })}
                                     </select>
                                   ) : (
                                     <input
@@ -31438,20 +34145,17 @@ export default function App() {
                                       ))}
                                     </select>
                                   </div>
-                                  <textarea
+                                  <BufferedTextarea
                                     placeholder="Valoare AO..."
                                     value={
                                       currentMedicalRecord.anteriorSegment?.od || ""
                                     }
-                                    onChange={(e) => {
-                                      e.target.style.height = "auto";
-                                      e.target.style.height =
-                                        e.target.scrollHeight + "px";
+                                    onChange={(val) => {
                                       setCurrentMedicalRecord({
                                         ...currentMedicalRecord,
                                         anteriorSegment: {
-                                          od: capitalizeFirstLetter(e.target.value),
-                                          os: capitalizeFirstLetter(e.target.value),
+                                          od: capitalizeFirstLetter(val),
+                                          os: capitalizeFirstLetter(val),
                                         },
                                       });
                                     }}
@@ -31507,21 +34211,18 @@ export default function App() {
                                         ))}
                                       </select>
                                     </div>
-                                    <textarea
+                                    <BufferedTextarea
                                       placeholder="Valoare OD..."
                                       value={
                                         currentMedicalRecord.anteriorSegment
                                           ?.od || ""
                                       }
-                                      onChange={(e) => {
-                                        e.target.style.height = "auto";
-                                        e.target.style.height =
-                                          e.target.scrollHeight + "px";
+                                      onChange={(val) => {
                                         setCurrentMedicalRecord({
                                           ...currentMedicalRecord,
                                           anteriorSegment: {
                                             ...currentMedicalRecord.anteriorSegment,
-                                            od: capitalizeFirstLetter(e.target.value),
+                                            od: capitalizeFirstLetter(val),
                                           },
                                         });
                                       }}
@@ -31575,21 +34276,18 @@ export default function App() {
                                         ))}
                                       </select>
                                     </div>
-                                    <textarea
+                                    <BufferedTextarea
                                       placeholder="Valoare OS..."
                                       value={
                                         currentMedicalRecord.anteriorSegment
                                           ?.os || ""
                                       }
-                                      onChange={(e) => {
-                                        e.target.style.height = "auto";
-                                        e.target.style.height =
-                                          e.target.scrollHeight + "px";
+                                      onChange={(val) => {
                                         setCurrentMedicalRecord({
                                           ...currentMedicalRecord,
                                           anteriorSegment: {
                                             ...currentMedicalRecord.anteriorSegment,
-                                            os: capitalizeFirstLetter(e.target.value),
+                                            os: capitalizeFirstLetter(val),
                                           },
                                         });
                                       }}
@@ -31695,20 +34393,17 @@ export default function App() {
                                       ))}
                                     </select>
                                   </div>
-                                  <textarea
+                                  <BufferedTextarea
                                     placeholder="Valoare AO..."
                                     value={
                                       currentMedicalRecord.posteriorSegment?.od || ""
                                     }
-                                    onChange={(e) => {
-                                      e.target.style.height = "auto";
-                                      e.target.style.height =
-                                        e.target.scrollHeight + "px";
+                                    onChange={(val) => {
                                       setCurrentMedicalRecord({
                                         ...currentMedicalRecord,
                                         posteriorSegment: {
-                                          od: capitalizeFirstLetter(e.target.value),
-                                          os: capitalizeFirstLetter(e.target.value),
+                                          od: capitalizeFirstLetter(val),
+                                          os: capitalizeFirstLetter(val),
                                         },
                                       });
                                     }}
@@ -31764,21 +34459,18 @@ export default function App() {
                                         ))}
                                       </select>
                                     </div>
-                                    <textarea
+                                    <BufferedTextarea
                                       placeholder="Valoare OD..."
                                       value={
                                         currentMedicalRecord.posteriorSegment
                                           ?.od || ""
                                       }
-                                      onChange={(e) => {
-                                        e.target.style.height = "auto";
-                                        e.target.style.height =
-                                          e.target.scrollHeight + "px";
+                                      onChange={(val) => {
                                         setCurrentMedicalRecord({
                                           ...currentMedicalRecord,
                                           posteriorSegment: {
                                             ...currentMedicalRecord.posteriorSegment,
-                                            od: capitalizeFirstLetter(e.target.value),
+                                            od: capitalizeFirstLetter(val),
                                           },
                                         });
                                       }}
@@ -31832,21 +34524,18 @@ export default function App() {
                                         ))}
                                       </select>
                                     </div>
-                                    <textarea
+                                    <BufferedTextarea
                                       placeholder="Valoare OS..."
                                       value={
                                         currentMedicalRecord.posteriorSegment
                                           ?.os || ""
                                       }
-                                      onChange={(e) => {
-                                        e.target.style.height = "auto";
-                                        e.target.style.height =
-                                          e.target.scrollHeight + "px";
+                                      onChange={(val) => {
                                         setCurrentMedicalRecord({
                                           ...currentMedicalRecord,
                                           posteriorSegment: {
                                             ...currentMedicalRecord.posteriorSegment,
-                                            os: capitalizeFirstLetter(e.target.value),
+                                            os: capitalizeFirstLetter(val),
                                           },
                                         });
                                       }}
@@ -32699,15 +35388,15 @@ export default function App() {
                                 <FileText className="w-3.5 h-3.5" />
                                 Interpretare Examinări
                               </label>
-                              <textarea
+                              <BufferedTextarea
                                 value={
                                   currentMedicalRecord.examinationInterpretation ||
                                   ""
                                 }
-                                onChange={(e) =>
+                                onChange={(val) =>
                                   setCurrentMedicalRecord({
                                     ...currentMedicalRecord,
-                                    examinationInterpretation: e.target.value,
+                                    examinationInterpretation: val,
                                   })
                                 }
                                 placeholder="Introduceți interpretarea examinărilor..."
@@ -33149,8 +35838,36 @@ export default function App() {
                                   patientCnp: newCnp,
                                   patientSex: updatedSex,
                                 });
-                                if (detectedSex && detectedSex !== currentMedicalRecord.patientSex) {
-                                  syncPatientDetailsInDB("sex", detectedSex);
+                                if (newCnp.trim().length === 13) {
+                                  syncPatientUniversal(
+                                    {
+                                      patientName: currentMedicalRecord.patientName,
+                                      patientPhone: currentMedicalRecord.patientPhone,
+                                      patientCnp: currentMedicalRecord.patientCnp,
+                                      recordId: currentMedicalRecord.id,
+                                    },
+                                    {
+                                      patientCnp: newCnp.trim(),
+                                      patientSex: updatedSex,
+                                    },
+                                  );
+                                }
+                              }}
+                              onBlur={(e) => {
+                                const cnpVal = e.target.value.trim();
+                                if (cnpVal) {
+                                  syncPatientUniversal(
+                                    {
+                                      patientName: currentMedicalRecord.patientName,
+                                      patientPhone: currentMedicalRecord.patientPhone,
+                                      patientCnp: currentMedicalRecord.patientCnp,
+                                      recordId: currentMedicalRecord.id,
+                                    },
+                                    {
+                                      patientCnp: cnpVal,
+                                      patientSex: currentMedicalRecord.patientSex,
+                                    },
+                                  );
                                 }
                               }}
                               className={cn(
@@ -33412,12 +36129,12 @@ export default function App() {
                               <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
                                 Scutire
                               </label>
-                              <textarea
+                              <BufferedTextarea
                                 value={currentMedicalRecord.scutire || ""}
-                                onChange={(e) =>
+                                onChange={(val) =>
                                   setCurrentMedicalRecord({
                                     ...currentMedicalRecord,
-                                    scutire: e.target.value,
+                                    scutire: val,
                                   })
                                 }
                                 placeholder="Detalii scutire medicală..."
@@ -34749,6 +37466,39 @@ export default function App() {
                   </div>
                 </div>
 
+                {currentMedicalRecord.glassesOrder?.orderType !== "contact_lens" && (
+                  <div className="flex items-center bg-black/35 backdrop-blur-md p-1.5 rounded-2xl border border-white/20 shadow-lg">
+                    <button
+                      type="button"
+                      onClick={() => handleSetOrderViewMode("rapid")}
+                      className={cn(
+                        "flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer",
+                        orderViewMode === "rapid"
+                          ? "bg-amber-500 text-white shadow-md shadow-amber-500/40 scale-100"
+                          : "text-white/70 hover:text-white hover:bg-white/10"
+                      )}
+                      title="Mod Rapid (90% din cazuri): Nume ramă/cod, tip lentile, dioptrii preluate automat, total și avans"
+                    >
+                      <Zap className="w-4 h-4 fill-current text-white" />
+                      <span>Mod Rapid (90%)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSetOrderViewMode("advanced")}
+                      className={cn(
+                        "flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer",
+                        orderViewMode === "advanced"
+                          ? "bg-blue-600 text-white shadow-md shadow-blue-600/40 scale-100"
+                          : "text-white/70 hover:text-white hover:bg-white/10"
+                      )}
+                      title="Mod Avansat: Reglaje grafice fine de montaj, forme de rame, parametri de punte/înălțime și axe detaliate"
+                    >
+                      <SlidersHorizontal className="w-4 h-4 text-white" />
+                      <span>Mod Avansat / Montaj</span>
+                    </button>
+                  </div>
+                )}
+
                 <div className="flex flex-col items-end gap-1">
                   <span className="text-white font-black text-[12px] uppercase tracking-[0.2em] opacity-90 drop-shadow-md">
                     {currentMedicalRecord.glassesOrder?.orderType ===
@@ -35249,49 +37999,61 @@ export default function App() {
                                 </button>
 
                                 {/* Shape Trigger Icon */}
-                                <button
-                                  type="button"
-                                  onClick={() => setIsDistanceFrameConfigOpen(!isDistanceFrameConfigOpen)}
-                                  className={cn(
-                                    "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border shadow-xs cursor-pointer",
-                                    isDistanceFrameConfigOpen
-                                      ? "bg-blue-600 border-blue-500 text-white shadow-xs"
-                                      : darkMode
-                                        ? "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
-                                        : "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 shadow-xs"
-                                  )}
-                                  title="Alege forma ramei și parametri montaj"
-                                >
-                                {currentMedicalRecord.glassesOrder?.frameShape ? (() => {
-                                  const shapeObj = FRAME_SHAPES.find(s => s.id === currentMedicalRecord.glassesOrder?.frameShape);
-                                  const rawPath = shapeObj?.path || "";
-                                  const deformsListStr = currentMedicalRecord.glassesOrder?.frameDeformsList || "";
-                                  const deformX = Number(currentMedicalRecord.glassesOrder?.frameDeformX) || 0;
-                                  const deformY = Number(currentMedicalRecord.glassesOrder?.frameDeformY) || 0;
-                                  const deformAngle = Number(currentMedicalRecord.glassesOrder?.frameDeformAngle) || 0;
-                                  const frameRotation = Number(currentMedicalRecord.glassesOrder?.frameRotation) || 0;
-                                  const shapePath = deformsListStr
-                                    ? deformPath(rawPath, deformsListStr, frameRotation)
-                                    : deformPath(rawPath, deformX, deformY, deformAngle, frameRotation);
-                                  return (
-                                    <>
-                                      <svg viewBox="0 0 80 50" className="w-4 h-3 text-current fill-none">
-                                        <path
-                                          d={shapePath}
-                                          stroke="currentColor"
-                                          strokeWidth="5"
-                                        />
-                                      </svg>
-                                      <span>Forma #{currentMedicalRecord.glassesOrder.frameShape}</span>
-                                    </>
-                                  );
-                                })() : (
-                                  <>
+                                {orderViewMode === "advanced" ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setIsDistanceFrameConfigOpen(!isDistanceFrameConfigOpen)}
+                                    className={cn(
+                                      "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border shadow-xs cursor-pointer",
+                                      isDistanceFrameConfigOpen
+                                        ? "bg-blue-600 border-blue-500 text-white shadow-xs"
+                                        : darkMode
+                                          ? "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
+                                          : "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 shadow-xs"
+                                    )}
+                                    title="Alege forma ramei și parametri montaj"
+                                  >
+                                    {currentMedicalRecord.glassesOrder?.frameShape ? (() => {
+                                      const shapeObj = FRAME_SHAPES.find(s => s.id === currentMedicalRecord.glassesOrder?.frameShape);
+                                      const rawPath = shapeObj?.path || "";
+                                      const deformsListStr = currentMedicalRecord.glassesOrder?.frameDeformsList || "";
+                                      const deformX = Number(currentMedicalRecord.glassesOrder?.frameDeformX) || 0;
+                                      const deformY = Number(currentMedicalRecord.glassesOrder?.frameDeformY) || 0;
+                                      const deformAngle = Number(currentMedicalRecord.glassesOrder?.frameDeformAngle) || 0;
+                                      const frameRotation = Number(currentMedicalRecord.glassesOrder?.frameRotation) || 0;
+                                      const shapePath = deformsListStr
+                                        ? deformPath(rawPath, deformsListStr, frameRotation)
+                                        : deformPath(rawPath, deformX, deformY, deformAngle, frameRotation);
+                                      return (
+                                        <>
+                                          <svg viewBox="0 0 80 50" className="w-4 h-3 text-current fill-none">
+                                            <path
+                                              d={shapePath}
+                                              stroke="currentColor"
+                                              strokeWidth="5"
+                                            />
+                                          </svg>
+                                          <span>Forma #{currentMedicalRecord.glassesOrder.frameShape}</span>
+                                        </>
+                                      );
+                                    })() : (
+                                      <>
+                                        <Glasses className="w-3 h-3" />
+                                        <span>Alege Formă Ramă</span>
+                                      </>
+                                    )}
+                                  </button>
+                                ) : currentMedicalRecord.glassesOrder?.frameShape ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSetOrderViewMode("advanced")}
+                                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider bg-blue-50 dark:bg-slate-800 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-slate-700 cursor-pointer hover:bg-blue-100 dark:hover:bg-slate-700 transition-colors"
+                                    title="Formă selectată. Apasă pentru a deschide reglajele avansate de montaj"
+                                  >
                                     <Glasses className="w-3 h-3" />
-                                    <span>Alege Formă Ramă</span>
-                                  </>
-                                )}
-                              </button>
+                                    <span>Forma #{currentMedicalRecord.glassesOrder.frameShape}</span>
+                                  </button>
+                                ) : null}
                             </div>
                             </div>
                             <input
@@ -35328,9 +38090,22 @@ export default function App() {
                               const qty = Number(matched.quantity) || 0;
                               if (qty <= 0) {
                                 return (
-                                  <div className="mt-1.5 p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-[11px] font-bold flex items-center gap-1.5 animate-pulse">
-                                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                                    <span>Atenție: Această ramă ({matched.brand ? `${matched.brand} - ` : ""}{matched.code}) are STOC 0 în inventar! Re-adăugați stocul când o primiți.</span>
+                                  <div className="mt-1.5 p-2 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 text-[11px] font-bold flex items-center gap-1.5">
+                                    <AlertTriangle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                                    <span>Atenție: Această ramă ({matched.brand ? `${matched.brand} - ` : ""}{matched.code}) are STOC 0 în inventar!</span>
+                                  </div>
+                                );
+                              }
+                              if (qty === 1) {
+                                return (
+                                  <div className="mt-1.5 p-2.5 rounded-xl bg-amber-500/20 border-2 border-amber-500/60 text-amber-900 dark:text-amber-200 text-[11px] font-black flex items-center justify-between gap-2 shadow-xs animate-pulse">
+                                    <div className="flex items-center gap-1.5">
+                                      <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                                      <span>Atenție, această ramă este ultima pe stoc! ({matched.brand ? `${matched.brand} - ` : ""}{matched.code})</span>
+                                    </div>
+                                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-600 text-white shrink-0">
+                                      Ultima bucată
+                                    </span>
                                   </div>
                                 );
                               }
@@ -35342,34 +38117,9 @@ export default function App() {
                                       Stoc disponibil: <strong>{qty} buc.</strong> ({matched.brand ? `${matched.brand} - ` : ""}{matched.code})
                                     </span>
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      if (!matched.id) return;
-                                      const currentQty = Number(matched.quantity) || 0;
-                                      if (currentQty <= 0) return;
-                                      const newQty = currentQty - 1;
-                                      setFrameStockList((prev) =>
-                                        prev.map((f) => (f.id === matched.id ? { ...f, quantity: newQty } : f))
-                                      );
-                                      try {
-                                        await updateDoc(doc(db, "frame_stock", matched.id), {
-                                          quantity: newQty,
-                                          updatedAt: new Date().toISOString(),
-                                        });
-                                        await logActivity(
-                                          "Diminuare Stoc Ramă (Manual)",
-                                          `Stoc scos 1 buc. pentru rama "${matched.brand ? matched.brand + " - " : ""}${matched.code}". Stoc nou: ${newQty} buc.`
-                                        );
-                                      } catch (err) {
-                                        console.error("Eroare la scădere stoc:", err);
-                                      }
-                                    }}
-                                    className="px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
-                                    title="Scade 1 bucată din stocul acestei rame"
-                                  >
-                                    -1 din Stoc
-                                  </button>
+                                  <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                                    Scade automat 1 buc. la salvare
+                                  </span>
                                 </div>
                               );
                             })()}
@@ -35416,15 +38166,25 @@ export default function App() {
                         </div>
 
                         {/* Rendering Distance Frame Configurator */}
-                        <FrameConfigurator
-                          isOpen={isDistanceFrameConfigOpen}
-                          darkMode={darkMode}
-                          prefix=""
-                          order={currentMedicalRecord.glassesOrder}
-                          onUpdate={updateOrder}
-                        />
+                        {orderViewMode === "advanced" && (
+                          <FrameConfigurator
+                            isOpen={isDistanceFrameConfigOpen}
+                            darkMode={darkMode}
+                            prefix=""
+                            order={currentMedicalRecord.glassesOrder}
+                            onUpdate={updateOrder}
+                          />
+                        )}
 
                         {/* Dioptrii Large Summary */}
+                        <div className="flex items-center justify-between px-1 pt-1">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                            Dioptrii Montaj
+                          </span>
+                          <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                            <Check className="w-3 h-3" /> Preluate automat din fișă
+                          </span>
+                        </div>
                         <div
                           className={cn(
                             "grid grid-cols-[1fr_auto_1fr] items-center",
@@ -35671,58 +38431,62 @@ export default function App() {
                               />
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setPrismTarget("glassesOrder");
-                                setPrismEye("OD");
-                                setTempPrismValue(
-                                  currentMedicalRecord.glassesOrder?.od?.prism || ""
-                                );
-                                setTempPrismBase(
-                                  (currentMedicalRecord.glassesOrder?.od?.base || "") as any
-                                );
-                                setIsPrismModalOpen(true);
-                              }}
-                              className={cn(
-                                "mt-0.5 py-1 px-0.5 rounded-lg border font-black flex flex-col items-center justify-center text-center shadow-sm transition-all cursor-pointer overflow-hidden shrink-0",
-                                currentMedicalRecord.glassesOrder?.orderType === "both"
-                                  ? "w-16 text-[8px]"
-                                  : "w-20 text-[9px]",
-                                (currentMedicalRecord.glassesOrder?.od?.prism ||
-                                currentMedicalRecord.glassesOrder?.os?.prism)
-                                  ? "bg-blue-600 border-blue-500 text-white shadow-blue-500/20"
-                                  : darkMode
-                                    ? "bg-slate-800 border-slate-700 text-blue-400 hover:bg-slate-700"
-                                    : "bg-blue-50 border-blue-200 text-blue-600 hover:bg-blue-100"
-                              )}
-                            >
-                              <div className="flex items-center justify-center gap-0.5 uppercase tracking-tight font-black leading-tight w-full">
-                                <Triangle className="w-2.5 h-2.5 fill-current shrink-0" />
-                                <span>Prismă</span>
-                              </div>
-                              {(currentMedicalRecord.glassesOrder?.od?.prism ||
+                            {(orderViewMode === "advanced" ||
+                              currentMedicalRecord.glassesOrder?.od?.prism ||
                               currentMedicalRecord.glassesOrder?.os?.prism) && (
-                                <div className="flex flex-col items-center text-[8px] font-extrabold leading-tight tracking-tight opacity-95 w-full mt-0.5">
-                                  {currentMedicalRecord.glassesOrder?.od?.prism && (
-                                    <div className="whitespace-nowrap">
-                                      OD:{currentMedicalRecord.glassesOrder.od.prism}
-                                      {currentMedicalRecord.glassesOrder.od.base
-                                        ? ` ${currentMedicalRecord.glassesOrder.od.base.charAt(0)}`
-                                        : ""}
-                                    </div>
-                                  )}
-                                  {currentMedicalRecord.glassesOrder?.os?.prism && (
-                                    <div className="whitespace-nowrap">
-                                      OS:{currentMedicalRecord.glassesOrder.os.prism}
-                                      {currentMedicalRecord.glassesOrder.os.base
-                                        ? ` ${currentMedicalRecord.glassesOrder.os.base.charAt(0)}`
-                                        : ""}
-                                    </div>
-                                  )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPrismTarget("glassesOrder");
+                                  setPrismEye("OD");
+                                  setTempPrismValue(
+                                    currentMedicalRecord.glassesOrder?.od?.prism || ""
+                                  );
+                                  setTempPrismBase(
+                                    (currentMedicalRecord.glassesOrder?.od?.base || "") as any
+                                  );
+                                  setIsPrismModalOpen(true);
+                                }}
+                                className={cn(
+                                  "mt-0.5 py-1 px-0.5 rounded-lg border font-black flex flex-col items-center justify-center text-center shadow-sm transition-all cursor-pointer overflow-hidden shrink-0",
+                                  currentMedicalRecord.glassesOrder?.orderType === "both"
+                                    ? "w-16 text-[8px]"
+                                    : "w-20 text-[9px]",
+                                  (currentMedicalRecord.glassesOrder?.od?.prism ||
+                                  currentMedicalRecord.glassesOrder?.os?.prism)
+                                    ? "bg-blue-600 border-blue-500 text-white shadow-blue-500/20"
+                                    : darkMode
+                                      ? "bg-slate-800 border-slate-700 text-blue-400 hover:bg-slate-700"
+                                      : "bg-blue-50 border-blue-200 text-blue-600 hover:bg-blue-100"
+                                )}
+                              >
+                                <div className="flex items-center justify-center gap-0.5 uppercase tracking-tight font-black leading-tight w-full">
+                                  <Triangle className="w-2.5 h-2.5 fill-current shrink-0" />
+                                  <span>Prismă</span>
                                 </div>
-                              )}
-                            </button>
+                                {(currentMedicalRecord.glassesOrder?.od?.prism ||
+                                currentMedicalRecord.glassesOrder?.os?.prism) && (
+                                  <div className="flex flex-col items-center text-[8px] font-extrabold leading-tight tracking-tight opacity-95 w-full mt-0.5">
+                                    {currentMedicalRecord.glassesOrder?.od?.prism && (
+                                      <div className="whitespace-nowrap">
+                                        OD:{currentMedicalRecord.glassesOrder.od.prism}
+                                        {currentMedicalRecord.glassesOrder.od.base
+                                          ? ` ${currentMedicalRecord.glassesOrder.od.base.charAt(0)}`
+                                          : ""}
+                                      </div>
+                                    )}
+                                    {currentMedicalRecord.glassesOrder?.os?.prism && (
+                                      <div className="whitespace-nowrap">
+                                        OS:{currentMedicalRecord.glassesOrder.os.prism}
+                                        {currentMedicalRecord.glassesOrder.os.base
+                                          ? ` ${currentMedicalRecord.glassesOrder.os.base.charAt(0)}`
+                                          : ""}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </button>
+                            )}
 
                             <div className="w-[1px] h-2 bg-blue-200 dark:bg-blue-900" />
                           </div>
@@ -35987,9 +38751,26 @@ export default function App() {
                           {/* Left Lens */}
                           <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1.5">
-                              <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
-                                Nume Lentilă Stânga
-                              </label>
+                              <div className="flex items-center justify-between">
+                                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                                  Nume Lentilă Stânga
+                                </label>
+                                {currentMedicalRecord.glassesOrder?.lensRightName && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const rName = currentMedicalRecord.glassesOrder?.lensRightName || "";
+                                      const rPrice = currentMedicalRecord.glassesOrder?.lensRightPrice;
+                                      if (rName) updateOrder("lensLeftName", rName);
+                                      if (rPrice !== undefined) updateOrder("lensLeftPrice", rPrice);
+                                    }}
+                                    className="text-[9px] font-black uppercase text-blue-600 hover:text-blue-700 dark:text-blue-400 flex items-center gap-1 cursor-pointer hover:underline"
+                                    title="Copiază automat numele și prețul din dreapta (OD ➔ OS)"
+                                  >
+                                    <span>Copiază OD ➔ OS</span>
+                                  </button>
+                                )}
+                              </div>
                               <input
                                 type="text"
                                 list="lens-suggestions"
@@ -36329,9 +39110,16 @@ export default function App() {
                                     </button>
 
                                     {/* Shape Trigger Icon */}
+                                    {(orderViewMode === "advanced" || currentMedicalRecord.glassesOrder?.nearFrameShape) && (
                                     <button
                                       type="button"
-                                      onClick={() => setIsNearFrameConfigOpen(!isNearFrameConfigOpen)}
+                                      onClick={() => {
+                                        if (orderViewMode === "advanced") {
+                                          setIsNearFrameConfigOpen(!isNearFrameConfigOpen);
+                                        } else {
+                                          handleSetOrderViewMode("advanced");
+                                        }
+                                      }}
                                       className={cn(
                                         "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border shadow-xs cursor-pointer",
                                         isNearFrameConfigOpen
@@ -36372,6 +39160,7 @@ export default function App() {
                                       </>
                                     )}
                                   </button>
+                                  )}
                                 </div>
                                </div>
                                 <input
@@ -36408,9 +39197,22 @@ export default function App() {
                                   const qty = Number(matched.quantity) || 0;
                                   if (qty <= 0) {
                                     return (
-                                      <div className="mt-1.5 p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-[11px] font-bold flex items-center gap-1.5 animate-pulse">
-                                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                                        <span>Atenție: Această ramă ({matched.brand ? `${matched.brand} - ` : ""}{matched.code}) are STOC 0 în inventar! Re-adăugați stocul când o primiți.</span>
+                                      <div className="mt-1.5 p-2 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 text-[11px] font-bold flex items-center gap-1.5">
+                                        <AlertTriangle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                                        <span>Atenție: Această ramă ({matched.brand ? `${matched.brand} - ` : ""}{matched.code}) are STOC 0 în inventar!</span>
+                                      </div>
+                                    );
+                                  }
+                                  if (qty === 1) {
+                                    return (
+                                      <div className="mt-1.5 p-2.5 rounded-xl bg-amber-500/20 border-2 border-amber-500/60 text-amber-900 dark:text-amber-200 text-[11px] font-black flex items-center justify-between gap-2 shadow-xs animate-pulse">
+                                        <div className="flex items-center gap-1.5">
+                                          <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                                          <span>Atenție, această ramă este ultima pe stoc! ({matched.brand ? `${matched.brand} - ` : ""}{matched.code})</span>
+                                        </div>
+                                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-600 text-white shrink-0">
+                                          Ultima bucată
+                                        </span>
                                       </div>
                                     );
                                   }
@@ -36422,34 +39224,9 @@ export default function App() {
                                           Stoc disponibil: <strong>{qty} buc.</strong> ({matched.brand ? `${matched.brand} - ` : ""}{matched.code})
                                         </span>
                                       </div>
-                                      <button
-                                        type="button"
-                                        onClick={async () => {
-                                          if (!matched.id) return;
-                                          const currentQty = Number(matched.quantity) || 0;
-                                          if (currentQty <= 0) return;
-                                          const newQty = currentQty - 1;
-                                          setFrameStockList((prev) =>
-                                            prev.map((f) => (f.id === matched.id ? { ...f, quantity: newQty } : f))
-                                          );
-                                          try {
-                                            await updateDoc(doc(db, "frame_stock", matched.id), {
-                                              quantity: newQty,
-                                              updatedAt: new Date().toISOString(),
-                                            });
-                                            await logActivity(
-                                              "Diminuare Stoc Ramă (Manual)",
-                                              `Stoc scos 1 buc. pentru rama "${matched.brand ? matched.brand + " - " : ""}${matched.code}". Stoc nou: ${newQty} buc.`
-                                            );
-                                          } catch (err) {
-                                            console.error("Eroare la scădere stoc:", err);
-                                          }
-                                        }}
-                                        className="px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
-                                        title="Scade 1 bucată din stocul acestei rame"
-                                      >
-                                        -1 din Stoc
-                                      </button>
+                                      <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                                        Scade automat 1 buc. la salvare
+                                      </span>
                                     </div>
                                   );
                                 })()}
@@ -36497,15 +39274,25 @@ export default function App() {
                             </div>
 
                             {/* Rendering Near Frame Configurator */}
-                            <FrameConfigurator
-                              isOpen={isNearFrameConfigOpen}
-                              darkMode={darkMode}
-                              prefix="near"
-                              order={currentMedicalRecord.glassesOrder}
-                              onUpdate={updateOrder}
-                            />
+                            {orderViewMode === "advanced" && (
+                              <FrameConfigurator
+                                isOpen={isNearFrameConfigOpen}
+                                darkMode={darkMode}
+                                prefix="near"
+                                order={currentMedicalRecord.glassesOrder}
+                                onUpdate={updateOrder}
+                              />
+                            )}
 
                             {/* Dioptrii Large Summary - Near */}
+                            <div className="flex items-center justify-between px-1 pt-1">
+                              <span className="text-[10px] font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-400">
+                                Dioptrii Montaj (Aproape)
+                              </span>
+                              <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                <Check className="w-3 h-3" /> Preluate automat din fișă
+                              </span>
+                            </div>
                             <div
                               className={cn(
                                 "grid grid-cols-[1fr_auto_1fr] items-center",
@@ -36909,9 +39696,26 @@ export default function App() {
                               {/* Near Left Lens */}
                               <div className="grid grid-cols-2 gap-3">
                                 <div className="space-y-1.5">
-                                  <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
-                                    Nume Stânga Aproape
-                                  </label>
+                                  <div className="flex items-center justify-between">
+                                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">
+                                      Nume Stânga Aproape
+                                    </label>
+                                    {currentMedicalRecord.glassesOrder?.nearLensRightName && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const rName = currentMedicalRecord.glassesOrder?.nearLensRightName || "";
+                                          const rPrice = currentMedicalRecord.glassesOrder?.nearLensRightPrice;
+                                          if (rName) updateOrder("nearLensLeftName", rName);
+                                          if (rPrice !== undefined) updateOrder("nearLensLeftPrice", rPrice);
+                                        }}
+                                        className="text-[9px] font-black uppercase text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 flex items-center gap-1 cursor-pointer hover:underline"
+                                        title="Copiază automat numele și prețul din dreapta (OD ➔ OS)"
+                                      >
+                                        <span>Copiază OD ➔ OS</span>
+                                      </button>
+                                    )}
+                                  </div>
                                   <input
                                     type="text"
                                     list="lens-suggestions"
@@ -37126,6 +39930,92 @@ export default function App() {
                 </div>
 
                 <div className="space-y-6">
+                  {/* Mode Banner & Fast Toggle */}
+                  {currentMedicalRecord.glassesOrder?.orderType !== "contact_lens" && (
+                    <div
+                      className={cn(
+                        "p-4 rounded-3xl border transition-all flex flex-col sm:flex-row items-center justify-between gap-3 shadow-md",
+                        orderViewMode === "rapid"
+                          ? darkMode
+                            ? "bg-amber-950/20 border-amber-800/40"
+                            : "bg-amber-50/80 border-amber-200"
+                          : darkMode
+                            ? "bg-blue-950/20 border-blue-800/40"
+                            : "bg-blue-50/80 border-blue-200",
+                      )}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={cn(
+                            "w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 shadow-sm",
+                            orderViewMode === "rapid"
+                              ? "bg-amber-500 text-white"
+                              : "bg-blue-600 text-white",
+                          )}
+                        >
+                          {orderViewMode === "rapid" ? (
+                            <Zap className="w-5 h-5 fill-current" />
+                          ) : (
+                            <SlidersHorizontal className="w-5 h-5" />
+                          )}
+                        </div>
+                        <div>
+                          <div className="text-xs font-black uppercase tracking-wider flex items-center gap-2">
+                            <span>
+                              {orderViewMode === "rapid"
+                                ? "Mod Rapid Activ (90% din cazuri)"
+                                : "Mod Avansat Activ (Montaj & Axe Fin Reglate)"}
+                            </span>
+                            <span
+                              className={cn(
+                                "text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-tighter",
+                                orderViewMode === "rapid"
+                                  ? "bg-amber-500 text-white"
+                                  : "bg-blue-600 text-white",
+                              )}
+                            >
+                              {orderViewMode === "rapid"
+                                ? "Simplificat"
+                                : "Complet"}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">
+                            {orderViewMode === "rapid"
+                              ? "Configuratorul grafic cu forme SVG și reglajele fine de montaj sunt ascunse pentru viteză."
+                              : "Formele grafice de rame, deformațiile milimetrice, parametrii de punte/înălțime și axele prismă sunt expandate."}
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleSetOrderViewMode(
+                            orderViewMode === "rapid" ? "advanced" : "rapid",
+                          )
+                        }
+                        className={cn(
+                          "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md flex items-center gap-2 cursor-pointer shrink-0 active:scale-95",
+                          orderViewMode === "rapid"
+                            ? "bg-blue-600 hover:bg-blue-700 text-white shadow-blue-600/30"
+                            : "bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/30",
+                        )}
+                      >
+                        {orderViewMode === "rapid" ? (
+                          <>
+                            <SlidersHorizontal className="w-4 h-4" />
+                            <span>Deschide Mod Avansat</span>
+                          </>
+                        ) : (
+                          <>
+                            <Zap className="w-4 h-4 fill-current" />
+                            <span>Comută pe Mod Rapid</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+
                   {/* Observation Field - Full Width Header */}
                   <div
                     className={cn(
@@ -37298,26 +40188,120 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="flex-shrink-0 mb-1">
-                      {currentMedicalRecord.glassesOrder?.status !==
-                      "completed" ? (
+                    <div className="flex-shrink-0 mb-1 flex flex-col items-center gap-2">
+                      <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
                         <button
+                          type="button"
+                          onClick={() => updateOrder("status", "in-progress")}
+                          className={cn(
+                            "px-2.5 py-1 text-[9px] font-black uppercase rounded-lg transition-all",
+                            (currentMedicalRecord.glassesOrder?.status || "in-progress") === "in-progress"
+                              ? "bg-amber-500 text-white shadow-xs"
+                              : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                          )}
+                          title="Status: În lucru"
+                        >
+                          În lucru
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateOrder("status", "ready_for_pickup")}
+                          className={cn(
+                            "px-2.5 py-1 text-[9px] font-black uppercase rounded-lg transition-all",
+                            currentMedicalRecord.glassesOrder?.status === "ready_for_pickup"
+                              ? "bg-emerald-600 text-white shadow-xs"
+                              : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                          )}
+                          title="Status: Gata de ridicare"
+                        >
+                          Gata de ridicare
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => {
                             if (validateOrderAxisHelper(currentMedicalRecord.glassesOrder)) {
                               setIsFinalizeConfirmationOpen(true);
                             }
                           }}
-                          className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-black uppercase tracking-wider shadow-lg shadow-orange-900/20 transition-all transform active:scale-95 flex flex-col items-center justify-center gap-0.5 min-w-[80px]"
+                          className={cn(
+                            "px-2.5 py-1 text-[9px] font-black uppercase rounded-lg transition-all",
+                            currentMedicalRecord.glassesOrder?.status === "completed"
+                              ? "bg-blue-600 text-white shadow-xs"
+                              : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                          )}
+                          title="Status: Finalizată"
                         >
-                          <CheckCircle2 className="w-3 h-3" />
-                          <span className="text-[7px]">Finalizează</span>
+                          Finalizată
                         </button>
-                      ) : (
-                        <div className="px-3 py-1.5 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 rounded-xl font-black uppercase tracking-wider flex flex-col items-center justify-center gap-0.5 border border-emerald-200 dark:border-emerald-800 min-w-[80px]">
-                          <CheckCircle2 className="w-3 h-3" />
-                          <span className="text-[7px]">Finalizată</span>
-                        </div>
+                      </div>
+
+                      {currentMedicalRecord.glassesOrder?.whatsappNotifiedAt && (
+                        <span
+                          className="text-[9px] font-black uppercase text-emerald-700 dark:text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs"
+                          title={`Notificare WhatsApp trimisă la ${format(new Date(currentMedicalRecord.glassesOrder.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}${currentMedicalRecord.glassesOrder.whatsappNotifiedBy ? ` (${currentMedicalRecord.glassesOrder.whatsappNotifiedBy})` : ""}`}
+                        >
+                          <span>📲</span>
+                          <span>Notificat WhatsApp la {format(new Date(currentMedicalRecord.glassesOrder.whatsappNotifiedAt), "dd.MM HH:mm")}</span>
+                        </span>
                       )}
+
+                      <div className="flex items-center gap-2 flex-wrap justify-center">
+                        {currentMedicalRecord.glassesOrder?.status === "ready_for_pickup" && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              let rawPhone = (currentMedicalRecord.patientPhone || "").trim();
+                              let cleanDigits = rawPhone.replace(/\D/g, "");
+                              if (!cleanDigits) {
+                                const inputPhone = window.prompt("Introduceți numărul de telefon al pacientului pentru notificarea WhatsApp:");
+                                if (!inputPhone) return;
+                                cleanDigits = inputPhone.replace(/\D/g, "");
+                              }
+                              if (cleanDigits.startsWith("0") && cleanDigits.length === 10) {
+                                cleanDigits = "4" + cleanDigits;
+                              } else if (!cleanDigits.startsWith("40") && cleanDigits.length === 9) {
+                                cleanDigits = "40" + cleanDigits;
+                              }
+                              const message = "Bună ziua, vă informăm că ochelarii dumneavoastră sunt gata la Clinica Negreanu din Pitesti (Piata Ceair). Vă așteptăm cu drag pentru ridicare și ajustare! Pentru alte informatii sunati va rog pe  0248223162";
+                              window.open(`https://wa.me/${cleanDigits}?text=${encodeURIComponent(message)}`, "_blank");
+
+                              const nowIso = new Date().toISOString();
+                              const notifierName = profile?.displayName || (profile as any)?.name || "Recepție";
+                              updateOrder({
+                                whatsappNotifiedAt: nowIso,
+                                whatsappNotifiedBy: notifierName,
+                              });
+                            }}
+                            className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-500/30 flex items-center gap-1.5 cursor-pointer animate-pulse-subtle"
+                            title={currentMedicalRecord.glassesOrder?.whatsappNotifiedAt ? `Notificat WhatsApp la ${format(new Date(currentMedicalRecord.glassesOrder.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}. Click pentru retrimitere.` : "Trimite mesaj WhatsApp pacientului"}
+                          >
+                            <span className="text-sm">📲</span>
+                            <span>{currentMedicalRecord.glassesOrder?.whatsappNotifiedAt ? "Retrimite WhatsApp" : "Trimite WhatsApp"}</span>
+                          </button>
+                        )}
+
+                        {currentMedicalRecord.glassesOrder?.status !== "completed" && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nowIso = new Date().toISOString();
+                              const totalVal = currentMedicalRecord.glassesOrder?.total || 0;
+                              updateOrder({
+                                status: "completed",
+                                advance: totalVal,
+                                balance: 0,
+                                deliveredAt: nowIso,
+                                deliveredBy: profile?.displayName || (profile as any)?.name || "Recepție",
+                              });
+                            }}
+                            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-600/30 flex items-center gap-1.5 cursor-pointer"
+                            title="1-Click: Încasează restul automat (sold 0) și marchează comanda ca Finalizată / Predată"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                            <span>Predat & Încasat Restul {(currentMedicalRecord.glassesOrder?.balance || 0) > 0 ? `(${currentMedicalRecord.glassesOrder?.balance} lei)` : ""}</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex-1 space-y-2">

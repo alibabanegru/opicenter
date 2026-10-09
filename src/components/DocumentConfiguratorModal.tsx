@@ -1383,8 +1383,8 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                             1. Date Identificare Pacient & Medic
                           </p>
     
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                            <div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-12 gap-2.5">
+                            <div className="md:col-span-3">
                               <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1">
                                 Nume Familie Pacient
                               </label>
@@ -1406,7 +1406,7 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                 }
                               />
                             </div>
-                            <div>
+                            <div className="md:col-span-4">
                               <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1">
                                 Prenume Pacient
                               </label>
@@ -1428,7 +1428,7 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                 }
                               />
                             </div>
-                            <div>
+                            <div className="md:col-span-2">
                               <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1">
                                 Vârstă (Simplă)
                               </label>
@@ -1448,6 +1448,35 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     ageSimple: e.target.value,
                                   })
                                 }
+                              />
+                            </div>
+                            <div className="md:col-span-3">
+                              <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1 flex items-center justify-between">
+                                <span>CNP</span>
+                                <span className="text-[9px] font-normal text-slate-400 lowercase tracking-normal">
+                                  (opțional)
+                                </span>
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="13 cifre (opțional)..."
+                                maxLength={13}
+                                className={cn(
+                                  "w-full p-2.5 border rounded-xl text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-mono",
+                                  darkMode
+                                    ? "bg-slate-800 border-slate-700 text-white"
+                                    : "bg-slate-50 border-slate-200 text-slate-900",
+                                )}
+                                value={documentForm.patientCnp || ""}
+                                onChange={(e) => {
+                                  const newCnp = e.target.value.replace(/\D/g, "").slice(0, 13);
+                                  const detectedSex = getSexFromCNP(newCnp);
+                                  setDocumentForm({
+                                    ...documentForm,
+                                    patientCnp: newCnp,
+                                    patientSex: detectedSex || documentForm.patientSex,
+                                  });
+                                }}
                               />
                             </div>
                           </div>

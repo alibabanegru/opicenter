@@ -61,7 +61,15 @@ export function handleFirestoreError(
   path: string | null,
 ) {
   const errMsg = error instanceof Error ? error.message : String(error);
-  const isQuota = errMsg.toLowerCase().includes("quota");
+  const lowerMsg = errMsg.toLowerCase();
+  const isQuotaOrRateLimit =
+    lowerMsg.includes("quota") ||
+    lowerMsg.includes("rate") ||
+    lowerMsg.includes("exhausted") ||
+    lowerMsg.includes("limit") ||
+    lowerMsg.includes("429") ||
+    lowerMsg.includes("exceeded") ||
+    lowerMsg.includes("resource");
   const now = Date.now();
 
   const errInfo: FirestoreErrorInfo = {
@@ -82,21 +90,30 @@ export function handleFirestoreError(
     path,
   };
 
-  if (!isQuota || now - lastQuotaLogTime > 60000) {
-    if (isQuota) lastQuotaLogTime = now;
-    console.error("Firestore Error: ", JSON.stringify(errInfo));
+  if (!isQuotaOrRateLimit || now - lastQuotaLogTime > 180000) {
+    if (isQuotaOrRateLimit) lastQuotaLogTime = now;
+    console.warn("Firestore Notice: ", JSON.stringify(errInfo));
   }
 
-  if (globalDbErrorHandler) {
+  // Only trigger global modal/banner for actual non-rate-limit operational errors
+  // Quota and rate-limit are handled transparently by Firestore localCache (IndexedDB)
+  if (globalDbErrorHandler && !isQuotaOrRateLimit) {
     globalDbErrorHandler(errInfo.error);
   }
 
-  // Do not throw a fatal uncaught exception for Quota limit exceeded or offline errors to prevent crashing the applet
-  if (isQuota || errMsg.toLowerCase().includes("offline") || errMsg.toLowerCase().includes("unavailable")) {
+  // Do not throw fatal uncaught exceptions for Quota/Rate limit exceeded, offline or network errors
+  // Firestore localCache (IndexedDB) continues serving stored application data gracefully
+  if (
+    isQuotaOrRateLimit ||
+    lowerMsg.includes("offline") ||
+    lowerMsg.includes("unavailable") ||
+    lowerMsg.includes("network") ||
+    lowerMsg.includes("timeout")
+  ) {
     return;
   }
 
-  throw new Error(JSON.stringify(errInfo));
+  console.error("Firestore Error handled without crash:", errMsg);
 }
 
 // Capitalize each word and remove numbers
@@ -409,7 +426,9 @@ export interface GlassesOrder {
   isUrgent: boolean;
   createdAt: string;
   note?: string;
-  status?: "pending" | "completed" | "in-progress";
+  status?: "pending" | "completed" | "in-progress" | "ready_for_pickup";
+  stockDeducted?: boolean;
+  stockDeductedFrames?: string[];
   isDeleted?: boolean;
   deletedAt?: string;
   deletedBy?: string;
@@ -418,6 +437,12 @@ export interface GlassesOrder {
   patientPhone?: string;
   sellerId?: string;
   sellerName?: string;
+  whatsappNotifiedAt?: string;
+  whatsappNotifiedBy?: string;
+  deliveredAt?: string;
+  deliveredBy?: string;
+  balanceCollectedAt?: string;
+  balanceCollectedBy?: string;
   dp?: string;
   dp_od?: string;
   dp_os?: string;
@@ -700,6 +725,8 @@ export interface MedicalRecord {
   gdprSignedAt?: string;
   createdAt?: string;
   updatedAt: string;
+  doctorId?: string;
+  doctorName?: string;
   cycloplegia?: Cycloplegia;
   nonCycloplegic?: Cycloplegia;
   isControl?: boolean;
@@ -1390,6 +1417,20 @@ export const calculateAge = (
     age--;
   }
   return age;
+};
+
+export const getEstimatedAddByAge = (
+  age?: number,
+): string | null => {
+  if (age === undefined || age === null || isNaN(age) || age < 40) return null;
+  if (age < 44) return "+1.00";
+  if (age < 47) return "+1.25"; // ex. 45 ani: +1.25
+  if (age < 50) return "+1.50";
+  if (age < 53) return "+1.75"; // ex. 50 ani: +1.75
+  if (age < 57) return "+2.00";
+  if (age < 60) return "+2.25"; // ex. 55-58 ani: +2.25
+  if (age < 65) return "+2.50"; // 60+ ani: +2.50
+  return "+2.50"; // max fiziologic uzual este +2.50 / +2.75
 };
 
 export const calculateDetailedAge = (
