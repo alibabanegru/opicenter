@@ -76,6 +76,14 @@ export interface OrdersModalProps {
   availableUsers?: { id: string; name: string }[];
   handleExportData?: () => void;
   handleImportData?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  selectedDeletedOrders?: string[];
+  setSelectedDeletedOrders?: React.Dispatch<React.SetStateAction<string[]>>;
+  selectedCompletedOrders?: string[];
+  setSelectedCompletedOrders?: React.Dispatch<React.SetStateAction<string[]>>;
+  bulkSoftDeleteMode?: "selected" | "all" | null;
+  setBulkSoftDeleteMode?: React.Dispatch<React.SetStateAction<"selected" | "all" | null>>;
+  bulkDeleteMode?: "selected" | "all" | null;
+  setBulkDeleteMode?: React.Dispatch<React.SetStateAction<"selected" | "all" | null>>;
 }
 
 export const OrdersModal: React.FC<OrdersModalProps> = ({
@@ -105,6 +113,14 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   availableUsers = [],
   handleExportData: propHandleExportData,
   handleImportData: propHandleImportData,
+  selectedDeletedOrders: propSelectedDeletedOrders,
+  setSelectedDeletedOrders: propSetSelectedDeletedOrders,
+  selectedCompletedOrders: propSelectedCompletedOrders,
+  setSelectedCompletedOrders: propSetSelectedCompletedOrders,
+  bulkSoftDeleteMode: propBulkSoftDeleteMode,
+  setBulkSoftDeleteMode: propSetBulkSoftDeleteMode,
+  bulkDeleteMode: propBulkDeleteMode,
+  setBulkDeleteMode: propSetBulkDeleteMode,
 }) => {
   const usersList = availableUsers && availableUsers.length > 0
     ? availableUsers
@@ -148,10 +164,22 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   );
   const [statsView, setStatsView] = useState<"general" | "items">("general");
   const [ordersSellerFilter, setOrdersSellerFilter] = useState<string>("all");
-  const [selectedDeletedOrders, setSelectedDeletedOrders] = useState<string[]>([]);
-  const [selectedCompletedOrders, setSelectedCompletedOrders] = useState<string[]>([]);
-  const [bulkSoftDeleteMode, setBulkSoftDeleteMode] = useState<"selected" | "all" | null>(null);
-  const [bulkDeleteMode, setBulkDeleteMode] = useState<"selected" | "all" | null>(null);
+
+  const [internalSelectedDeletedOrders, setInternalSelectedDeletedOrders] = useState<string[]>([]);
+  const selectedDeletedOrders = propSelectedDeletedOrders !== undefined ? propSelectedDeletedOrders : internalSelectedDeletedOrders;
+  const setSelectedDeletedOrders = propSetSelectedDeletedOrders || setInternalSelectedDeletedOrders;
+
+  const [internalSelectedCompletedOrders, setInternalSelectedCompletedOrders] = useState<string[]>([]);
+  const selectedCompletedOrders = propSelectedCompletedOrders !== undefined ? propSelectedCompletedOrders : internalSelectedCompletedOrders;
+  const setSelectedCompletedOrders = propSetSelectedCompletedOrders || setInternalSelectedCompletedOrders;
+
+  const [internalBulkSoftDeleteMode, setInternalBulkSoftDeleteMode] = useState<"selected" | "all" | null>(null);
+  const bulkSoftDeleteMode = propBulkSoftDeleteMode !== undefined ? propBulkSoftDeleteMode : internalBulkSoftDeleteMode;
+  const setBulkSoftDeleteMode = propSetBulkSoftDeleteMode || setInternalBulkSoftDeleteMode;
+
+  const [internalBulkDeleteMode, setInternalBulkDeleteMode] = useState<"selected" | "all" | null>(null);
+  const bulkDeleteMode = propBulkDeleteMode !== undefined ? propBulkDeleteMode : internalBulkDeleteMode;
+  const setBulkDeleteMode = propSetBulkDeleteMode || setInternalBulkDeleteMode;
   const [loading, setLoading] = useState(false);
   const [isLoadingArchive, setIsLoadingArchive] = useState(false);
   const [hasLoadedFullArchive, setHasLoadedFullArchive] = useState(false);

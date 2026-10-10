@@ -28,6 +28,8 @@ export interface DeleteConfirmationModalsProps {
     patientName: string;
   } | null;
   setOrderToDelete: (order: { patientId: string; orderNumber: string; patientName: string; } | null) => void;
+  isOrderDeleteConfirmOpen?: boolean;
+  setIsOrderDeleteConfirmOpen?: (val: boolean) => void;
   isPermanentDelete: boolean;
   setIsPermanentDelete: (val: boolean) => void;
   handlePermanentDeleteOrder: () => Promise<void> | void;
@@ -72,6 +74,8 @@ export const DeleteConfirmationModals: React.FC<DeleteConfirmationModalsProps> =
 
   orderToDelete,
   setOrderToDelete,
+  isOrderDeleteConfirmOpen,
+  setIsOrderDeleteConfirmOpen,
   isPermanentDelete,
   setIsPermanentDelete,
   handlePermanentDeleteOrder,
@@ -321,6 +325,7 @@ export const DeleteConfirmationModals: React.FC<DeleteConfirmationModalsProps> =
                   onClick={() => {
                     setOrderToDelete(null);
                     setIsPermanentDelete(false);
+                    setIsOrderDeleteConfirmOpen?.(false);
                   }}
                   className={cn(
                     "p-2 rounded-full transition-colors",
@@ -369,6 +374,7 @@ export const DeleteConfirmationModals: React.FC<DeleteConfirmationModalsProps> =
                   onClick={() => {
                     setOrderToDelete(null);
                     setIsPermanentDelete(false);
+                    setIsOrderDeleteConfirmOpen?.(false);
                   }}
                   className={cn(
                     "flex-1 py-3 rounded-xl font-bold transition-all border text-xs sm:text-sm",
@@ -386,6 +392,7 @@ export const DeleteConfirmationModals: React.FC<DeleteConfirmationModalsProps> =
                     } else {
                       handleDeleteSingleOrder();
                     }
+                    setIsOrderDeleteConfirmOpen?.(false);
                   }}
                   className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white font-black rounded-xl transition-all shadow-lg shadow-red-900/25 uppercase text-xs sm:text-sm border border-red-600"
                 >
