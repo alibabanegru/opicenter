@@ -274,6 +274,7 @@ import {
   getBottomYAtX,
   FrameStockItem,
   getEstimatedAddByAge,
+  MONTHS_RO,
 } from "./appConstants";
 
 const cleanString = (s: string) =>
@@ -2765,6 +2766,132 @@ export default function App() {
     setSelectedHistoricalPrescriptionIndex,
   ] = useState<number | string | null>(null);
   const [isGlassesOrderModalOpen, setIsGlassesOrderModalOpen] = useState(false);
+
+  // Fișă Pacient - Dată Eliberare (ca la raport medical: Zi, Lună, An, default curentă)
+  const [fisaEliberatZi, setFisaEliberatZi] = useState<string>(() =>
+    String(new Date().getDate()),
+  );
+  const [fisaEliberatLuna, setFisaEliberatLuna] = useState<string>(() => {
+    return MONTHS_RO[new Date().getMonth()];
+  });
+  const [fisaEliberatAn, setFisaEliberatAn] = useState<string>(() =>
+    String(new Date().getFullYear()),
+  );
+
+  const fisaFormattedReleaseDate = useMemo(() => {
+    const an = (fisaEliberatAn || "").trim() || String(new Date().getFullYear());
+    const mIdx = (MONTHS_RO as readonly string[]).indexOf(fisaEliberatLuna);
+    const lunaNum = mIdx >= 0 ? String(mIdx + 1).padStart(2, "0") : String(new Date().getMonth() + 1).padStart(2, "0");
+    const zi = (fisaEliberatZi || "").trim() ? String(fisaEliberatZi).trim().padStart(2, "0") : String(new Date().getDate()).padStart(2, "0");
+    return `${zi}.${lunaNum}.${an}`;
+  }, [fisaEliberatZi, fisaEliberatLuna, fisaEliberatAn]);
+
+  const renderReleaseDateCard = () => (
+    <div
+      className={cn(
+        "p-3.5 rounded-2xl border transition-all shadow-sm space-y-3",
+        darkMode
+          ? "bg-slate-800 border-slate-700 text-white shadow-lg shadow-black/20"
+          : "bg-white border-slate-200 text-slate-900 shadow-sm",
+      )}
+    >
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="text-[10px] font-black text-blue-500 uppercase tracking-widest flex items-center gap-1.5">
+          <Calendar className="w-3.5 h-3.5" />
+          <span>Dată Eliberare</span>
+          <span className="text-[9px] px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold lowercase tracking-normal">
+            ca la raport medical
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            const today = new Date();
+            setFisaEliberatZi(String(today.getDate()));
+            setFisaEliberatLuna(MONTHS_RO[today.getMonth()]);
+            setFisaEliberatAn(String(today.getFullYear()));
+          }}
+          className="text-[10px] font-black text-blue-500 hover:text-blue-600 dark:text-blue-400 hover:underline cursor-pointer flex items-center gap-1 uppercase tracking-wider"
+        >
+          <RefreshCw className="w-3 h-3" />
+          Setează data curentă
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+        <div className="grid grid-cols-3 gap-2 sm:col-span-3">
+          <div>
+            <label className="block text-[9px] font-black text-slate-500 uppercase mb-1">
+              Zi
+            </label>
+            <input
+              type="text"
+              className={cn(
+                "w-full p-2 text-center text-xs font-bold border rounded-xl outline-none focus:ring-2 focus:ring-blue-500",
+                darkMode
+                  ? "bg-slate-900 border-slate-700 text-white"
+                  : "bg-slate-50 border-slate-200 text-slate-900",
+              )}
+              value={fisaEliberatZi}
+              onChange={(e) => setFisaEliberatZi(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-[9px] font-black text-slate-500 uppercase mb-1">
+              Lună
+            </label>
+            <select
+              className={cn(
+                "w-full p-2 text-xs font-bold border rounded-xl outline-none focus:ring-2 focus:ring-blue-500",
+                darkMode
+                  ? "bg-slate-900 border-slate-700 text-white"
+                  : "bg-slate-50 border-slate-200 text-slate-900",
+              )}
+              value={fisaEliberatLuna}
+              onChange={(e) => setFisaEliberatLuna(e.target.value)}
+            >
+              {MONTHS_RO.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[9px] font-black text-slate-500 uppercase mb-1">
+              An
+            </label>
+            <input
+              type="text"
+              className={cn(
+                "w-full p-2 text-center text-xs font-bold border rounded-xl outline-none focus:ring-2 focus:ring-blue-500",
+                darkMode
+                  ? "bg-slate-900 border-slate-700 text-white"
+                  : "bg-slate-50 border-slate-200 text-slate-900",
+              )}
+              value={fisaEliberatAn}
+              onChange={(e) => setFisaEliberatAn(e.target.value)}
+            />
+          </div>
+        </div>
+        <div
+          className={cn(
+            "p-2.5 rounded-xl border flex flex-col justify-center",
+            darkMode
+              ? "bg-slate-900/60 border-slate-700 text-slate-300"
+              : "bg-blue-50/70 border-blue-200 text-blue-900",
+          )}
+        >
+          <span className="text-[9px] uppercase font-black opacity-60 block">
+            Data pe Fișa PDF:
+          </span>
+          <span className="text-sm font-black text-blue-600 dark:text-blue-400">
+            {fisaFormattedReleaseDate}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
   const [orderViewMode, setOrderViewMode] = useState<"rapid" | "advanced">(() => {
     try {
       return (localStorage.getItem("optik_order_view_mode") as "rapid" | "advanced") || "rapid";
@@ -9692,6 +9819,10 @@ export default function App() {
     setActiveAppointment(appointment);
     setEqSfericActiveOD(false);
     setEqSfericActiveOS(false);
+    const today = new Date();
+    setFisaEliberatZi(String(today.getDate()));
+    setFisaEliberatLuna(MONTHS_RO[today.getMonth()]);
+    setFisaEliberatAn(String(today.getFullYear()));
     const appSymptoms = [
       (appointment as any).patientSymptomSelect,
       (appointment as any).patientSymptomText,
@@ -15838,10 +15969,22 @@ export default function App() {
         cl_os: targetItem.cl_os ? { ...targetItem.cl_os } : undefined,
       });
       setActivePrescriptionIndex(targetIndex);
+      if (targetItem.date) {
+        const dObj = new Date(targetItem.date);
+        if (!isNaN(dObj.getTime())) {
+          setFisaEliberatZi(String(dObj.getDate()));
+          setFisaEliberatLuna(MONTHS_RO[dObj.getMonth()]);
+          setFisaEliberatAn(String(dObj.getFullYear()));
+        }
+      }
     }
   };
 
   const startNewPrescription = () => {
+    const today = new Date();
+    setFisaEliberatZi(String(today.getDate()));
+    setFisaEliberatLuna(MONTHS_RO[today.getMonth()]);
+    setFisaEliberatAn(String(today.getFullYear()));
     saveAndSwitchPrescription(null);
   };
 
@@ -16330,8 +16473,9 @@ export default function App() {
 
     doc.setFontSize(14);
     doc.setFont("helvetica", "bold");
+    const printReleaseDate = fisaFormattedReleaseDate || format(getActiveDate(), "dd.MM.yyyy");
     doc.text(
-      cleanStr(`Data: ${format(getActiveDate(), "dd.MM.yyyy")}`),
+      cleanStr(`Data: ${printReleaseDate}`),
       pageWidth - 14,
       52,
       { align: "right" },
@@ -28988,8 +29132,9 @@ export default function App() {
                   : "bg-white border-slate-200 text-slate-900",
               )}
             >
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800/60 pb-3 mb-3">
-                {/* Left side: Title, Name and Doctor details */}
+              <div className="border-b border-slate-100 dark:border-slate-800/60 pb-2.5 mb-3 space-y-1.5">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                {/* Left side: Title and Name */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
                     <div
@@ -29349,38 +29494,6 @@ export default function App() {
                       </div>
                     )}
                   </div>
-
-                  {/* Doctor & Date info in a clean row under name */}
-                  <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-                    {examiningDoctorName && (
-                      <div className="flex items-center gap-1">
-                        <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest leading-none">
-                          Medic:
-                        </span>
-                        <span className="text-base font-extrabold italic font-signature text-rose-600 tracking-wide leading-none">
-                          {examiningDoctorName}
-                        </span>
-                      </div>
-                    )}
-                    {currentMedicalRecord.prescriptionHistory?.[
-                      activePrescriptionIndex
-                    ] && (
-                      <div className="flex items-center gap-1 text-xs font-bold text-slate-400 dark:text-slate-500">
-                        <CalendarClock className="w-3.5 h-3.5 text-slate-400" />
-                        <span>
-                          Consult:{" "}
-                          {format(
-                            new Date(
-                              currentMedicalRecord.prescriptionHistory[
-                                activePrescriptionIndex
-                              ].date,
-                            ),
-                            "dd.MM.yyyy HH:mm",
-                          )}
-                        </span>
-                      </div>
-                    )}
-                  </div>
                 </div>
 
                 {/* Right side: The 4 metadata cards & Close button nestled into a single row to the right of the name card */}
@@ -29623,6 +29736,44 @@ export default function App() {
                   </button>
                 </div>
               </div>
+
+              {/* Doctor & Date info in a clean row moved all the way to the right */}
+              {(examiningDoctorName ||
+                currentMedicalRecord.prescriptionHistory?.[
+                  activePrescriptionIndex
+                ]) && (
+                <div className="flex items-center justify-end gap-4 flex-wrap ml-auto px-0.5">
+                  {examiningDoctorName && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest leading-none">
+                        Medic:
+                      </span>
+                      <span className="text-base font-extrabold italic font-signature text-rose-600 tracking-wide leading-none">
+                        {examiningDoctorName}
+                      </span>
+                    </div>
+                  )}
+                  {currentMedicalRecord.prescriptionHistory?.[
+                    activePrescriptionIndex
+                  ] && (
+                    <div className="flex items-center gap-1 text-xs font-bold text-slate-400 dark:text-slate-500 shrink-0">
+                      <CalendarClock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span>
+                        Consult:{" "}
+                        {format(
+                          new Date(
+                            currentMedicalRecord.prescriptionHistory[
+                              activePrescriptionIndex
+                            ].date,
+                          ),
+                          "dd.MM.yyyy HH:mm",
+                        )}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
               {/* Draft Restored Banner (Protecție anti-pană de curent) */}
               {draftRestoredNotice && (
@@ -35608,6 +35759,9 @@ export default function App() {
                           )}
                         </div>
                       )}{" "}
+
+                      {/* Dată Eliberare - Ultima rubrică în Fișa Pacient: după Istoric Comenzi (administrator și recepție) și după Examinări (medici) */}
+                      {renderReleaseDateCard()}
                     </div>
                   </div>
                 ) : (
@@ -36145,12 +36299,14 @@ export default function App() {
                                     : "bg-white border-slate-200 text-slate-900",
                                 )}
                               />
-                            </div>
                           </div>
                         </div>
                       </div>
                     </div>
+                  </div>
 
+                    {/* Dată Eliberare - Ultima rubrică în Fișa Pacient */}
+                    {renderReleaseDateCard()}
                   </div>
                 )}
               </div>
@@ -46848,6 +47004,16 @@ export default function App() {
           clinicLogo={clinicConfig?.logoUrl}
           getDoctorName={getDoctorName}
           roleLabels={roleLabelsState}
+          initialReleaseDate={{
+            zi: fisaEliberatZi,
+            luna: fisaEliberatLuna,
+            an: fisaEliberatAn,
+          }}
+          onReleaseDateChange={(d) => {
+            setFisaEliberatZi(d.zi);
+            setFisaEliberatLuna(d.luna);
+            setFisaEliberatAn(d.an);
+          }}
         />
       )}
 

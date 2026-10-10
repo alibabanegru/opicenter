@@ -24,6 +24,7 @@ import {
   calculateAge,
   calculateDetailedAge,
   calculateTurningAge,
+  MONTHS_RO,
 } from "../appConstants";
 import MyopiaChart from "./MyopiaChart";
 
@@ -37,6 +38,12 @@ interface PatientSummaryModalProps {
   clinicLogo?: string;
   getDoctorName?: (doctorId: string) => string;
   roleLabels?: Record<string, string>;
+  initialReleaseDate?: {
+    zi?: string;
+    luna?: string;
+    an?: string;
+  };
+  onReleaseDateChange?: (date: { zi: string; luna: string; an: string }) => void;
 }
 
 // Helper to parse any date string into a formatted RO string and numeric timestamp
@@ -114,11 +121,48 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
   clinicLogo,
   getDoctorName,
   roleLabels,
+  initialReleaseDate,
+  onReleaseDateChange,
 }) => {
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
   const [showA4Modal, setShowA4Modal] = useState<boolean>(false);
   const [selectedEntryIndex, setSelectedEntryIndex] = useState<number>(0);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState<boolean>(false);
+  const [pdfNotification, setPdfNotification] = useState<string | null>(null);
+
+  // Release date state (ca la raport medical: Zi, Lună, An, default current date)
+  const [eliberatZi, setEliberatZi] = useState<string>(() => {
+    return initialReleaseDate?.zi !== undefined && initialReleaseDate?.zi !== ""
+      ? String(initialReleaseDate.zi)
+      : String(new Date().getDate());
+  });
+  const [eliberatLuna, setEliberatLuna] = useState<string>(() => {
+    return initialReleaseDate?.luna !== undefined && initialReleaseDate?.luna !== ""
+      ? String(initialReleaseDate.luna)
+      : MONTHS_RO[new Date().getMonth()];
+  });
+  const [eliberatAn, setEliberatAn] = useState<string>(() => {
+    return initialReleaseDate?.an !== undefined && initialReleaseDate?.an !== ""
+      ? String(initialReleaseDate.an)
+      : String(new Date().getFullYear());
+  });
+
+  const formattedReleaseDate = useMemo(() => {
+    const an = (eliberatAn || "").trim() || String(new Date().getFullYear());
+    const monthIdx = (MONTHS_RO as readonly string[]).indexOf(eliberatLuna);
+    const lunaNum = monthIdx >= 0 ? String(monthIdx + 1).padStart(2, "0") : String(new Date().getMonth() + 1).padStart(2, "0");
+    const zi = (eliberatZi || "").trim() ? String(eliberatZi).trim().padStart(2, "0") : String(new Date().getDate()).padStart(2, "0");
+    return `${zi}.${lunaNum}.${an}`;
+  }, [eliberatZi, eliberatLuna, eliberatAn]);
+
+  const updateReleaseDate = (ziVal: string, lunaVal: string, anVal: string) => {
+    setEliberatZi(ziVal);
+    setEliberatLuna(lunaVal);
+    setEliberatAn(anVal);
+    if (onReleaseDateChange) {
+      onReleaseDateChange({ zi: ziVal, luna: lunaVal, an: anVal });
+    }
+  };
 
   const getDoctorFormattedName = (docNameOrId?: string): string => {
     if (!docNameOrId) return "Dr. Curant";
@@ -560,7 +604,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
       }
 
       if (!element) {
-        alert("Nu s-a putut găsi conținutul pentru generarea PDF-ului.");
+        setPdfNotification("Nu s-a putut găsi conținutul pentru generarea PDF-ului.");
         setIsGeneratingPDF(false);
         return;
       }
@@ -609,11 +653,22 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
         .replace(/[^a-zA-Z0-9_\- ]/g, "")
         .trim()
         .replace(/\s+/g, "_");
-      const dateStr = new Date().toISOString().split("T")[0];
-      pdf.save(`Sumar_Medical_${cleanName}_${dateStr}.pdf`);
+      const safeMonthNum = String(
+        (MONTHS_RO as readonly string[]).indexOf(eliberatLuna) >= 0
+          ? (MONTHS_RO as readonly string[]).indexOf(eliberatLuna) + 1
+          : new Date().getMonth() + 1,
+      ).padStart(2, "0");
+      const safeDay = String((eliberatZi || "").trim() || new Date().getDate()).padStart(2, "0");
+      const safeYear = (eliberatAn || "").trim() || String(new Date().getFullYear());
+      const dateStr = `${safeYear}-${safeMonthNum}-${safeDay}`;
+
+      pdf.save(`Fisa_Medicala_${cleanName}_${dateStr}.pdf`);
+      setPdfNotification(`Fișa pacient PDF a fost descărcată cu succes (Data eliberare: ${formattedReleaseDate})!`);
+      setTimeout(() => setPdfNotification(null), 4000);
     } catch (err: any) {
       console.error("Eroare la generarea fișierului PDF:", err);
-      alert(`A apărut o eroare la generarea PDF: ${err?.message || "Încercați din nou."}`);
+      setPdfNotification(`A apărut o eroare la generarea PDF: ${err?.message || "Încercați din nou."}`);
+      setTimeout(() => setPdfNotification(null), 5000);
     } finally {
       setIsGeneratingPDF(false);
     }
@@ -1438,6 +1493,99 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
               </div>
             </div>
           )}
+
+          {/* 5. Dată Eliberare Fișă Pacient (ca la raport medical) - Sub Istoric Pacienți */}
+          <div
+            className={`p-4 rounded-2xl border space-y-3 ${
+              darkMode
+                ? "bg-slate-800/50 border-slate-700/80"
+                : "bg-slate-100/70 border-slate-200"
+            }`}
+          >
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <p className="text-[11px] font-black tracking-wider text-slate-700 dark:text-slate-200 uppercase">
+                  Dată Eliberare Fișă Pacient
+                </p>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold">
+                  ca la raport medical
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const today = new Date();
+                  updateReleaseDate(
+                    String(today.getDate()),
+                    MONTHS_RO[today.getMonth()],
+                    String(today.getFullYear()),
+                  );
+                }}
+                className="text-[10px] font-bold text-blue-600 hover:text-blue-700 dark:text-blue-400 hover:underline cursor-pointer"
+              >
+                Setează data curentă
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+              <div className="grid grid-cols-3 gap-2 md:col-span-2">
+                <div>
+                  <label className="block text-[8px] font-black text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Zi
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full p-2 text-center text-xs font-semibold border rounded-xl dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    value={eliberatZi}
+                    onChange={(e) =>
+                      updateReleaseDate(e.target.value, eliberatLuna, eliberatAn)
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="block text-[8px] font-black text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Lună
+                  </label>
+                  <select
+                    className="w-full p-2 text-xs font-semibold border rounded-xl dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    value={eliberatLuna}
+                    onChange={(e) =>
+                      updateReleaseDate(eliberatZi, e.target.value, eliberatAn)
+                    }
+                  >
+                    {MONTHS_RO.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[8px] font-black text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    An
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full p-2 text-center text-xs font-semibold border rounded-xl dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    value={eliberatAn}
+                    onChange={(e) =>
+                      updateReleaseDate(eliberatZi, eliberatLuna, e.target.value)
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-white/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-700/70 text-xs">
+                <span className="text-[9px] uppercase font-black text-slate-400 block mb-0.5">
+                  Data pe Fișa Pacient PDF:
+                </span>
+                <span className="text-sm font-black text-blue-600 dark:text-blue-400">
+                  {formattedReleaseDate}
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Modal Footer */}
@@ -1446,21 +1594,33 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
             darkMode ? "border-slate-800 bg-slate-950/80" : "border-slate-100 bg-slate-50/90"
           }`}
         >
-          {/* Bottom Left GREEN Descarcă PDF button */}
-          <button
-            type="button"
-            onClick={handleDownloadPDF}
-            disabled={isGeneratingPDF}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Descarcă istoricul clinic A4 în format PDF"
-          >
-            {isGeneratingPDF ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Download className="w-4 h-4" />
+          {/* Bottom Left GREEN Descarcă PDF button + notification */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              type="button"
+              onClick={handleDownloadPDF}
+              disabled={isGeneratingPDF}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              title="Descarcă istoricul clinic A4 în format PDF cu data de eliberare specificată"
+            >
+              {isGeneratingPDF ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              <span>{isGeneratingPDF ? "Se generează PDF..." : "Descarcă PDF"}</span>
+            </button>
+
+            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 px-2 py-1 rounded-lg bg-slate-200/60 dark:bg-slate-800/80">
+              Data eliberare: <strong className="text-slate-900 dark:text-white font-black">{formattedReleaseDate}</strong>
+            </span>
+
+            {pdfNotification && (
+              <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 animate-in fade-in">
+                {pdfNotification}
+              </span>
             )}
-            <span>{isGeneratingPDF ? "Se generează PDF..." : "Descarcă PDF"}</span>
-          </button>
+          </div>
 
           <div className="flex items-center gap-3">
             <span className="text-xs text-slate-500 font-medium hidden sm:inline">
@@ -1516,7 +1676,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
               </div>
             </div>
             <div className="text-right text-xs text-slate-800 shrink-0">
-              <p><strong>Data raport:</strong> {new Date().toLocaleDateString("ro-RO")}</p>
+              <p><strong>Data eliberare:</strong> {formattedReleaseDate}</p>
             </div>
           </div>
 
@@ -1778,7 +1938,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                   </div>
                 </div>
                 <div className="text-right text-xs text-slate-800 shrink-0">
-                  <p><strong>Data raport:</strong> {new Date().toLocaleDateString("ro-RO")}</p>
+                  <p><strong>Data eliberare:</strong> {formattedReleaseDate}</p>
                 </div>
               </div>
 
