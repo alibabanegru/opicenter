@@ -22,6 +22,12 @@ export interface InventoryViewProps {
   setFrameFilterCategory: (val: string) => void;
   frameFilterStatus: "all" | "in_stock" | "low_stock" | "out_of_stock";
   setFrameFilterStatus: (val: "all" | "in_stock" | "low_stock" | "out_of_stock") => void;
+  frameFilterMaterial?: string;
+  setFrameFilterMaterial?: (val: string) => void;
+  frameFilterShape?: string;
+  setFrameFilterShape?: (val: string) => void;
+  frameFilterPriceRange?: string;
+  setFrameFilterPriceRange?: (val: string) => void;
   handleOpenFrameModal: (frame?: FrameStockItem) => void;
   handleQuickStockChange: (frameId: string, currentQty: number, delta: number) => Promise<void> | void;
   handleDeleteFrame: (frameId: string, frameCode: string) => Promise<void> | void;
@@ -38,6 +44,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   setFrameFilterCategory,
   frameFilterStatus,
   setFrameFilterStatus,
+  frameFilterMaterial = "all",
+  setFrameFilterMaterial,
+  frameFilterShape = "all",
+  setFrameFilterShape,
+  frameFilterPriceRange = "all",
+  setFrameFilterPriceRange,
   handleOpenFrameModal,
   handleQuickStockChange,
   handleDeleteFrame,
@@ -156,6 +168,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 ? "bg-slate-800 border-slate-700 text-slate-200"
                 : "bg-white border-slate-200 text-slate-800"
             )}
+            title="Filtrare Categorie"
           >
             <option value="all">Toate Categoriile</option>
             <option value="Unisex">Unisex</option>
@@ -163,6 +176,71 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             <option value="Femei">Femei</option>
             <option value="Copii">Copii</option>
           </select>
+
+          {setFrameFilterMaterial && (
+            <select
+              value={frameFilterMaterial}
+              onChange={(e) => setFrameFilterMaterial(e.target.value)}
+              className={cn(
+                "px-3 py-2.5 rounded-xl border text-xs font-bold outline-none cursor-pointer focus:ring-2 focus:ring-blue-500 transition-all",
+                darkMode
+                  ? "bg-slate-800 border-slate-700 text-slate-200"
+                  : "bg-white border-slate-200 text-slate-800"
+              )}
+              title="Filtrare după Material (Titan, Acetat, Metal, etc.)"
+            >
+              <option value="all">Material (Toate)</option>
+              <option value="Titan">Titan</option>
+              <option value="Acetat">Acetat</option>
+              <option value="Metal">Metal</option>
+              <option value="Plastic/TR90">Plastic / TR90</option>
+              <option value="Mixt">Mixt</option>
+              <option value="Lemn">Lemn</option>
+            </select>
+          )}
+
+          {setFrameFilterShape && (
+            <select
+              value={frameFilterShape}
+              onChange={(e) => setFrameFilterShape(e.target.value)}
+              className={cn(
+                "px-3 py-2.5 rounded-xl border text-xs font-bold outline-none cursor-pointer focus:ring-2 focus:ring-blue-500 transition-all",
+                darkMode
+                  ? "bg-slate-800 border-slate-700 text-slate-200"
+                  : "bg-white border-slate-200 text-slate-800"
+              )}
+              title="Filtrare după Formă (Rotund, Cat-Eye, Dreptunghiular, etc.)"
+            >
+              <option value="all">Formă (Toate)</option>
+              <option value="Rotund">Rotund</option>
+              <option value="Cat-Eye">Cat-Eye</option>
+              <option value="Dreptunghiular">Dreptunghiular</option>
+              <option value="Oval">Oval</option>
+              <option value="Aviator">Aviator</option>
+              <option value="Pătrat">Pătrat</option>
+              <option value="Geometric">Geometric</option>
+            </select>
+          )}
+
+          {setFrameFilterPriceRange && (
+            <select
+              value={frameFilterPriceRange}
+              onChange={(e) => setFrameFilterPriceRange(e.target.value)}
+              className={cn(
+                "px-3 py-2.5 rounded-xl border text-xs font-bold outline-none cursor-pointer focus:ring-2 focus:ring-blue-500 transition-all",
+                darkMode
+                  ? "bg-slate-800 border-slate-700 text-slate-200"
+                  : "bg-white border-slate-200 text-slate-800"
+              )}
+              title="Filtrare după Categorie de Preț"
+            >
+              <option value="all">Preț (Toate)</option>
+              <option value="budget">Buget (&lt; 250 RON)</option>
+              <option value="standard">Standard (250 - 500 RON)</option>
+              <option value="premium">Premium (500 - 900 RON)</option>
+              <option value="luxury">Luxury (&gt; 900 RON)</option>
+            </select>
+          )}
 
           <select
             value={frameFilterStatus}
@@ -218,6 +296,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <th className="p-3">Cod Ramă</th>
                 <th className="p-3">Brand / Producător</th>
                 <th className="p-3">Categorie</th>
+                <th className="p-3">Material / Formă</th>
                 <th className="p-3 text-right">Preț (RON)</th>
                 <th className="p-3">Locație Depozit</th>
                 <th className="p-3 text-center">Cantitate Disponibilă</th>
@@ -262,6 +341,23 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                       >
                         {item.category || "Unisex"}
                       </span>
+                    </td>
+                    <td className="p-3">
+                      <div className="flex flex-wrap gap-1 items-center">
+                        {item.material && (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
+                            {item.material}
+                          </span>
+                        )}
+                        {item.shape && (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                            {item.shape}
+                          </span>
+                        )}
+                        {!item.material && !item.shape && (
+                          <span className="text-slate-400 text-xs italic">—</span>
+                        )}
+                      </div>
                     </td>
                     <td className="p-3 text-right font-black text-slate-900 dark:text-slate-100">
                       {item.price ? `${item.price.toFixed(2)} RON` : "—"}

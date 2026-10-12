@@ -866,15 +866,19 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                       {isDoctor ? "Vârstă" : "Vârstă & Contact"}
                     </span>
                     <div className="flex flex-col">
-                      <span className="text-base sm:text-lg font-black text-blue-600 dark:text-blue-400 flex items-center gap-1.5 leading-tight py-0.5 flex-wrap">
-                        <User className="w-4 h-4 shrink-0 text-blue-500/85" />
+                      <span className="text-blue-600 dark:text-blue-400 flex items-center gap-1.5 leading-none py-0.5 flex-wrap">
+                        <User className="w-4.5 h-4.5 shrink-0 text-blue-500/85" />
                         {(() => {
                           const age = currentMedicalRecord.patientBirthDate
                             ? calculateDetailedAge(
                                 currentMedicalRecord.patientBirthDate,
                               )
                             : `${currentMedicalRecord.patientAge} ani`;
-                          return <span>{age}</span>;
+                          return (
+                            <span className="text-[21px] sm:text-[23px] font-black tracking-tight leading-none">
+                              {age}
+                            </span>
+                          );
                         })()}
                       </span>
                       {!isDoctor && (
@@ -7826,15 +7830,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                         setErrorMessage("Atenție: Distanța interpupilară (DP) nu a fost completată pe prescripție.");
                       }
 
-                      const success = await saveMedicalRecord(false);
+                      // Salvează fișa și trimite comanda de printare a prescripției/fișei
+                      try {
+                        printPrescription();
+                      } catch (pErr) {
+                        console.error("Print prescription error:", pErr);
+                      }
+
+                      // Salvează și închide automat fereastra fișei pacientului
+                      const success = await saveMedicalRecord(true);
                       if (success) {
-                        try {
-                          printPrescription();
-                          setSuccessMessage("Fișa a fost salvată și prescripția a fost trimisă la tipărire!");
-                        } catch (pErr) {
-                          console.error("Print prescription error:", pErr);
-                          setErrorMessage("Eroare la generarea prescripției pentru tipărire!");
-                        }
+                        setSuccessMessage("Fișa a fost salvată, trimisă la tipărire și închisă cu succes!");
                       }
                     }}
                     disabled={loading}

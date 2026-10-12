@@ -50,7 +50,8 @@ export interface AppointmentHistoryModalProps {
   getRoleLabel: (role: Role | string) => string;
   getGdprStatus: (
     name: string,
-    phone: string
+    phone: string,
+    cnp?: string
   ) => { signed: boolean; [key: string]: any };
 }
 
@@ -220,15 +221,12 @@ export const AppointmentHistoryModal: React.FC<
           exit={{ opacity: 0 }}
           className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50"
         >
-          <motion.div
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.9, opacity: 0 }}
+          <div
             className={cn(
-              "rounded-3xl p-6 sm:p-8 w-full max-w-[95vw] xl:max-w-6xl shadow-2xl border overflow-hidden flex flex-col max-h-[90vh] transition-all",
+              "rounded-3xl p-6 sm:p-8 w-full max-w-[95vw] xl:max-w-6xl shadow-2xl border overflow-hidden flex flex-col h-[90vh] min-h-[90vh] max-h-[90vh]",
               darkMode
-                ? "bg-slate-900 border-slate-800"
-                : "bg-white border-slate-200"
+                ? "bg-slate-900 border-slate-800 text-slate-100"
+                : "bg-white border-slate-200 text-slate-900"
             )}
           >
             <div className="flex justify-between items-center mb-6">
@@ -610,7 +608,8 @@ export const AppointmentHistoryModal: React.FC<
                                   {format(parseISO(app.startTime), "HH:mm")}
                                   {getGdprStatus(
                                     app.patientName,
-                                    app.patientPhone
+                                    app.patientPhone,
+                                    app.patientCnp
                                   ).signed && (
                                     <span
                                       className="text-[10px] font-black text-emerald-500"
@@ -840,7 +839,7 @@ export const AppointmentHistoryModal: React.FC<
                 Închide
               </button>
             </div>
-          </motion.div>
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

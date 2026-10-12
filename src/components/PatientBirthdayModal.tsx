@@ -93,7 +93,7 @@ export const PatientBirthdayModal: React.FC<PatientBirthdayModalProps> = ({
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.95, opacity: 0 }}
             className={cn(
-              "rounded-3xl p-6 sm:p-8 w-full max-w-5xl shadow-2xl border flex flex-col max-h-[90vh] transition-all",
+              "rounded-3xl p-6 sm:p-8 w-full max-w-5xl shadow-2xl border flex flex-col h-[90vh] max-h-[90vh]",
               darkMode
                 ? "bg-slate-900 border-slate-800 text-slate-100"
                 : "bg-white border-slate-200 text-slate-900",

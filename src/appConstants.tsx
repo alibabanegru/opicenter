@@ -539,6 +539,8 @@ export interface FrameStockItem {
   brand: string;
   manufacturer?: string;
   category?: string;
+  material?: string;
+  shape?: string;
   quantity: number;
   price?: number;
   location?: string;
@@ -1443,9 +1445,8 @@ export const getEstimatedAddByAge = (
   if (age < 50) return "+1.50";
   if (age < 53) return "+1.75"; // ex. 50 ani: +1.75
   if (age < 57) return "+2.00";
-  if (age < 60) return "+2.25"; // ex. 55-58 ani: +2.25
-  if (age < 65) return "+2.50"; // 60+ ani: +2.50
-  return "+2.50"; // max fiziologic uzual este +2.50 / +2.75
+  // Peste vârsta de 59 de ani rămâne tot 2.25 dpt conform preferinței clinice a cabinetului
+  return "+2.25";
 };
 
 export const calculateDetailedAge = (

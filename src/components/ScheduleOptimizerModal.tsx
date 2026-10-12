@@ -171,7 +171,7 @@ export const ScheduleOptimizerModal: React.FC<ScheduleOptimizerModalProps> = ({
       <div
         id="schedule-optimizer-modal-container"
         className={cn(
-          "w-full max-w-6xl max-h-[92vh] flex flex-col rounded-3xl border shadow-2xl overflow-hidden transition-all",
+          "w-full max-w-6xl h-[92vh] max-h-[92vh] flex flex-col rounded-3xl border shadow-2xl overflow-hidden",
           darkMode
             ? "bg-slate-900 border-slate-800 text-slate-100"
             : "bg-white border-slate-200 text-slate-800"

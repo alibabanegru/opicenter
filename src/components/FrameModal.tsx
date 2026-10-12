@@ -16,6 +16,10 @@ export interface FrameModalProps {
   setFrameFormManufacturer: (val: string) => void;
   frameFormCategory: string;
   setFrameFormCategory: (val: string) => void;
+  frameFormMaterial?: string;
+  setFrameFormMaterial?: (val: string) => void;
+  frameFormShape?: string;
+  setFrameFormShape?: (val: string) => void;
   frameFormCode: string;
   setFrameFormCode: (val: string) => void;
   frameFormQuantity: number;
@@ -43,6 +47,10 @@ export const FrameModal: React.FC<FrameModalProps> = ({
   setFrameFormManufacturer,
   frameFormCategory,
   setFrameFormCategory,
+  frameFormMaterial = "",
+  setFrameFormMaterial,
+  frameFormShape = "",
+  setFrameFormShape,
   frameFormCode,
   setFrameFormCode,
   frameFormQuantity,
@@ -207,6 +215,58 @@ export const FrameModal: React.FC<FrameModalProps> = ({
                         : "bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400"
                     )}
                   />
+                </div>
+              </div>
+
+              {/* Rubrica 2b: Material & Formă Ramă */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-wider text-slate-500 mb-1">
+                    Material Ramă
+                  </label>
+                  <select
+                    value={frameFormMaterial}
+                    onChange={(e) => setFrameFormMaterial && setFrameFormMaterial(e.target.value)}
+                    className={cn(
+                      "w-full px-4 py-2.5 rounded-xl border text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer",
+                      darkMode
+                        ? "bg-slate-800 border-slate-700 text-white"
+                        : "bg-slate-50 border-slate-200 text-slate-900"
+                    )}
+                  >
+                    <option value="">Selectează material...</option>
+                    <option value="Titan">Titan</option>
+                    <option value="Acetat">Acetat</option>
+                    <option value="Metal">Metal</option>
+                    <option value="Plastic/TR90">Plastic / TR90</option>
+                    <option value="Mixt">Mixt</option>
+                    <option value="Lemn">Lemn</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-wider text-slate-500 mb-1">
+                    Formă Ramă
+                  </label>
+                  <select
+                    value={frameFormShape}
+                    onChange={(e) => setFrameFormShape && setFrameFormShape(e.target.value)}
+                    className={cn(
+                      "w-full px-4 py-2.5 rounded-xl border text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer",
+                      darkMode
+                        ? "bg-slate-800 border-slate-700 text-white"
+                        : "bg-slate-50 border-slate-200 text-slate-900"
+                    )}
+                  >
+                    <option value="">Selectează formă...</option>
+                    <option value="Rotund">Rotund</option>
+                    <option value="Cat-Eye">Cat-Eye</option>
+                    <option value="Dreptunghiular">Dreptunghiular</option>
+                    <option value="Oval">Oval</option>
+                    <option value="Aviator">Aviator</option>
+                    <option value="Pătrat">Pătrat</option>
+                    <option value="Geometric">Geometric</option>
+                  </select>
                 </div>
               </div>
 

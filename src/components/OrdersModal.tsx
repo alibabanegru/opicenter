@@ -76,6 +76,8 @@ export interface OrdersModalProps {
   availableUsers?: { id: string; name: string }[];
   handleExportData?: () => void;
   handleImportData?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  initialTab?: "in-progress" | "ready" | "with-balance" | "completed" | "stats" | "deleted";
+  initialSearch?: string;
   selectedDeletedOrders?: string[];
   setSelectedDeletedOrders?: React.Dispatch<React.SetStateAction<string[]>>;
   selectedCompletedOrders?: string[];
@@ -113,6 +115,8 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   availableUsers = [],
   handleExportData: propHandleExportData,
   handleImportData: propHandleImportData,
+  initialTab,
+  initialSearch,
   selectedDeletedOrders: propSelectedDeletedOrders,
   setSelectedDeletedOrders: propSetSelectedDeletedOrders,
   selectedCompletedOrders: propSelectedCompletedOrders,
@@ -154,10 +158,17 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   });
 
   const [ordersSearchQuery, setOrdersSearchQuery] = useState("");
-  const [patientOrdersSearchQuery, setPatientOrdersSearchQuery] = useState("");
+  const [patientOrdersSearchQuery, setPatientOrdersSearchQuery] = useState(initialSearch || "");
   const [ordersTab, setOrdersTab] = useState<
     "in-progress" | "ready" | "with-balance" | "completed" | "stats" | "deleted"
-  >("in-progress");
+  >(initialTab || "in-progress");
+
+  React.useEffect(() => {
+    if (isOpen) {
+      if (initialTab) setOrdersTab(initialTab);
+      if (initialSearch !== undefined) setPatientOrdersSearchQuery(initialSearch);
+    }
+  }, [isOpen, initialTab, initialSearch]);
   const [statsYear, setStatsYear] = useState<number>(new Date().getFullYear());
   const [statsMonth, setStatsMonth] = useState<number>(
     new Date().getMonth() + 1,
@@ -216,6 +227,97 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
       "Bună ziua, vă informăm că ochelarii dumneavoastră sunt gata la Clinica Negreanu din Pitesti (Piata Ceair). Vă așteptăm cu drag pentru ridicare și ajustare! Pentru alte informatii sunati va rog pe  0248223162";
     const url = `https://wa.me/${cleanDigits}?text=${encodeURIComponent(message)}`;
     window.open(url, "_blank");
+  };
+
+  const sendSmsNotification = async (order: {
+    patientPhone?: string;
+    patientName?: string;
+    orderNumber?: string;
+    patientId?: string;
+    [key: string]: any;
+  }) => {
+    let rawPhone = (order.patientPhone || "").trim();
+    let cleanDigits = rawPhone.replace(/\D/g, "");
+
+    if (!cleanDigits) {
+      const inputPhone = window.prompt(
+        "Introduceți numărul de telefon al pacientului pentru notificarea SMS:",
+      );
+      if (!inputPhone) return;
+      cleanDigits = inputPhone.replace(/\D/g, "");
+    }
+
+    const message =
+      "Buna ziua, va informam ca ochelarii dvs. sunt gata la Clinica Negreanu Pitesti (Piata Ceair). Va asteptam cu drag pentru ridicare si ajustare! Tel: 0248223162";
+    
+    // Direct SMS protocol (deschide aplicatia nativa de SMS cu destinatar si mesaj precompletat)
+    const smsUrl = `sms:${cleanDigits}?body=${encodeURIComponent(message)}`;
+    window.location.href = smsUrl;
+
+    // Salvare automată confirmare notificare & trecere pe ready_for_pickup
+    try {
+      const nowIso = new Date().toISOString();
+      const notifierName = profile?.displayName || (profile as any)?.name || "Recepție";
+
+      const targetRecord = (medicalRecords || []).find(
+        (r) =>
+          (order.patientId && r.id === order.patientId) ||
+          r.glassesOrder?.orderNumber === order.orderNumber ||
+          (r.orderHistory || []).some((o) => o.orderNumber === order.orderNumber),
+      );
+
+      const patientDocId = order.patientId || targetRecord?.id;
+      if (patientDocId) {
+        const docRef = doc(db, "medicalRecords", patientDocId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data() as MedicalRecord;
+          const history = [...(data.orderHistory || [])];
+          const orderIdx = history.findIndex(
+            (o) => o.orderNumber === order.orderNumber,
+          );
+
+          let updatedOrder: any = null;
+          if (orderIdx !== -1) {
+            const currentOrd = history[orderIdx];
+            const newStatus = currentOrd.status === "completed" ? "completed" : "ready_for_pickup";
+            updatedOrder = {
+              ...currentOrd,
+              status: newStatus,
+              whatsappNotifiedAt: nowIso,
+              whatsappNotifiedBy: notifierName,
+            };
+            history[orderIdx] = updatedOrder;
+          }
+
+          const isMainOrder = data.glassesOrder?.orderNumber === order.orderNumber;
+          let updatedMainGlasses = data.glassesOrder;
+          if (isMainOrder && data.glassesOrder) {
+            const newStatus = data.glassesOrder.status === "completed" ? "completed" : "ready_for_pickup";
+            updatedMainGlasses = {
+              ...data.glassesOrder,
+              status: newStatus,
+              whatsappNotifiedAt: nowIso,
+              whatsappNotifiedBy: notifierName,
+            };
+            if (!updatedOrder) updatedOrder = updatedMainGlasses;
+          }
+
+          await updateDoc(docRef, {
+            orderHistory: history,
+            ...(isMainOrder ? { glassesOrder: updatedMainGlasses } : {}),
+            updatedAt: nowIso,
+          });
+
+          await logActivity(
+            "Trimitere Notificare SMS Comandă Ochelari",
+            `Trimis alertă SMS pacient ${order.patientName || data.patientName || ""} (Comanda #${order.orderNumber || "fără număr"}).`,
+          );
+        }
+      }
+    } catch (e) {
+      console.error("Eroare salvare notificare SMS:", e);
+    }
 
     // Salvare automată confirmare notificare WhatsApp & trecere pe ready_for_pickup
     try {
@@ -1748,10 +1850,27 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                               });
                                             }}
                                             className="px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
-                                            title={order.whatsappNotifiedAt ? `Notificat la ${format(new Date(order.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}. Click pentru retrimitere.` : "Trimite mesaj WhatsApp (ochelari gata de ridicare)"}
+                                            title={order.whatsappNotifiedAt ? `Notificat la ${format(new Date(order.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}. Click pentru retrimitere WhatsApp.` : "Trimite mesaj WhatsApp: Ochelarii dvs. sunt gata la cabinet!"}
                                           >
                                             <span className="text-xs">📲</span>
-                                            <span className="hidden sm:inline">{order.whatsappNotifiedAt ? "Retrimite" : "WhatsApp"}</span>
+                                            <span className="hidden sm:inline">{order.whatsappNotifiedAt ? "Retrimite WA" : "WhatsApp"}</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              sendSmsNotification({
+                                                ...order,
+                                                patientPhone: patient?.patientPhone || (order as any).patientPhone,
+                                                patientName: patient?.patientName || (order as any).patientName,
+                                                patientId: (order as any).patientId || patient?.id,
+                                              });
+                                            }}
+                                            className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
+                                            title="Trimite alertă SMS direct pe telefonul pacientului: Ochelarii dvs. sunt gata la cabinet!"
+                                          >
+                                            <span className="text-xs">💬</span>
+                                            <span className="hidden sm:inline">SMS</span>
                                           </button>
                                           {(profile?.role === "admin" ||
                                             profile?.role === "frontdesk" ||
@@ -2359,18 +2478,32 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                       <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
                                         ✓ Gata de ridicare
                                       </span>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          sendWhatsAppNotification(order);
-                                        }}
-                                        className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-500/25 flex items-center gap-1.5 cursor-pointer animate-pulse-subtle"
-                                        title={order.whatsappNotifiedAt ? `Notificat WhatsApp la ${format(new Date(order.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}. Click pentru retrimitere.` : "Deschide WhatsApp cu mesajul prestabilit pentru ridicarea ochelarilor"}
-                                      >
-                                        <span className="text-sm">📲</span>
-                                        <span>{order.whatsappNotifiedAt ? "Retrimite WhatsApp" : "Trimite WhatsApp"}</span>
-                                      </button>
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            sendWhatsAppNotification(order);
+                                          }}
+                                          className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-500/25 flex items-center gap-1.5 cursor-pointer animate-pulse-subtle"
+                                          title={order.whatsappNotifiedAt ? `Notificat WhatsApp la ${format(new Date(order.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}. Click pentru retrimitere.` : "Trimite WhatsApp pacient: Ochelarii dvs. sunt gata la cabinet!"}
+                                        >
+                                          <span className="text-xs">📲</span>
+                                          <span>{order.whatsappNotifiedAt ? "Retrimite WA" : "Trimite WhatsApp"}</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            sendSmsNotification(order);
+                                          }}
+                                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-md shadow-blue-600/25 flex items-center gap-1.5 cursor-pointer"
+                                          title="Trimite SMS pacient: Ochelarii dvs. sunt gata la cabinet!"
+                                        >
+                                          <span className="text-xs">💬</span>
+                                          <span>Trimite SMS</span>
+                                        </button>
+                                      </div>
                                       <div className="flex items-center gap-2">
                                         <button
                                           type="button"
