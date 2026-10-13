@@ -7193,6 +7193,8 @@ export default function App() {
   const [patientNotes, setPatientNotes] = useState("");
   const patientNameInputRef = useRef<HTMLInputElement>(null);
   const patientPhoneInputRef = useRef<HTMLInputElement>(null);
+  const patientBirthDateInputRef = useRef<HTMLInputElement>(null);
+  const [isBookingSubmitting, setIsBookingSubmitting] = useState(false);
 
   useEffect(() => {
     if (isBookingModalOpen || isNewPatientFromSearchModalOpen) {
@@ -13986,6 +13988,7 @@ export default function App() {
     if (calculatedAge > 110) {
       setBookingError("Vârsta nu poate fi mai mare de 110 ani!");
       setLoading(false);
+      setIsBookingSubmitting(false);
       return;
     }
 
@@ -14991,24 +14994,60 @@ export default function App() {
   };
 
   const handleBooking = async () => {
+    if (isBookingSubmitting) return;
+
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    let curName = (patientName || "").trim();
+    if (!curName && patientNameInputRef.current?.value) {
+      curName = patientNameInputRef.current.value.trim();
+      setPatientName(curName);
+    }
+
+    let curBirth = (patientBirthDate || "").trim();
+    if (!curBirth && patientBirthDateInputRef.current?.value) {
+      const rawVal = patientBirthDateInputRef.current.value.trim();
+      if (rawVal.includes("-") && rawVal.split("-")[0].length === 2) {
+        const parts = rawVal.split("-");
+        curBirth = `${parts[2]}-${parts[1]}-${parts[0]}`;
+      } else {
+        curBirth = rawVal;
+      }
+      setPatientBirthDate(curBirth);
+    }
+
+    let curPhone = (patientPhone || "").trim();
+    if (!curPhone && patientPhoneInputRef.current?.value && !faraTelefon) {
+      curPhone = patientPhoneInputRef.current.value.replace(/\D/g, "");
+      setPatientPhone(curPhone);
+    }
+
     if (!selectedSlot) {
       setBookingError("Eroare: Nu a fost selectat niciun interval orar!");
       return;
     }
-    if (!patientName || !patientName.trim()) {
+    if (!curName) {
       setBookingError("Numele pacientului este obligatoriu!");
+      patientNameInputRef.current?.focus();
       return;
     }
-    if (!patientBirthDate || !patientBirthDate.trim()) {
+    if (!curBirth) {
       setBookingError("Data nașterii este obligatorie pentru a putea efectua programarea!");
+      patientBirthDateInputRef.current?.focus();
       return;
     }
-    if (!faraTelefon && (!patientPhone || !patientPhone.trim())) {
-      setBookingError("Numărul de telefon este obligatoriu! Completați-l sau selectați opțiunea 'Fără telefon'.");
+    if (!faraTelefon && !curPhone) {
+      setBookingError("Numărul de telefon este obligatoriu! Completați-l sau bifați opțiunea 'Fără telefon'.");
+      patientPhoneInputRef.current?.focus();
       return;
     }
     if (!canAddAppointments) return;
 
+    setIsBookingSubmitting(true);
     setLoading(true);
     const config = getDoctorConfig(selectedSlot.doctorId);
     const dayConfig = config.dayConfigs[getDay(selectedSlot.time)];
@@ -15037,14 +15076,17 @@ export default function App() {
     if (birthDateObj > todayEnd) {
       setBookingError("Data nașterii nu poate fi mai mare decât ziua curentă!");
       setLoading(false);
+      setIsBookingSubmitting(false);
       return;
     }
 
-    if (!faraTelefon && !isValidPhone(patientPhone)) {
+    if (!faraTelefon && !isValidPhone(curPhone || patientPhone)) {
       setBookingError(
-        "Numărul de telefon care începe cu 07 sau 0248 trebuie să aibă exact 10 cifre!",
+        "Numărul de telefon care începe cu 07 sau 0248 trebuie să aibă exact 10 cifre! (sau bifați 'Fără telefon')",
       );
+      patientPhoneInputRef.current?.focus();
       setLoading(false);
+      setIsBookingSubmitting(false);
       return;
     }
 
@@ -15198,6 +15240,7 @@ export default function App() {
       setSymptomText("");
     } catch (error) {
       console.error("Error booking/updating appointment:", error);
+      setBookingError("A apărut o problemă la salvare: " + (error instanceof Error ? error.message : String(error)));
       const errInfo = {
         error: error instanceof Error ? error.message : String(error),
         authInfo: {
@@ -15212,6 +15255,7 @@ export default function App() {
       console.error("Firestore Error: ", JSON.stringify(errInfo));
     } finally {
       setLoading(false);
+      setIsBookingSubmitting(false);
     }
   };
 
@@ -27085,6 +27129,7 @@ export default function App() {
                       Data Nașterii
                     </label>
                     <BufferedBirthDateInput
+                      inputRef={patientBirthDateInputRef}
                       value={patientBirthDate}
                       onChange={setPatientBirthDate}
                       className={cn(
@@ -27658,12 +27703,26 @@ export default function App() {
                   GDPR
                 </button>
                 <button
+                  type="button"
                   onClick={handleBooking}
-                  className="w-full flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-blue-900/20 disabled:opacity-50"
+                  disabled={isBookingSubmitting}
+                  className={cn(
+                    "w-full flex-1 font-bold py-4 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2",
+                    isBookingSubmitting
+                      ? "bg-blue-500 text-white cursor-wait opacity-80"
+                      : "bg-blue-600 hover:bg-blue-700 text-white shadow-blue-900/20 cursor-pointer active:scale-[0.99]"
+                  )}
                 >
-                  {editingAppointment
-                    ? "Salvează Modificările"
-                    : "Confirmă Programarea"}
+                  {isBookingSubmitting ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Se procesează...</span>
+                    </>
+                  ) : editingAppointment ? (
+                    "Salvează Modificările"
+                  ) : (
+                    "Confirmă Programarea"
+                  )}
                 </button>
               </div>
 
