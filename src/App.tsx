@@ -257,6 +257,7 @@ import {
   calculateAge,
   validateCNP,
   getSexFromCNP,
+  getBirthDateFromCNP,
   calculateDetailedAge,
   calculateTurningAge,
   isValidPhone,
@@ -2443,7 +2444,12 @@ export default function App() {
   const [hasLoadedAllHistory, setHasLoadedAllHistory] = useState(false);
 
   const handleLoadFullArchive = async () => {
-    if (isLoadingAllHistory || hasLoadedAllHistory) return;
+    if (isLoadingAllHistory || hasLoadedAllHistory) {
+      if (hasLoadedAllHistory) {
+        setSuccessMessage("Toată arhiva clinică este deja încărcată în memorie!");
+      }
+      return;
+    }
     setIsLoadingAllHistory(true);
     try {
       const [appSnap, medSnap] = await Promise.all([
@@ -2455,8 +2461,10 @@ export default function App() {
       setAppointments(allApps);
       setMedicalRecords(allMeds);
       setHasLoadedAllHistory(true);
+      setSuccessMessage(`Toată arhiva a fost încărcată cu succes! (${allApps.length} programări, ${allMeds.length} fișe medicale)`);
     } catch (e) {
       console.error("Error loading full archive:", e);
+      setErrorMessage("Eroare la descărcarea arhivei din baza de date. Verificați conexiunea la internet.");
     } finally {
       setIsLoadingAllHistory(false);
     }
@@ -7780,9 +7788,21 @@ export default function App() {
 
     if (docSnap.exists()) {
       record = docSnap.data() as MedicalRecord;
+      const existingUpdates: any = {};
       if (patientSex && record.patientSex !== patientSex) {
         record.patientSex = patientSex as "M" | "F";
-        await updateDoc(docRef, { patientSex });
+        existingUpdates.patientSex = patientSex;
+      }
+      if (patientCnp && record.patientCnp !== patientCnp) {
+        record.patientCnp = patientCnp;
+        existingUpdates.patientCnp = patientCnp;
+      }
+      if (patientBirthDate && record.patientBirthDate !== patientBirthDate) {
+        record.patientBirthDate = patientBirthDate;
+        existingUpdates.patientBirthDate = patientBirthDate;
+      }
+      if (Object.keys(existingUpdates).length > 0) {
+        await updateDoc(docRef, existingUpdates);
       }
     } else {
       const calculatedAge = patientBirthDate
@@ -7794,7 +7814,7 @@ export default function App() {
         patientPhone,
         patientAge: calculatedAge || 0,
         patientBirthDate: patientBirthDate || "",
-        patientCnp: "",
+        patientCnp: patientCnp || "",
         patientAddress: "",
         patientSeries: "",
         patientNumber: "",
@@ -7866,6 +7886,7 @@ export default function App() {
     setHasStoredPhone(false);
     setPatientNotes("");
     setPatientSex("");
+    setPatientCnp("");
     setBookingError(null);
   };
 
@@ -7903,6 +7924,7 @@ export default function App() {
         patientBirthDate: a.patientBirthDate || "",
         patientPhone: a.patientPhone || "",
         patientSex: a.patientSex || "",
+        patientCnp: a.patientCnp || "",
         doctorId: a.doctorId || "",
         status: a.status || "scheduled",
       })),
@@ -7913,6 +7935,7 @@ export default function App() {
         patientBirthDate: m.patientBirthDate || "",
         patientPhone: m.patientPhone || "",
         patientSex: m.patientSex || "",
+        patientCnp: m.patientCnp || "",
         doctorId: "",
         status: "scheduled",
       })),
@@ -19023,6 +19046,25 @@ export default function App() {
     })();
 
     // 3. Sync all clinical observations & details from documentForm into activeRec
+    const formCnpTrimmed = (finalFormValues.patientCnp || "").trim();
+    if (formCnpTrimmed) {
+      const detectedSex = getSexFromCNP(formCnpTrimmed);
+      const detectedBirth = getBirthDateFromCNP(formCnpTrimmed);
+      syncPatientUniversal(
+        {
+          patientName: resolvedPatientName,
+          patientPhone: resolvedPatientPhone,
+          patientCnp: activeRec?.patientCnp || formCnpTrimmed,
+          recordId: activeRec?.id,
+        },
+        {
+          patientCnp: formCnpTrimmed,
+          ...(detectedSex ? { patientSex: detectedSex } : {}),
+          ...(detectedBirth ? { patientBirthDate: detectedBirth } : {}),
+        }
+      ).catch((e) => console.warn("Universal CNP sync error from documentForm:", e));
+    }
+
     if (activeRec) {
       const axOd = finalFormValues.axialLengthOd || "";
       const axOs = finalFormValues.axialLengthOs || "";
@@ -19100,8 +19142,13 @@ export default function App() {
         updatedHistory.unshift(updatedHistoryItem);
       }
 
+      const detectedFormSex = formCnpTrimmed ? getSexFromCNP(formCnpTrimmed) : null;
+      const detectedFormBirth = formCnpTrimmed ? getBirthDateFromCNP(formCnpTrimmed) : null;
       const updatedRecord: MedicalRecord = {
         ...activeRec,
+        ...(formCnpTrimmed ? { patientCnp: formCnpTrimmed } : {}),
+        ...(detectedFormSex ? { patientSex: detectedFormSex } : {}),
+        ...(detectedFormBirth ? { patientBirthDate: detectedFormBirth } : {}),
         diagnostic: diagVal,
         treatment: treatVal,
         symptoms: sympVal,
@@ -23708,34 +23755,7 @@ export default function App() {
 
 
 
-              {/* Indicator Conexiune Internet & Mod Offline */}
-              <div
-                className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border transition-all cursor-default shrink-0 shadow-xs",
-                  isAppOnline
-                    ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-600 dark:text-emerald-400"
-                    : "bg-rose-500/15 border-rose-500/40 text-rose-600 dark:text-rose-400 animate-pulse"
-                )}
-                title={
-                  isAppOnline
-                    ? "Conexiune la rețea activă. Toate datele sunt sincronizate în Cloud."
-                    : "Rețea offline. Mod protecție activ: puteți continua să lucrați, ciornele se salvează local și se vor sincroniza automat la revenirea netului!"
-                }
-              >
-                {isAppOnline ? (
-                  <>
-                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                    <Wifi className="w-3.5 h-3.5" />
-                    <span className="hidden md:inline">Online</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-                    <WifiOff className="w-3.5 h-3.5" />
-                    <span>Mod Offline (Salvare Locală)</span>
-                  </>
-                )}
-              </div>
+
 
               <button
                 onClick={() => setDarkMode(!darkMode)}
@@ -24252,53 +24272,84 @@ export default function App() {
             ) : profile?.role === "admin" ||
             profile?.role === "frontdesk" ||
             profile?.role === "seller" ? (
-              <div className="flex items-center gap-3">
-                <div
-                  className={cn(
-                    "flex items-center gap-1 p-1 rounded-xl border backdrop-blur-sm transition-all",
-                    darkMode
-                      ? "bg-slate-900/50 border-slate-800 shadow-inner"
-                      : "bg-slate-50 border-slate-200 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)]",
-                  )}
-                >
-                  <button
-                    onClick={() => setShowAdminAppointments(false)}
+              <div className="flex flex-col items-start gap-1.5">
+                <div className="flex items-center gap-2">
+                  <div
                     className={cn(
-                      "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5",
-                      !showAdminAppointments
-                        ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-slate-200 dark:ring-slate-600"
-                        : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300",
+                      "flex items-center gap-1 p-1 rounded-xl border backdrop-blur-sm transition-all",
+                      darkMode
+                        ? "bg-slate-900/50 border-slate-800 shadow-inner"
+                        : "bg-slate-50 border-slate-200 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)]",
                     )}
                   >
-                    <Activity className="w-3 h-3" />
-                    <span>Medici</span>
-                  </button>
+                    <button
+                      onClick={() => setShowAdminAppointments(false)}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5",
+                        !showAdminAppointments
+                          ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-slate-200 dark:ring-slate-600"
+                          : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300",
+                      )}
+                    >
+                      <Activity className="w-3 h-3" />
+                      <span>Medici</span>
+                    </button>
+                    <button
+                      onClick={() => setShowAdminAppointments(true)}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5",
+                        showAdminAppointments
+                          ? "bg-emerald-500 text-white shadow-lg shadow-emerald-900/20"
+                          : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300",
+                      )}
+                    >
+                      <Glasses className="w-3.5 h-3.5" />
+                      <span>Optometrist</span>
+                    </button>
+                  </div>
+
                   <button
-                    onClick={() => setShowAdminAppointments(true)}
+                    onClick={() => setShowScreenSaver(true)}
                     className={cn(
-                      "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5",
-                      showAdminAppointments
-                        ? "bg-emerald-500 text-white shadow-lg shadow-emerald-900/20"
-                        : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300",
+                      "flex items-center justify-center p-2 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-md border group shrink-0",
+                      darkMode
+                        ? "bg-slate-900 border-slate-800 text-indigo-400 hover:bg-slate-800/80"
+                        : "bg-white border-indigo-100 text-indigo-600 hover:bg-indigo-50/60",
                     )}
+                    title="Activează Screen Saver"
                   >
-                    <Glasses className="w-3.5 h-3.5" />
-                    <span>Optometrist</span>
+                    <Monitor className="w-4 h-4 text-indigo-500 animate-pulse group-hover:scale-110 transition-transform" />
                   </button>
                 </div>
 
-                <button
-                  onClick={() => setShowScreenSaver(true)}
+                {/* Buton / Indicator Conexiune Online / Offline amplasat în partea stângă sub Medici/Optometrist */}
+                <div
                   className={cn(
-                    "flex items-center justify-center p-2 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-md border group shrink-0",
-                    darkMode
-                      ? "bg-slate-900 border-slate-800 text-indigo-400 hover:bg-slate-800/80"
-                      : "bg-white border-indigo-100 text-indigo-600 hover:bg-indigo-50/60",
+                    "flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border transition-all cursor-default shadow-xs",
+                    isAppOnline
+                      ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-600 dark:text-emerald-400"
+                      : "bg-rose-500/15 border-rose-500/40 text-rose-600 dark:text-rose-400 animate-pulse"
                   )}
-                  title="Activează Screen Saver"
+                  title={
+                    isAppOnline
+                      ? "Conexiune la rețea activă. Toate datele sunt sincronizate în Cloud."
+                      : "Rețea offline. Mod protecție activ: puteți continua să lucrați, ciornele se salvează local și se vor sincroniza automat la revenirea netului!"
+                  }
                 >
-                  <Monitor className="w-4 h-4 text-indigo-500 animate-pulse group-hover:scale-110 transition-transform" />
-                </button>
+                  {isAppOnline ? (
+                    <>
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      <Wifi className="w-3 h-3" />
+                      <span>Online</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                      <WifiOff className="w-3 h-3" />
+                      <span>Mod Offline</span>
+                    </>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="flex items-center gap-3">
@@ -26998,6 +27049,36 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+                    CNP (Opțional — completează automat Sex și Vârstă)
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={13}
+                    value={patientCnp}
+                    placeholder="13 cifre CNP..."
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, "");
+                      setPatientCnp(val);
+                      const detectedSex = getSexFromCNP(val);
+                      if (detectedSex) {
+                        setPatientSex(detectedSex);
+                      }
+                      const detectedBirth = getBirthDateFromCNP(val);
+                      if (detectedBirth) {
+                        setPatientBirthDate(detectedBirth);
+                      }
+                    }}
+                    className={cn(
+                      "w-full p-3.5 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-sm font-semibold tracking-wider",
+                      darkMode
+                        ? "bg-slate-800 border-slate-700 text-slate-100 placeholder:text-slate-500"
+                        : "bg-white border-slate-200 text-slate-900 placeholder:text-slate-400",
+                    )}
+                  />
+                </div>
+
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
@@ -27094,6 +27175,12 @@ export default function App() {
         onClose={() => setIsOrdersModalOpen(false)}
         initialTab={ordersTab}
         initialSearch={patientOrdersSearchQuery}
+        ordersTab={ordersTab}
+        setOrdersTab={setOrdersTab}
+        ordersSearchQuery={ordersSearchQuery}
+        setOrdersSearchQuery={setOrdersSearchQuery}
+        patientOrdersSearchQuery={patientOrdersSearchQuery}
+        setPatientOrdersSearchQuery={setPatientOrdersSearchQuery}
         darkMode={darkMode}
         medicalRecords={medicalRecords}
         setMedicalRecords={setMedicalRecords}
@@ -33567,6 +33654,7 @@ export default function App() {
         setDocumentForm={setDocumentForm}
         darkMode={darkMode}
         handleSaveAndPrintDocument={handleSaveAndPrintDocument}
+        syncPatientUniversal={syncPatientUniversal}
       />
 
       {/* GDPR Consent Form Modal */}

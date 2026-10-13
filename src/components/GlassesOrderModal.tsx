@@ -219,34 +219,34 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                 </div>
 
                 {currentMedicalRecord.glassesOrder?.orderType !== "contact_lens" && (
-                  <div className="flex items-center bg-black/35 backdrop-blur-md p-1.5 rounded-2xl border border-white/20 shadow-lg">
+                  <div className="flex flex-col gap-0.5 bg-black/40 backdrop-blur-md p-1 rounded-xl border border-white/20 shadow-md shrink-0">
                     <button
                       type="button"
                       onClick={() => handleSetOrderViewMode("rapid")}
                       className={cn(
-                        "flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer",
+                        "flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap",
                         orderViewMode === "rapid"
-                          ? "bg-amber-500 text-white shadow-md shadow-amber-500/40 scale-100"
+                          ? "bg-amber-500 text-white shadow-xs scale-100"
                           : "text-white/70 hover:text-white hover:bg-white/10"
                       )}
                       title="Mod Rapid (90% din cazuri): Nume ramă/cod, tip lentile, dioptrii preluate automat, total și avans"
                     >
-                      <Zap className="w-4 h-4 fill-current text-white" />
-                      <span>Mod Rapid (90%)</span>
+                      <Zap className="w-2.5 h-2.5 fill-current text-white shrink-0" />
+                      <span>Mod Rapid</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => handleSetOrderViewMode("advanced")}
                       className={cn(
-                        "flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer",
+                        "flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap",
                         orderViewMode === "advanced"
-                          ? "bg-blue-600 text-white shadow-md shadow-blue-600/40 scale-100"
+                          ? "bg-blue-600 text-white shadow-xs scale-100"
                           : "text-white/70 hover:text-white hover:bg-white/10"
                       )}
-                      title="Mod Avansat: Reglaje grafice fine de montaj, forme de rame, parametri de punte/înălțime și axe detaliate"
+                      title="Mod Montaj: Reglaje grafice fine de montaj, forme de rame, parametri de punte/înălțime și axe detaliate"
                     >
-                      <SlidersHorizontal className="w-4 h-4 text-white" />
-                      <span>Mod Avansat / Montaj</span>
+                      <SlidersHorizontal className="w-2.5 h-2.5 text-white shrink-0" />
+                      <span>Mod Montaj</span>
                     </button>
                   </div>
                 )}
@@ -2682,92 +2682,6 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                 </div>
 
                 <div className="space-y-6">
-                  {/* Mode Banner & Fast Toggle */}
-                  {currentMedicalRecord.glassesOrder?.orderType !== "contact_lens" && (
-                    <div
-                      className={cn(
-                        "p-4 rounded-3xl border transition-all flex flex-col sm:flex-row items-center justify-between gap-3 shadow-md",
-                        orderViewMode === "rapid"
-                          ? darkMode
-                            ? "bg-amber-950/20 border-amber-800/40"
-                            : "bg-amber-50/80 border-amber-200"
-                          : darkMode
-                            ? "bg-blue-950/20 border-blue-800/40"
-                            : "bg-blue-50/80 border-blue-200",
-                      )}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div
-                          className={cn(
-                            "w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 shadow-sm",
-                            orderViewMode === "rapid"
-                              ? "bg-amber-500 text-white"
-                              : "bg-blue-600 text-white",
-                          )}
-                        >
-                          {orderViewMode === "rapid" ? (
-                            <Zap className="w-5 h-5 fill-current" />
-                          ) : (
-                            <SlidersHorizontal className="w-5 h-5" />
-                          )}
-                        </div>
-                        <div>
-                          <div className="text-xs font-black uppercase tracking-wider flex items-center gap-2">
-                            <span>
-                              {orderViewMode === "rapid"
-                                ? "Mod Rapid Activ (90% din cazuri)"
-                                : "Mod Avansat Activ (Montaj & Axe Fin Reglate)"}
-                            </span>
-                            <span
-                              className={cn(
-                                "text-[9px] px-2 py-0.5 rounded-full font-black uppercase tracking-tighter",
-                                orderViewMode === "rapid"
-                                  ? "bg-amber-500 text-white"
-                                  : "bg-blue-600 text-white",
-                              )}
-                            >
-                              {orderViewMode === "rapid"
-                                ? "Simplificat"
-                                : "Complet"}
-                            </span>
-                          </div>
-                          <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">
-                            {orderViewMode === "rapid"
-                              ? "Configuratorul grafic cu forme SVG și reglajele fine de montaj sunt ascunse pentru viteză."
-                              : "Formele grafice de rame, deformațiile milimetrice, parametrii de punte/înălțime și axele prismă sunt expandate."}
-                          </p>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleSetOrderViewMode(
-                            orderViewMode === "rapid" ? "advanced" : "rapid",
-                          )
-                        }
-                        className={cn(
-                          "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md flex items-center gap-2 cursor-pointer shrink-0 active:scale-95",
-                          orderViewMode === "rapid"
-                            ? "bg-blue-600 hover:bg-blue-700 text-white shadow-blue-600/30"
-                            : "bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/30",
-                        )}
-                      >
-                        {orderViewMode === "rapid" ? (
-                          <>
-                            <SlidersHorizontal className="w-4 h-4" />
-                            <span>Deschide Mod Avansat</span>
-                          </>
-                        ) : (
-                          <>
-                            <Zap className="w-4 h-4 fill-current" />
-                            <span>Comută pe Mod Rapid</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  )}
-
                   {/* Observation Field - Full Width Header */}
                   <div
                     className={cn(

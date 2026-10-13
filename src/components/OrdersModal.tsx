@@ -78,6 +78,12 @@ export interface OrdersModalProps {
   handleImportData?: (e: React.ChangeEvent<HTMLInputElement>) => void;
   initialTab?: "in-progress" | "ready" | "with-balance" | "completed" | "stats" | "deleted";
   initialSearch?: string;
+  ordersTab?: "in-progress" | "ready" | "with-balance" | "completed" | "stats" | "deleted";
+  setOrdersTab?: React.Dispatch<React.SetStateAction<"in-progress" | "ready" | "with-balance" | "completed" | "stats" | "deleted">>;
+  ordersSearchQuery?: string;
+  setOrdersSearchQuery?: React.Dispatch<React.SetStateAction<string>>;
+  patientOrdersSearchQuery?: string;
+  setPatientOrdersSearchQuery?: React.Dispatch<React.SetStateAction<string>>;
   selectedDeletedOrders?: string[];
   setSelectedDeletedOrders?: React.Dispatch<React.SetStateAction<string[]>>;
   selectedCompletedOrders?: string[];
@@ -117,6 +123,12 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   handleImportData: propHandleImportData,
   initialTab,
   initialSearch,
+  ordersTab: propOrdersTab,
+  setOrdersTab: propSetOrdersTab,
+  ordersSearchQuery: propOrdersSearchQuery,
+  setOrdersSearchQuery: propSetOrdersSearchQuery,
+  patientOrdersSearchQuery: propPatientOrdersSearchQuery,
+  setPatientOrdersSearchQuery: propSetPatientOrdersSearchQuery,
   selectedDeletedOrders: propSelectedDeletedOrders,
   setSelectedDeletedOrders: propSetSelectedDeletedOrders,
   selectedCompletedOrders: propSelectedCompletedOrders,
@@ -157,11 +169,19 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
     reader.readAsText(file);
   });
 
-  const [ordersSearchQuery, setOrdersSearchQuery] = useState("");
-  const [patientOrdersSearchQuery, setPatientOrdersSearchQuery] = useState(initialSearch || "");
-  const [ordersTab, setOrdersTab] = useState<
+  const [internalOrdersSearchQuery, setInternalOrdersSearchQuery] = useState("");
+  const ordersSearchQuery = propOrdersSearchQuery !== undefined ? propOrdersSearchQuery : internalOrdersSearchQuery;
+  const setOrdersSearchQuery = propSetOrdersSearchQuery || setInternalOrdersSearchQuery;
+
+  const [internalPatientOrdersSearchQuery, setInternalPatientOrdersSearchQuery] = useState(initialSearch || "");
+  const patientOrdersSearchQuery = propPatientOrdersSearchQuery !== undefined ? propPatientOrdersSearchQuery : internalPatientOrdersSearchQuery;
+  const setPatientOrdersSearchQuery = propSetPatientOrdersSearchQuery || setInternalPatientOrdersSearchQuery;
+
+  const [internalOrdersTab, setInternalOrdersTab] = useState<
     "in-progress" | "ready" | "with-balance" | "completed" | "stats" | "deleted"
   >(initialTab || "in-progress");
+  const ordersTab = propOrdersTab !== undefined ? propOrdersTab : internalOrdersTab;
+  const setOrdersTab = propSetOrdersTab || setInternalOrdersTab;
 
   React.useEffect(() => {
     if (isOpen) {

@@ -1,7 +1,7 @@
 import React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { FileText, Printer, X } from "lucide-react";
-import { cn, getSexFromCNP } from "../appConstants";
+import { cn, getSexFromCNP, getBirthDateFromCNP } from "../appConstants";
 
 interface DocumentConfiguratorModalProps {
   activeDocumentModal: string | null;
@@ -10,6 +10,15 @@ interface DocumentConfiguratorModalProps {
   setDocumentForm: (val: any) => void;
   darkMode: boolean;
   handleSaveAndPrintDocument: () => Promise<void>;
+  syncPatientUniversal?: (
+    target: {
+      patientName?: string;
+      patientPhone?: string;
+      patientCnp?: string;
+      recordId?: string;
+    },
+    updates: any,
+  ) => Promise<void>;
 }
 
 const BASE_DOCTOR_OPTIONS = [
@@ -25,8 +34,59 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
   setDocumentForm,
   darkMode,
   handleSaveAndPrintDocument,
+  syncPatientUniversal,
 }: DocumentConfiguratorModalProps) {
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+  const handleCnpFieldChange = React.useCallback((newCnpRaw: string) => {
+    const newCnp = newCnpRaw.replace(/\D/g, "").slice(0, 13);
+    const detectedSex = getSexFromCNP(newCnp);
+    const detectedBirth = getBirthDateFromCNP(newCnp);
+    const updatedForm = {
+      ...documentForm,
+      patientCnp: newCnp,
+      ...(detectedSex ? { patientSex: detectedSex } : {}),
+      ...(detectedBirth ? { birthDate: detectedBirth, patientBirthDate: detectedBirth } : {}),
+    };
+    setDocumentForm(updatedForm);
+
+    if (newCnp.length === 13 && syncPatientUniversal) {
+      const pName = documentForm.patientName || `${documentForm.lastName || ""} ${documentForm.firstName || ""}`.trim();
+      syncPatientUniversal(
+        {
+          patientName: pName,
+          patientPhone: documentForm.patientPhone,
+          patientCnp: documentForm.patientCnp || newCnp,
+        },
+        {
+          patientCnp: newCnp,
+          ...(detectedSex ? { patientSex: detectedSex } : {}),
+          ...(detectedBirth ? { patientBirthDate: detectedBirth } : {}),
+        }
+      ).catch((e) => console.warn("Universal CNP sync from doc error:", e));
+    }
+  }, [documentForm, setDocumentForm, syncPatientUniversal]);
+
+  const handleCnpFieldBlur = React.useCallback((cnpValRaw: string) => {
+    const cnpVal = cnpValRaw.replace(/\D/g, "").slice(0, 13);
+    if (cnpVal && syncPatientUniversal) {
+      const detectedSex = getSexFromCNP(cnpVal);
+      const detectedBirth = getBirthDateFromCNP(cnpVal);
+      const pName = documentForm.patientName || `${documentForm.lastName || ""} ${documentForm.firstName || ""}`.trim();
+      syncPatientUniversal(
+        {
+          patientName: pName,
+          patientPhone: documentForm.patientPhone,
+          patientCnp: documentForm.patientCnp || cnpVal,
+        },
+        {
+          patientCnp: cnpVal,
+          ...(detectedSex ? { patientSex: detectedSex } : {}),
+          ...(detectedBirth ? { patientBirthDate: detectedBirth } : {}),
+        }
+      ).catch((e) => console.warn("Universal CNP blur sync error:", e));
+    }
+  }, [documentForm, syncPatientUniversal]);
   const currentDoc = (documentForm?.doctorName || "").trim();
   const sortedDoctorOptions = React.useMemo(() => {
     const defaultList = [...BASE_DOCTOR_OPTIONS];
@@ -226,15 +286,8 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     : "bg-slate-50 border-slate-200 text-slate-900",
                                 )}
                                 value={documentForm.patientCnp || ""}
-                                onChange={(e) => {
-                                  const newCnp = e.target.value;
-                                  const detectedSex = getSexFromCNP(newCnp);
-                                  setDocumentForm({
-                                    ...documentForm,
-                                    patientCnp: newCnp,
-                                    patientSex: detectedSex || documentForm.patientSex,
-                                  });
-                                }}
+                                onChange={(e) => handleCnpFieldChange(e.target.value)}
+                                onBlur={(e) => handleCnpFieldBlur(e.target.value)}
                               />
                             </div>
                           </div>
@@ -715,15 +768,8 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     : "bg-slate-50 border-slate-200 text-slate-900",
                                 )}
                                 value={documentForm.patientCnp || ""}
-                                onChange={(e) => {
-                                  const newCnp = e.target.value;
-                                  const detectedSex = getSexFromCNP(newCnp);
-                                  setDocumentForm({
-                                    ...documentForm,
-                                    patientCnp: newCnp,
-                                    patientSex: detectedSex || documentForm.patientSex,
-                                  });
-                                }}
+                                onChange={(e) => handleCnpFieldChange(e.target.value)}
+                                onBlur={(e) => handleCnpFieldBlur(e.target.value)}
                               />
                             </div>
                           </div>
@@ -1468,15 +1514,8 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     : "bg-slate-50 border-slate-200 text-slate-900",
                                 )}
                                 value={documentForm.patientCnp || ""}
-                                onChange={(e) => {
-                                  const newCnp = e.target.value.replace(/\D/g, "").slice(0, 13);
-                                  const detectedSex = getSexFromCNP(newCnp);
-                                  setDocumentForm({
-                                    ...documentForm,
-                                    patientCnp: newCnp,
-                                    patientSex: detectedSex || documentForm.patientSex,
-                                  });
-                                }}
+                                onChange={(e) => handleCnpFieldChange(e.target.value)}
+                                onBlur={(e) => handleCnpFieldBlur(e.target.value)}
                               />
                             </div>
                           </div>
@@ -2358,15 +2397,8 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     : "bg-slate-50 border-slate-200 text-slate-900",
                                 )}
                                 value={documentForm.patientCnp || ""}
-                                onChange={(e) => {
-                                  const newCnp = e.target.value;
-                                  const detectedSex = getSexFromCNP(newCnp);
-                                  setDocumentForm({
-                                    ...documentForm,
-                                    patientCnp: newCnp,
-                                    patientSex: detectedSex || documentForm.patientSex,
-                                  });
-                                }}
+                                onChange={(e) => handleCnpFieldChange(e.target.value)}
+                                onBlur={(e) => handleCnpFieldBlur(e.target.value)}
                               />
                             </div>
                           </div>
@@ -2860,15 +2892,8 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     : "bg-slate-50 border-slate-200 text-slate-900",
                                 )}
                                 value={documentForm.patientCnp || ""}
-                                onChange={(e) => {
-                                  const newCnp = e.target.value;
-                                  const detectedSex = getSexFromCNP(newCnp);
-                                  setDocumentForm({
-                                    ...documentForm,
-                                    patientCnp: newCnp,
-                                    patientSex: detectedSex || documentForm.patientSex,
-                                  });
-                                }}
+                                onChange={(e) => handleCnpFieldChange(e.target.value)}
+                                onBlur={(e) => handleCnpFieldBlur(e.target.value)}
                               />
                             </div>
                           </div>

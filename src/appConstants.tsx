@@ -1409,14 +1409,36 @@ export const validateCNP = (cnp: string): boolean => {
 };
 
 export const getSexFromCNP = (cnp: string): "M" | "F" | null => {
-  const clean = cnp.trim();
+  const clean = (cnp || "").trim();
   if (clean.length === 0) return null;
   const firstDigit = clean.charAt(0);
-  if (["1", "3", "5"].includes(firstDigit)) {
+  if (["1", "3", "5", "7"].includes(firstDigit)) {
     return "M";
   }
-  if (["2", "4", "6"].includes(firstDigit)) {
+  if (["2", "4", "6", "8"].includes(firstDigit)) {
     return "F";
+  }
+  return null;
+};
+
+export const getBirthDateFromCNP = (cnp: string): string | null => {
+  const clean = (cnp || "").replace(/\D/g, "").trim();
+  if (clean.length < 7) return null;
+  const s = clean[0];
+  const yy = clean.substring(1, 3);
+  const mm = clean.substring(3, 5);
+  const dd = clean.substring(5, 7);
+  let century = 0;
+  if (s === "1" || s === "2") century = 1900;
+  else if (s === "3" || s === "4") century = 1800;
+  else if (s === "5" || s === "6") century = 2000;
+  else if (s === "7" || s === "8" || s === "9") century = 1900; // străini / rezidenți
+  if (century === 0) return null;
+  const mNum = parseInt(mm, 10);
+  const dNum = parseInt(dd, 10);
+  if (mNum >= 1 && mNum <= 12 && dNum >= 1 && dNum <= 31) {
+    const year = century + parseInt(yy, 10);
+    return `${year}-${mm}-${dd}`;
   }
   return null;
 };
