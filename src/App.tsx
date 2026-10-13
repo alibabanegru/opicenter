@@ -119,6 +119,7 @@ import {
   WifiOff,
   HardDrive,
   FileSpreadsheet,
+  Loader2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import jsPDF from "jspdf";
