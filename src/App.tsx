@@ -14997,51 +14997,21 @@ export default function App() {
   const handleBooking = async () => {
     if (isBookingSubmitting) return;
 
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 30));
-
-    let curName = (patientName || "").trim();
-    if (!curName && patientNameInputRef.current?.value) {
-      curName = patientNameInputRef.current.value.trim();
-      setPatientName(curName);
-    }
-
-    let curBirth = (patientBirthDate || "").trim();
-    if (!curBirth && patientBirthDateInputRef.current?.value) {
-      const rawVal = patientBirthDateInputRef.current.value.trim();
-      if (rawVal.includes("-") && rawVal.split("-")[0].length === 2) {
-        const parts = rawVal.split("-");
-        curBirth = `${parts[2]}-${parts[1]}-${parts[0]}`;
-      } else {
-        curBirth = rawVal;
-      }
-      setPatientBirthDate(curBirth);
-    }
-
-    let curPhone = (patientPhone || "").trim();
-    if (!curPhone && patientPhoneInputRef.current?.value && !faraTelefon) {
-      curPhone = patientPhoneInputRef.current.value.replace(/\D/g, "");
-      setPatientPhone(curPhone);
-    }
-
     if (!selectedSlot) {
       setBookingError("Eroare: Nu a fost selectat niciun interval orar!");
       return;
     }
-    if (!curName) {
+    if (!patientName || !patientName.trim()) {
       setBookingError("Numele pacientului este obligatoriu!");
       patientNameInputRef.current?.focus();
       return;
     }
-    if (!curBirth) {
+    if (!patientBirthDate || !patientBirthDate.trim()) {
       setBookingError("Data nașterii este obligatorie pentru a putea efectua programarea!");
       patientBirthDateInputRef.current?.focus();
       return;
     }
-    if (!faraTelefon && !curPhone) {
+    if (!faraTelefon && (!patientPhone || !patientPhone.trim())) {
       setBookingError("Numărul de telefon este obligatoriu! Completați-l sau bifați opțiunea 'Fără telefon'.");
       patientPhoneInputRef.current?.focus();
       return;
@@ -15081,7 +15051,7 @@ export default function App() {
       return;
     }
 
-    if (!faraTelefon && !isValidPhone(curPhone || patientPhone)) {
+    if (!faraTelefon && !isValidPhone(patientPhone)) {
       setBookingError(
         "Numărul de telefon care începe cu 07 sau 0248 trebuie să aibă exact 10 cifre! (sau bifați 'Fără telefon')",
       );
@@ -15191,25 +15161,32 @@ export default function App() {
           );
         }
       } else {
-        await addDoc(
+        const newAppData = {
+          patientName,
+          patientAge: calculatedAge,
+          patientBirthDate,
+          patientPhone: valPhone,
+          patientCnp: patientCnp.trim() || undefined,
+          patientSex,
+          patientNotes,
+          patientSymptomSelect: symptomSelect,
+          patientSymptomText: symptomText,
+          doctorId: selectedSlot.doctorId,
+          startTime: selectedSlot.time.toISOString(),
+          endTime: endTime.toISOString(),
+          status: "scheduled" as const,
+          createdAt: new Date().toISOString(),
+        };
+        const docRef = await addDoc(
           collection(db, "appointments"),
-          removeUndefined({
-            patientName,
-            patientAge: calculatedAge,
-            patientBirthDate,
-            patientPhone: valPhone,
-            patientCnp: patientCnp.trim() || undefined,
-            patientSex,
-            patientNotes,
-            patientSymptomSelect: symptomSelect,
-            patientSymptomText: symptomText,
-            doctorId: selectedSlot.doctorId,
-            startTime: selectedSlot.time.toISOString(),
-            endTime: endTime.toISOString(),
-            status: "scheduled",
-          }),
+          removeUndefined(newAppData),
         );
-        await syncPatientUniversal(
+        const createdApp: Appointment = { id: docRef.id, ...newAppData };
+        setAppointments((prev) => {
+          if (prev.some((a) => a.id === docRef.id)) return prev;
+          return [...prev, createdApp];
+        });
+        syncPatientUniversal(
           {
             patientName,
             patientPhone: valPhone,
@@ -15223,7 +15200,7 @@ export default function App() {
             patientSex,
             patientAge: calculatedAge,
           },
-        );
+        ).catch((e) => console.warn("Universal sync notice:", e));
       }
       setIsBookingModalOpen(false);
       setEditingAppointment(null);
@@ -16036,6 +16013,28 @@ export default function App() {
   const printPrescription = () => {
     if (!currentMedicalRecord) return;
 
+    const hasDioptersCheck = !!(
+      (currentMedicalRecord.od.sph && currentMedicalRecord.od.sph !== "-") ||
+      (currentMedicalRecord.od.cyl && currentMedicalRecord.od.cyl !== "-") ||
+      (currentMedicalRecord.od.axis && currentMedicalRecord.od.axis !== "-") ||
+      (currentMedicalRecord.od.add && currentMedicalRecord.od.add !== "-") ||
+      (currentMedicalRecord.os.sph && currentMedicalRecord.os.sph !== "-") ||
+      (currentMedicalRecord.os.cyl && currentMedicalRecord.os.cyl !== "-") ||
+      (currentMedicalRecord.os.axis && currentMedicalRecord.os.axis !== "-") ||
+      (currentMedicalRecord.os.add && currentMedicalRecord.os.add !== "-")
+    );
+
+    const hasDpCheck = !!(
+      (currentMedicalRecord.dp && currentMedicalRecord.dp.trim() !== "" && currentMedicalRecord.dp !== "-") ||
+      (currentMedicalRecord.dp_od && currentMedicalRecord.dp_os && currentMedicalRecord.dp_od.trim() !== "" && currentMedicalRecord.dp_os.trim() !== "") ||
+      (currentMedicalRecord.dp_aproape && currentMedicalRecord.dp_aproape.trim() !== "" && currentMedicalRecord.dp_aproape !== "-")
+    );
+
+    if (hasDioptersCheck && !hasDpCheck) {
+      alert("Atenție: Au fost introduse dioptrii pe fișă, dar distanța interpupilară (DP) nu a fost completată! Vă rugăm să introduceți DP pentru a putea printa fișa.");
+      return;
+    }
+
     const isBirthdayOnConsultDay = (() => {
       const patientBirthDateStr = currentMedicalRecord.patientBirthDate;
       if (!patientBirthDateStr) return false;
@@ -16660,189 +16659,214 @@ export default function App() {
         ? currentMedicalRecord.os.near_axis
         : currentMedicalRecord.os.axis;
 
+    const hasDioptersInPrescription = !!(
+      (currentMedicalRecord.od.sph && currentMedicalRecord.od.sph !== "-") ||
+      (currentMedicalRecord.od.cyl && currentMedicalRecord.od.cyl !== "-") ||
+      (currentMedicalRecord.od.axis && currentMedicalRecord.od.axis !== "-") ||
+      (currentMedicalRecord.od.add && currentMedicalRecord.od.add !== "-") ||
+      (currentMedicalRecord.os.sph && currentMedicalRecord.os.sph !== "-") ||
+      (currentMedicalRecord.os.cyl && currentMedicalRecord.os.cyl !== "-") ||
+      (currentMedicalRecord.os.axis && currentMedicalRecord.os.axis !== "-") ||
+      (currentMedicalRecord.os.add && currentMedicalRecord.os.add !== "-")
+    );
+
+    const hasDpInPrescription = !!(
+      (currentMedicalRecord.dp && currentMedicalRecord.dp.trim() !== "" && currentMedicalRecord.dp !== "-") ||
+      (currentMedicalRecord.dp_od && currentMedicalRecord.dp_os && currentMedicalRecord.dp_od.trim() !== "" && currentMedicalRecord.dp_os.trim() !== "") ||
+      (currentMedicalRecord.dp_aproape && currentMedicalRecord.dp_aproape.trim() !== "" && currentMedicalRecord.dp_aproape !== "-")
+    );
+
+    const shouldShowDioptersTable = hasDioptersInPrescription || hasDpInPrescription;
+
     const tableWidth = pageWidth * 0.70; // Increased to fit AV on right while diopter table is longer/wider
     const col0Width = 25;
     const cw = (tableWidth - col0Width) / 7;
     const odCenter = 14 + col0Width + cw * 1.5;
     const osCenter = 14 + col0Width + cw * 5.5;
 
-    y += 0;
-    drawProtractorPDF(doc, odCenter, y + 14, currentMedicalRecord.od.axis);
-    drawProtractorPDF(doc, osCenter, y + 14, currentMedicalRecord.os.axis);
+    let finalY = y;
 
-    y += 14.5;
+    if (shouldShowDioptersTable) {
+      y += 0;
+      drawProtractorPDF(doc, odCenter, y + 14, currentMedicalRecord.od.axis);
+      drawProtractorPDF(doc, osCenter, y + 14, currentMedicalRecord.os.axis);
 
-    const hasDifferentDp =
-      currentMedicalRecord.dp_od &&
-      currentMedicalRecord.dp_os &&
-      currentMedicalRecord.dp_od !== currentMedicalRecord.dp_os;
+      y += 14.5;
 
-    const dpVal = hasDifferentDp
-      ? `OD: ${currentMedicalRecord.dp_od}\nOS: ${currentMedicalRecord.dp_os}`
-      : currentMedicalRecord.dp
-        ? `${currentMedicalRecord.dp}`
-        : "-";
+      const hasDifferentDp =
+        currentMedicalRecord.dp_od &&
+        currentMedicalRecord.dp_os &&
+        currentMedicalRecord.dp_od !== currentMedicalRecord.dp_os;
 
-    const dpTotal = parseFloat(currentMedicalRecord.dp) || 0;
-    const hasDifferentDpNear =
-      currentMedicalRecord.dp_aproape_od &&
-      currentMedicalRecord.dp_aproape_os &&
-      currentMedicalRecord.dp_aproape_od !== currentMedicalRecord.dp_aproape_os;
-
-    const dpNearVal = hasDifferentDpNear
-      ? `OD: ${currentMedicalRecord.dp_aproape_od}\nOS: ${currentMedicalRecord.dp_aproape_os}`
-      : currentMedicalRecord.dp_aproape
-        ? `${currentMedicalRecord.dp_aproape}`
-        : dpTotal > 0
-          ? `${(dpTotal - 2).toString()}`
+      const dpVal = hasDifferentDp
+        ? `OD: ${currentMedicalRecord.dp_od}\nOS: ${currentMedicalRecord.dp_os}`
+        : currentMedicalRecord.dp
+          ? `${currentMedicalRecord.dp}`
           : "-";
 
-    const odAddParsedForPdf =
-      parseFloat(String(currentMedicalRecord.od.add || "").replace(",", ".")) ||
-      0;
-    const osAddParsedForPdf =
-      parseFloat(String(currentMedicalRecord.os.add || "").replace(",", ".")) ||
-      0;
-    const hasPrescriptionAddition =
-      odAddParsedForPdf !== 0 || osAddParsedForPdf !== 0;
+      const dpTotal = parseFloat(currentMedicalRecord.dp) || 0;
+      const hasDifferentDpNear =
+        currentMedicalRecord.dp_aproape_od &&
+        currentMedicalRecord.dp_aproape_os &&
+        currentMedicalRecord.dp_aproape_od !== currentMedicalRecord.dp_aproape_os;
 
-    const formatNumericCellForTable = (val: string) => {
-      const displayVal = val || "-";
-      return {
-        content: displayVal,
-        styles: {
-          halign: "center",
-          valign: "middle",
-          fontStyle: "bold",
-          fontSize: 18,
-          cellPadding: 1.2,
-        },
+      const dpNearVal = hasDifferentDpNear
+        ? `OD: ${currentMedicalRecord.dp_aproape_od}\nOS: ${currentMedicalRecord.dp_aproape_os}`
+        : currentMedicalRecord.dp_aproape
+          ? `${currentMedicalRecord.dp_aproape}`
+          : dpTotal > 0
+            ? `${(dpTotal - 2).toString()}`
+            : "-";
+
+      const odAddParsedForPdf =
+        parseFloat(String(currentMedicalRecord.od.add || "").replace(",", ".")) ||
+        0;
+      const osAddParsedForPdf =
+        parseFloat(String(currentMedicalRecord.os.add || "").replace(",", ".")) ||
+        0;
+      const hasPrescriptionAddition =
+        odAddParsedForPdf !== 0 || osAddParsedForPdf !== 0;
+
+      const formatNumericCellForTable = (val: string) => {
+        const displayVal = val || "-";
+        return {
+          content: displayVal,
+          styles: {
+            halign: "center",
+            valign: "middle",
+            fontStyle: "bold",
+            fontSize: 18,
+            cellPadding: 1.2,
+          },
+        };
       };
-    };
 
-    const tableBody: any[] = [
-      [
-        {
-          content: cleanStr("Distanță"),
-          styles: {
-            halign: "center",
-            valign: "middle",
-            fontStyle: "bold",
-            fontSize: 13.5,
-            cellPadding: 1.2,
+      const tableBody: any[] = [
+        [
+          {
+            content: cleanStr("Distanță"),
+            styles: {
+              halign: "center",
+              valign: "middle",
+              fontStyle: "bold",
+              fontSize: 13.5,
+              cellPadding: 1.2,
+            },
           },
-        },
-        formatNumericCellForTable(currentMedicalRecord.od.sph),
-        formatNumericCellForTable(currentMedicalRecord.od.cyl),
-        formatNumericCellForTable(currentMedicalRecord.od.axis),
-        {
-          content: dpVal,
-          styles: {
-            halign: "center",
-            valign: "middle",
-            fontStyle: "bold",
-            font: "courier",
-            fontSize: String(dpVal).includes("OD:") ? 11 : 18,
-            cellPadding: 1.2,
-            textColor: "#1e40af",
+          formatNumericCellForTable(currentMedicalRecord.od.sph),
+          formatNumericCellForTable(currentMedicalRecord.od.cyl),
+          formatNumericCellForTable(currentMedicalRecord.od.axis),
+          {
+            content: dpVal,
+            styles: {
+              halign: "center",
+              valign: "middle",
+              fontStyle: "bold",
+              font: "courier",
+              fontSize: String(dpVal).includes("OD:") ? 11 : 18,
+              cellPadding: 1.2,
+              textColor: "#1e40af",
+            },
           },
-        },
-        formatNumericCellForTable(currentMedicalRecord.os.sph),
-        formatNumericCellForTable(currentMedicalRecord.os.cyl),
-        formatNumericCellForTable(currentMedicalRecord.os.axis),
-      ],
-    ];
+          formatNumericCellForTable(currentMedicalRecord.os.sph),
+          formatNumericCellForTable(currentMedicalRecord.os.cyl),
+          formatNumericCellForTable(currentMedicalRecord.os.axis),
+        ],
+      ];
 
-    if (hasPrescriptionAddition) {
-      tableBody.push([
-        {
-          content: cleanStr("Aproape"),
-          styles: {
-            halign: "center",
-            valign: "middle",
-            fontStyle: "bold",
-            fontSize: 13.5,
-            cellPadding: 1.2,
+      if (hasPrescriptionAddition) {
+        tableBody.push([
+          {
+            content: cleanStr("Aproape"),
+            styles: {
+              halign: "center",
+              valign: "middle",
+              fontStyle: "bold",
+              fontSize: 13.5,
+              cellPadding: 1.2,
+            },
           },
-        },
-        formatNumericCellForTable(finalNearSphereOD),
-        formatNumericCellForTable(finalNearCylOD),
-        formatNumericCellForTable(finalNearAxisOD),
-        {
-          content: dpNearVal,
-          styles: {
-            halign: "center",
-            valign: "middle",
-            fontStyle: "bold",
-            font: "courier",
-            fontSize: String(dpNearVal).includes("OD:") ? 11 : 18,
-            cellPadding: 1.2,
-            textColor: "#1e40af",
+          formatNumericCellForTable(finalNearSphereOD),
+          formatNumericCellForTable(finalNearCylOD),
+          formatNumericCellForTable(finalNearAxisOD),
+          {
+            content: dpNearVal,
+            styles: {
+              halign: "center",
+              valign: "middle",
+              fontStyle: "bold",
+              font: "courier",
+              fontSize: String(dpNearVal).includes("OD:") ? 11 : 18,
+              cellPadding: 1.2,
+              textColor: "#1e40af",
+            },
           },
+          formatNumericCellForTable(finalNearSphereOS),
+          formatNumericCellForTable(finalNearCylOS),
+          formatNumericCellForTable(finalNearAxisOS),
+        ]);
+      }
+
+      autoTable(doc, {
+        startY: y,
+        margin: { left: 14 },
+        tableWidth: tableWidth,
+        head: [
+          [
+            {
+              content: "CO",
+              rowSpan: 2,
+              styles: { halign: "center", valign: "middle" },
+            },
+            {
+              content: cleanStr("Ochiul drept"),
+              colSpan: 3,
+              styles: { halign: "center" },
+            },
+            {
+              content: "DP (mm)",
+              rowSpan: 2,
+              styles: { halign: "center", valign: "middle" },
+            },
+            {
+              content: cleanStr("Ochiul stâng"),
+              colSpan: 3,
+              styles: { halign: "center" },
+            },
+          ],
+          [
+            cleanStr("Sferă"),
+            "Cilindru",
+            "Ax",
+            cleanStr("Sferă"),
+            "Cilindru",
+            "Ax",
+          ],
+        ],
+        body: tableBody,
+        theme: "grid",
+        styles: {
+          fontSize: 9,
+          cellPadding: 1.2,
+          halign: "center",
+          font: "helvetica",
         },
-        formatNumericCellForTable(finalNearSphereOS),
-        formatNumericCellForTable(finalNearCylOS),
-        formatNumericCellForTable(finalNearAxisOS),
-      ]);
+        headStyles: {
+          fillColor: [245, 245, 245],
+          textColor: 0,
+          fontStyle: "bold",
+          lineWidth: 0.1,
+        },
+        columnStyles: {
+          0: { fontStyle: "bold", halign: "left", cellWidth: col0Width },
+          4: { cellWidth: cw },
+        },
+      });
+
+      finalY = (doc as any).lastAutoTable.finalY + 1;
+    } else {
+      finalY = y;
     }
-
-    autoTable(doc, {
-      startY: y,
-      margin: { left: 14 },
-      tableWidth: tableWidth,
-      head: [
-        [
-          {
-            content: "CO",
-            rowSpan: 2,
-            styles: { halign: "center", valign: "middle" },
-          },
-          {
-            content: cleanStr("Ochiul drept"),
-            colSpan: 3,
-            styles: { halign: "center" },
-          },
-          {
-            content: "DP (mm)",
-            rowSpan: 2,
-            styles: { halign: "center", valign: "middle" },
-          },
-          {
-            content: cleanStr("Ochiul stâng"),
-            colSpan: 3,
-            styles: { halign: "center" },
-          },
-        ],
-        [
-          cleanStr("Sferă"),
-          "Cilindru",
-          "Ax",
-          cleanStr("Sferă"),
-          "Cilindru",
-          "Ax",
-        ],
-      ],
-      body: tableBody,
-      theme: "grid",
-      styles: {
-        fontSize: 9,
-        cellPadding: 1.2,
-        halign: "center",
-        font: "helvetica",
-      },
-      headStyles: {
-        fillColor: [245, 245, 245],
-        textColor: 0,
-        fontStyle: "bold",
-        lineWidth: 0.1,
-      },
-      columnStyles: {
-        0: { fontStyle: "bold", halign: "left", cellWidth: col0Width },
-        4: { cellWidth: cw },
-      },
-    });
-
-    let finalY = (doc as any).lastAutoTable.finalY + 1;
 
     if (currentMedicalRecord.od.prism || currentMedicalRecord.os.prism) {
       if (finalY + 12 > pageHeight - 15) {
@@ -17471,6 +17495,67 @@ export default function App() {
         columnStyles: {
           0: { cellWidth: diagWidth / 2 },
           1: { cellWidth: diagWidth / 2 },
+        },
+      });
+
+      finalY = (doc as any).lastAutoTable.finalY;
+    }
+
+    // Funcții Vizuale Speciale (Sensibilitate contrast, Simț cromatic, Vedere binoculară) - afișare după diagnostic
+    const hasContrast = !!currentMedicalRecord.contrastSensitivity;
+    const hasColorVision = !!currentMedicalRecord.colorVision;
+    const hasBinocularVision = !!currentMedicalRecord.binocularVision;
+
+    if (hasContrast || hasColorVision || hasBinocularVision) {
+      if (finalY + 18 > pageHeight - 15) {
+        doc.addPage();
+        finalY = 14;
+      }
+      const visualFuncRows: any[] = [];
+      if (hasContrast) {
+        visualFuncRows.push([
+          { content: normalizeForPDF("Sensibilitate la contrast:"), styles: { fontStyle: "bold" as const, halign: "left" as const, cellWidth: 55 } },
+          { content: normalizeForPDF(currentMedicalRecord.contrastSensitivity || ""), styles: { fontStyle: "bold" as const, halign: "left" as const } }
+        ]);
+      }
+      if (hasColorVision) {
+        visualFuncRows.push([
+          { content: normalizeForPDF("Simț cromatic:"), styles: { fontStyle: "bold" as const, halign: "left" as const, cellWidth: 55 } },
+          { content: normalizeForPDF(currentMedicalRecord.colorVision || ""), styles: { fontStyle: "bold" as const, halign: "left" as const } }
+        ]);
+      }
+      if (hasBinocularVision) {
+        visualFuncRows.push([
+          { content: normalizeForPDF("Vedere binoculară:"), styles: { fontStyle: "bold" as const, halign: "left" as const, cellWidth: 55 } },
+          { content: normalizeForPDF(currentMedicalRecord.binocularVision || ""), styles: { fontStyle: "bold" as const, halign: "left" as const } }
+        ]);
+      }
+
+      autoTable(doc, {
+        startY: finalY + 1.5,
+        margin: { left: 14 },
+        tableWidth: pageWidth - 28,
+        head: [
+          [
+            {
+              content: normalizeForPDF("Examinare Funcții Vizuale Speciale"),
+              colSpan: 2,
+              styles: {
+                halign: "left" as const,
+                fontStyle: "bold" as const,
+                fillColor: [241, 245, 249],
+                textColor: [30, 41, 59],
+                fontSize: 9,
+              },
+            },
+          ],
+        ],
+        body: visualFuncRows,
+        theme: "grid",
+        styles: {
+          fontSize: 8.5,
+          cellPadding: 1.2,
+          font: "helvetica",
         },
       });
 
@@ -18939,6 +19024,9 @@ export default function App() {
           "",
         recomandariOd: (isSamePrescription ? prevForm?.recomandariOd : "") || "",
         recomandariOs: (isSamePrescription ? prevForm?.recomandariOs : "") || "",
+        contrastSensitivity: currentMedicalRecord.contrastSensitivity || (isSamePrescription ? prevForm?.contrastSensitivity : "") || "",
+        colorVision: currentMedicalRecord.colorVision || (isSamePrescription ? prevForm?.colorVision : "") || "",
+        binocularVision: currentMedicalRecord.binocularVision || (isSamePrescription ? prevForm?.binocularVision : "") || "",
       });
 
       setActiveDocumentModal(type);
@@ -19179,6 +19267,9 @@ export default function App() {
         axialLength: axialVal,
         anteriorSegment: antSegVal,
         posteriorSegment: postSegVal,
+        contrastSensitivity: finalFormValues.contrastSensitivity || activeRec.contrastSensitivity || "",
+        colorVision: finalFormValues.colorVision || activeRec.colorVision || "",
+        binocularVision: finalFormValues.binocularVision || activeRec.binocularVision || "",
       };
 
       if (existingIdx !== -1) {
@@ -19210,6 +19301,9 @@ export default function App() {
         axialLength: axialVal,
         anteriorSegment: antSegVal,
         posteriorSegment: postSegVal,
+        contrastSensitivity: finalFormValues.contrastSensitivity || activeRec.contrastSensitivity || "",
+        colorVision: finalFormValues.colorVision || activeRec.colorVision || "",
+        binocularVision: finalFormValues.binocularVision || activeRec.binocularVision || "",
         prescriptionHistory: updatedHistory,
         updatedAt: new Date().toISOString(),
       };
@@ -20333,6 +20427,36 @@ export default function App() {
           { content: "DIAGNOSTIC", styles: { fontStyle: "bold" as const, fontSize: 12.3 } },
           {
             content: cleanStr(documentForm.diagnostic) || "",
+            colSpan: 2,
+          },
+        ]
+      },
+      {
+        include: !!(documentForm.contrastSensitivity || currentMedicalRecord?.contrastSensitivity),
+        data: [
+          { content: "SENSIBILITATE CONTRAST", styles: { fontStyle: "bold" as const, fontSize: 11 } },
+          {
+            content: cleanStr(documentForm.contrastSensitivity || currentMedicalRecord?.contrastSensitivity || ""),
+            colSpan: 2,
+          },
+        ]
+      },
+      {
+        include: !!(documentForm.colorVision || currentMedicalRecord?.colorVision),
+        data: [
+          { content: "SIMT CROMATIC", styles: { fontStyle: "bold" as const, fontSize: 11 } },
+          {
+            content: cleanStr(documentForm.colorVision || currentMedicalRecord?.colorVision || ""),
+            colSpan: 2,
+          },
+        ]
+      },
+      {
+        include: !!(documentForm.binocularVision || currentMedicalRecord?.binocularVision),
+        data: [
+          { content: "VEDERE BINOCULARA", styles: { fontStyle: "bold" as const, fontSize: 11 } },
+          {
+            content: cleanStr(documentForm.binocularVision || currentMedicalRecord?.binocularVision || ""),
             colSpan: 2,
           },
         ]
@@ -27434,16 +27558,14 @@ export default function App() {
                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
                       Nume Pacient
                     </label>
-                    <BufferedInput
-                      inputRef={patientNameInputRef}
+                    <input
+                      ref={patientNameInputRef}
                       type="text"
                       value={patientName}
-                      onChange={setPatientName}
-                      processValue={(val) =>
-                        capitalizeWords(
-                          val.replace(/[^a-zA-Z\săâîșțĂÂÎȘȚ]/g, ""),
-                        )
-                      }
+                      onChange={(e) => {
+                        const val = capitalizeWords(e.target.value.replace(/[^a-zA-Z\săâîșțĂÂÎȘȚ]/g, ""));
+                        setPatientName(val);
+                      }}
                       className={cn(
                         "w-full p-4 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all",
                         darkMode
@@ -27461,6 +27583,7 @@ export default function App() {
                       {["M", "F"].map((s) => (
                         <button
                           key={s}
+                          type="button"
                           onClick={() => setPatientSex(s as "M" | "F")}
                           className={cn(
                             "flex-1 py-4 rounded-xl font-bold transition-all border",
@@ -27482,9 +27605,27 @@ export default function App() {
                     <label className="block text-[15px] font-bold text-slate-500 uppercase tracking-wider mb-1">
                       Data Nașterii
                     </label>
-                    <BufferedBirthDateInput
-                      value={patientBirthDate}
-                      onChange={setPatientBirthDate}
+                    <input
+                      ref={patientBirthDateInputRef}
+                      type="text"
+                      maxLength={10}
+                      placeholder="ZZ-LL-AAAA"
+                      value={patientBirthDate.includes("-") && patientBirthDate.split("-")[0].length === 4 ? patientBirthDate.split("-").reverse().join("-") : patientBirthDate}
+                      onChange={(e) => {
+                        const cleanDigits = e.target.value.replace(/\D/g, "");
+                        let formatted = cleanDigits;
+                        if (cleanDigits.length > 2 && cleanDigits.length <= 4) {
+                          formatted = `${cleanDigits.slice(0, 2)}-${cleanDigits.slice(2, 4)}`;
+                        } else if (cleanDigits.length > 4) {
+                          formatted = `${cleanDigits.slice(0, 2)}-${cleanDigits.slice(2, 4)}-${cleanDigits.slice(4, 8)}`;
+                        }
+                        if (formatted.length === 10) {
+                          const parts = formatted.split("-");
+                          setPatientBirthDate(`${parts[2]}-${parts[1]}-${parts[0]}`);
+                        } else {
+                          setPatientBirthDate(formatted);
+                        }
+                      }}
                       onKeyDown={(e) => {
                         if (e.key === "Tab" && !e.shiftKey) {
                           e.preventDefault();
@@ -27528,11 +27669,15 @@ export default function App() {
                         </span>
                       </label>
                     </div>
-                    <BufferedPhoneInput
-                      inputRef={patientPhoneInputRef}
+                    <input
+                      ref={patientPhoneInputRef}
+                      type="tel"
                       disabled={faraTelefon}
-                      value={patientPhone}
-                      onChange={setPatientPhone}
+                      value={faraTelefon ? "" : formatPhoneNumber(patientPhone)}
+                      onChange={(e) => {
+                        const raw = e.target.value.replace(/\D/g, "");
+                        setPatientPhone(raw);
+                      }}
                       className={cn(
                         "w-full p-4 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all",
                         faraTelefon
@@ -27554,16 +27699,20 @@ export default function App() {
                       (opțional)
                     </span>
                   </label>
-                  <BufferedInput
+                  <input
                     type="text"
                     maxLength={13}
                     value={patientCnp}
-                    onChange={(val) => {
-                      const clean = val.replace(/\D/g, "").slice(0, 13);
+                    onChange={(e) => {
+                      const clean = e.target.value.replace(/\D/g, "").slice(0, 13);
                       setPatientCnp(clean);
                       const detectedSex = getSexFromCNP(clean);
                       if (detectedSex && !patientSex) {
                         setPatientSex(detectedSex);
+                      }
+                      const detectedBirth = getBirthDateFromCNP(clean);
+                      if (detectedBirth && !patientBirthDate) {
+                        setPatientBirthDate(detectedBirth);
                       }
                     }}
                     placeholder="13 cifre (opțional)..."
@@ -28202,6 +28351,7 @@ export default function App() {
                   <Settings className="w-4 h-4" />
                   Setări Clinici & Medici
                 </button>
+                {profile?.role === "admin" && (
                 <button
                   onClick={() => setConfigActiveTab("frames")}
                   className={cn(
@@ -28219,6 +28369,7 @@ export default function App() {
                     </span>
                   )}
                 </button>
+                )}
                 {profile?.role === "admin" && (
                   <>
                     <button
@@ -29964,21 +30115,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div
-                className={cn(
-                  "mt-8 p-4 border rounded-xl text-sm transition-all",
-                  darkMode
-                    ? "bg-blue-900/20 border-blue-900/30 text-blue-300"
-                    : "bg-blue-50 border-blue-100 text-blue-700",
-                )}
-              >
-                <p className="font-bold mb-1">Sfat pentru Admin:</p>
-                <p>
-                  Pentru a evita suprapunerile, asigurați-vă că intervalele
-                  orare ale medicilor nu se intersectează (ex: Medic 1: 09-11,
-                  Medic 2: 11-13).
-                </p>
-              </div>
+
 
               {profile?.role === "admin" && (
                 <div className="mt-8 pt-8 border-t border-slate-200 dark:border-slate-800 space-y-8">

@@ -6355,6 +6355,131 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 </div>
                               </div>
                             </div>
+
+                            {/* Rubrici Funcții Vizuale Speciale (Sensibilitate contrast, Simț cromatic, Vedere binoculară) */}
+                            <div
+                              className={cn(
+                                "p-3 rounded-xl border transition-all space-y-3 col-span-1 sm:col-span-2 md:col-span-3 lg:col-span-3",
+                                darkMode
+                                  ? "bg-slate-800/40 border-slate-700"
+                                  : "bg-slate-50 border-slate-200",
+                              )}
+                            >
+                              <div className="flex items-center justify-between">
+                                <label
+                                  className={cn(
+                                    "block text-[10px] font-black uppercase tracking-wider",
+                                    darkMode ? "text-amber-400" : "text-amber-600",
+                                  )}
+                                >
+                                  Funcții Vizuale Speciale (Opțional)
+                                </label>
+                                <span className="text-[9px] text-slate-400 italic">
+                                  Apar în raportul medical și fișa PDF dacă sunt selectate
+                                </span>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                {/* 1. Sensibilitate contrast */}
+                                <div className="space-y-1">
+                                  <label
+                                    className={cn(
+                                      "block text-[9px] font-bold uppercase",
+                                      darkMode ? "text-slate-300" : "text-slate-600",
+                                    )}
+                                  >
+                                    1. Sensibilitate contrast
+                                  </label>
+                                  <select
+                                    value={currentMedicalRecord.contrastSensitivity || ""}
+                                    onChange={(e) =>
+                                      setCurrentMedicalRecord({
+                                        ...currentMedicalRecord,
+                                        contrastSensitivity: e.target.value as any,
+                                      })
+                                    }
+                                    className={cn(
+                                      "w-full p-2 border rounded-lg text-xs font-semibold outline-none focus:ring-2 focus:ring-amber-500 transition-all",
+                                      darkMode
+                                        ? "bg-slate-900 border-slate-700 text-slate-100"
+                                        : "bg-white border-slate-200 text-slate-900",
+                                    )}
+                                  >
+                                    <option value="">-- Neselectat --</option>
+                                    <option value="Normală">Normală</option>
+                                    <option value="Scăzută">Scăzută</option>
+                                  </select>
+                                </div>
+
+                                {/* 2. Simț cromatic */}
+                                <div className="space-y-1">
+                                  <label
+                                    className={cn(
+                                      "block text-[9px] font-bold uppercase",
+                                      darkMode ? "text-slate-300" : "text-slate-600",
+                                    )}
+                                  >
+                                    2. Simț cromatic
+                                  </label>
+                                  <select
+                                    value={currentMedicalRecord.colorVision || ""}
+                                    onChange={(e) =>
+                                      setCurrentMedicalRecord({
+                                        ...currentMedicalRecord,
+                                        colorVision: e.target.value as any,
+                                      })
+                                    }
+                                    className={cn(
+                                      "w-full p-2 border rounded-lg text-xs font-semibold outline-none focus:ring-2 focus:ring-amber-500 transition-all",
+                                      darkMode
+                                        ? "bg-slate-900 border-slate-700 text-slate-100"
+                                        : "bg-white border-slate-200 text-slate-900",
+                                    )}
+                                  >
+                                    <option value="">-- Neselectat --</option>
+                                    <option value="Normală (Tricromatică)">Normală (Tricromatică)</option>
+                                    <option value="Dicromatism (Protanopie)">Dicromatism (Protanopie)</option>
+                                    <option value="Discromatism (Deuteranopie)">Discromatism (Deuteranopie)</option>
+                                    <option value="Discromatism (Tritanopie)">Discromatism (Tritanopie)</option>
+                                    <option value="Monocromatism">Monocromatism</option>
+                                  </select>
+                                </div>
+
+                                {/* 3. Vedere binoculară */}
+                                <div className="space-y-1">
+                                  <label
+                                    className={cn(
+                                      "block text-[9px] font-bold uppercase",
+                                      darkMode ? "text-slate-300" : "text-slate-600",
+                                    )}
+                                  >
+                                    3. Vedere binoculară
+                                  </label>
+                                  <select
+                                    value={currentMedicalRecord.binocularVision || ""}
+                                    onChange={(e) =>
+                                      setCurrentMedicalRecord({
+                                        ...currentMedicalRecord,
+                                        binocularVision: e.target.value as any,
+                                      })
+                                    }
+                                    className={cn(
+                                      "w-full p-2 border rounded-lg text-xs font-semibold outline-none focus:ring-2 focus:ring-amber-500 transition-all",
+                                      darkMode
+                                        ? "bg-slate-900 border-slate-700 text-slate-100"
+                                        : "bg-white border-slate-200 text-slate-900",
+                                    )}
+                                  >
+                                    <option value="">-- Neselectat --</option>
+                                    <option value="Normală">Normală</option>
+                                    <option value="Slabă (diplopie)">Slabă (diplopie)</option>
+                                    <option value="Slabă (Probleme de convergență)">Slabă (Probleme de convergență)</option>
+                                    <option value="Slabă (Probleme de divergență)">Slabă (Probleme de divergență)</option>
+                                    <option value="Slabă (Ambliopie)">Slabă (Ambliopie)</option>
+                                  </select>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -7820,14 +7945,26 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                     type="button"
                     id="save-and-print-medical-record-btn"
                     onClick={async () => {
-                      const hasDp = !!(
-                        currentMedicalRecord.dp ||
-                        (currentMedicalRecord.dp_od && currentMedicalRecord.dp_os) ||
-                        currentMedicalRecord.dp_aproape
+                      const hasDiopters = !!(
+                        (currentMedicalRecord.od.sph && currentMedicalRecord.od.sph !== "-") ||
+                        (currentMedicalRecord.od.cyl && currentMedicalRecord.od.cyl !== "-") ||
+                        (currentMedicalRecord.od.axis && currentMedicalRecord.od.axis !== "-") ||
+                        (currentMedicalRecord.od.add && currentMedicalRecord.od.add !== "-") ||
+                        (currentMedicalRecord.os.sph && currentMedicalRecord.os.sph !== "-") ||
+                        (currentMedicalRecord.os.cyl && currentMedicalRecord.os.cyl !== "-") ||
+                        (currentMedicalRecord.os.axis && currentMedicalRecord.os.axis !== "-") ||
+                        (currentMedicalRecord.os.add && currentMedicalRecord.os.add !== "-")
                       );
 
-                      if (!hasDp) {
-                        setErrorMessage("Atenție: Distanța interpupilară (DP) nu a fost completată pe prescripție.");
+                      const hasDp = !!(
+                        (currentMedicalRecord.dp && currentMedicalRecord.dp.trim() !== "" && currentMedicalRecord.dp !== "-") ||
+                        (currentMedicalRecord.dp_od && currentMedicalRecord.dp_os && currentMedicalRecord.dp_od.trim() !== "" && currentMedicalRecord.dp_os.trim() !== "") ||
+                        (currentMedicalRecord.dp_aproape && currentMedicalRecord.dp_aproape.trim() !== "" && currentMedicalRecord.dp_aproape !== "-")
+                      );
+
+                      if (hasDiopters && !hasDp) {
+                        setErrorMessage("Atenție: Au fost introduse dioptrii pe fișă, dar distanța interpupilară (DP) nu a fost completată! Vă rugăm să introduceți DP pentru a putea printa fișa.");
+                        return;
                       }
 
                       // Salvează fișa și trimite comanda de printare a prescripției/fișei

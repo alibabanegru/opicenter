@@ -602,6 +602,9 @@ export interface PrescriptionHistoryItem {
   correctedIop?: { od: string; os: string };
   pachymetry?: { od: string; os: string };
   axialLength?: { od: string; os: string };
+  contrastSensitivity?: "Normală" | "Scăzută" | "";
+  colorVision?: "Normală (Tricromatică)" | "Dicromatism (Protanopie)" | "Discromatism (Deuteranopie)" | "Discromatism (Tritanopie)" | "Monocromatism" | "";
+  binocularVision?: "Normală" | "Slabă (diplopie)" | "Slabă (Probleme de convergență)" | "Slabă (Probleme de divergență)" | "Slabă (Ambliopie)" | "";
   anteriorSegment?: { od: string; os: string };
   posteriorSegment?: { od: string; os: string };
   otherEyeDiseases?: string;
@@ -717,6 +720,9 @@ export interface MedicalRecord {
     os_k2?: string;
   };
   axialLength?: { od: string; os: string };
+  contrastSensitivity?: "Normală" | "Scăzută" | "";
+  colorVision?: "Normală (Tricromatică)" | "Dicromatism (Protanopie)" | "Discromatism (Deuteranopie)" | "Discromatism (Tritanopie)" | "Monocromatism" | "";
+  binocularVision?: "Normală" | "Slabă (diplopie)" | "Slabă (Probleme de convergență)" | "Slabă (Probleme de divergență)" | "Slabă (Ambliopie)" | "";
   examinations?: Examinations;
   examinationInterpretation?: string;
   otherEyeDiseases?: string;

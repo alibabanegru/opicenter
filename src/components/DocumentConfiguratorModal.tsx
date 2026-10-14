@@ -2137,6 +2137,78 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                             4. Diagnostic, Plan & Recuperare
                           </p>
     
+                          {/* 3 Rubrici Speciale: Sensibilitate Contrast, Simt Cromatic, Vedere Binoculara */}
+                          <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/5 space-y-2">
+                            <label className="block text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-wider">
+                              Funcții Vizuale Speciale (Opțional — apar după diagnostic în raport)
+                            </label>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                              <div>
+                                <label className="block text-[9px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">
+                                  Sensibilitate contrast
+                                </label>
+                                <select
+                                  value={documentForm.contrastSensitivity || ""}
+                                  onChange={(e) =>
+                                    setDocumentForm({
+                                      ...documentForm,
+                                      contrastSensitivity: e.target.value,
+                                    })
+                                  }
+                                  className="w-full p-2 border rounded-xl text-xs font-semibold dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                >
+                                  <option value="">-- Neselectat --</option>
+                                  <option value="Normală">Normală</option>
+                                  <option value="Scăzută">Scăzută</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-[9px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">
+                                  Simț cromatic
+                                </label>
+                                <select
+                                  value={documentForm.colorVision || ""}
+                                  onChange={(e) =>
+                                    setDocumentForm({
+                                      ...documentForm,
+                                      colorVision: e.target.value,
+                                    })
+                                  }
+                                  className="w-full p-2 border rounded-xl text-xs font-semibold dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                >
+                                  <option value="">-- Neselectat --</option>
+                                  <option value="Normală (Tricromatică)">Normală (Tricromatică)</option>
+                                  <option value="Dicromatism (Protanopie)">Dicromatism (Protanopie)</option>
+                                  <option value="Discromatism (Deuteranopie)">Discromatism (Deuteranopie)</option>
+                                  <option value="Discromatism (Tritanopie)">Discromatism (Tritanopie)</option>
+                                  <option value="Monocromatism">Monocromatism</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-[9px] font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">
+                                  Vedere binoculară
+                                </label>
+                                <select
+                                  value={documentForm.binocularVision || ""}
+                                  onChange={(e) =>
+                                    setDocumentForm({
+                                      ...documentForm,
+                                      binocularVision: e.target.value,
+                                    })
+                                  }
+                                  className="w-full p-2 border rounded-xl text-xs font-semibold dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                >
+                                  <option value="">-- Neselectat --</option>
+                                  <option value="Normală">Normală</option>
+                                  <option value="Slabă (diplopie)">Slabă (diplopie)</option>
+                                  <option value="Slabă (Probleme de convergență)">Slabă (Probleme de convergență)</option>
+                                  <option value="Slabă (Probleme de divergență)">Slabă (Probleme de divergență)</option>
+                                  <option value="Slabă (Ambliopie)">Slabă (Ambliopie)</option>
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             <div>
                               <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1">
