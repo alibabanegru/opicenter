@@ -32,6 +32,7 @@ import {
   doc,
   getDoc,
   updateDoc,
+  addDoc,
   query,
   collection,
   where,
@@ -329,10 +330,16 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
             updatedAt: nowIso,
           });
 
-          await logActivity(
-            "Trimitere Notificare SMS Comandă Ochelari",
-            `Trimis alertă SMS pacient ${order.patientName || data.patientName || ""} (Comanda #${order.orderNumber || "fără număr"}).`,
-          );
+          try {
+            await addDoc(collection(db, "activityLogs"), {
+              action: "Trimitere Notificare SMS Comandă Ochelari",
+              details: `Trimis alertă SMS pacient ${order.patientName || data.patientName || ""} (Comanda #${order.orderNumber || "fără număr"}).`,
+              user: notifierName,
+              timestamp: nowIso,
+            });
+          } catch (logErr) {
+            console.warn("Log activity error:", logErr);
+          }
         }
       }
     } catch (e) {

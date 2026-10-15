@@ -1,3 +1,4 @@
+export { cleanStr, cleanStrExceptTAndS, normalizeForPDF, formatPhoneNumber, escapeCsvField } from "./lib/stringUtils";
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { auth } from "./firebase";
 import { ClassValue, clsx } from "clsx";
@@ -141,30 +142,7 @@ export const capitalizeWords = (str: string) => {
 };
 
 // Unified helper for Romanian characters and other PDF-safe normalization
-export const normalizeForPDF = (text: string | undefined): string => {
-  if (!text) return "";
-  return text
-    .replace(/ă/g, "a")
-    .replace(/Ă/g, "A")
-    .replace(/â/g, "a")
-    .replace(/Â/g, "A")
-    .replace(/î/g, "i")
-    .replace(/Î/g, "I")
-    .replace(/ș/g, "s")
-    .replace(/Ș/g, "S")
-    .replace(/ț/g, "t")
-    .replace(/Ț/g, "T")
-    .replace(/ş/g, "s")
-    .replace(/Ş/g, "S")
-    .replace(/ţ/g, "t")
-    .replace(/Ţ/g, "T")
-    .replace(/♂/g, "(M)")
-    .replace(/♀/g, "(F)")
-    .replace(/🎂/g, "")
-    .replace(/🎈/g, "")
-    .replace(/🎉/g, "")
-    .replace(/✨/g, "");
-};
+
 
 export const checkEmailPermissionForAccount = (
   user: any,
@@ -1550,31 +1528,7 @@ export const isValidPhone = (phone: string) => {
   return digits.length >= 10 && digits.length <= 15;
 };
 
-export const formatPhoneNumber = (value: string) => {
-  if (!value) return "";
-  let s = value.replace(/\D/g, "");
 
-  // Normalize Romanian prefix if started with 40 or 0040
-  if (s.startsWith("40") && s.length > 10) {
-    s = "0" + s.slice(2);
-  } else if (s.startsWith("0040") && s.length > 10) {
-    s = "0" + s.slice(4);
-  }
-
-  const isSpecial =
-    s.startsWith("07") || s.startsWith("02") || s.startsWith("03");
-  const maxLength = isSpecial ? 10 : 15;
-  const digits = s.slice(0, maxLength);
-
-  const groups = [];
-  if (digits.length > 0) groups.push(digits.slice(0, 4));
-  if (digits.length > 4) groups.push(digits.slice(4, 7));
-  if (digits.length > 7) groups.push(digits.slice(7, 10));
-  if (digits.length > 10) groups.push(digits.slice(10, 13));
-  if (digits.length > 13) groups.push(digits.slice(13, 16));
-
-  return groups.join(" ");
-};
 
 export const DEFAULT_EXAMINATIONS: Examinations = {
   control: "",
