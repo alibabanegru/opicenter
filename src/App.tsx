@@ -222,6 +222,8 @@ import {
   cleanStr,
   cleanStrExceptTAndS,
   escapeCsvField,
+  getImageFormatForPdf,
+  recalculateContactLensCylinder,
   checkEmailPermissionForAccount,
   vertexCompensation,
   normalizeDiacritics,
@@ -1930,9 +1932,12 @@ export default function App() {
       return [];
     }
   });
-  const [clinicConfig, setClinicConfig] = useState<ClinicConfig>({
-    logoUrl: "",
-    secondaryLogoUrl: "",
+  const [clinicConfig, setClinicConfig] = useState<ClinicConfig>(() => {
+    try {
+      const saved = localStorage.getItem("clinic_config_cache");
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return { logoUrl: "", secondaryLogoUrl: "" };
   });
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [isWeatherModalOpen, setIsWeatherModalOpen] = useState(false);
@@ -7466,7 +7471,11 @@ export default function App() {
       doc(db, "settings", "clinic"),
       (snapshot) => {
         if (snapshot.exists()) {
-          setClinicConfig(snapshot.data() as ClinicConfig);
+          const cfg = snapshot.data() as ClinicConfig;
+          setClinicConfig(cfg);
+          try {
+            localStorage.setItem("clinic_config_cache", JSON.stringify(cfg));
+          } catch {}
         }
       },
       (error) => {
@@ -16447,7 +16456,8 @@ export default function App() {
 
     if (clinicConfig.logoUrl) {
       try {
-        doc.addImage(clinicConfig.logoUrl, "PNG", 14, 3, 30, 20);
+        const fmt = getImageFormatForPdf(clinicConfig.logoUrl);
+        doc.addImage(clinicConfig.logoUrl, fmt, 14, 3, 30, 20);
       } catch (e) {
         console.error("Could not load logo in PDF", e);
       }
@@ -16461,9 +16471,10 @@ export default function App() {
 
     if (clinicConfig.secondaryLogoUrl) {
       try {
+        const fmt = getImageFormatForPdf(clinicConfig.secondaryLogoUrl);
         doc.addImage(
           clinicConfig.secondaryLogoUrl,
-          "PNG",
+          fmt,
           pageWidth - 51.5,
           8,
           37.5,
@@ -18098,7 +18109,8 @@ export default function App() {
 
     if (clinicConfig.logoUrl) {
       try {
-        doc.addImage(clinicConfig.logoUrl, "PNG", 10, 2, 24, 15);
+        const fmt = getImageFormatForPdf(clinicConfig.logoUrl);
+        doc.addImage(clinicConfig.logoUrl, fmt, 10, 2, 24, 15);
       } catch (e) {
         console.error("Could not load logo in PDF", e);
       }
@@ -18112,9 +18124,10 @@ export default function App() {
 
     if (clinicConfig.secondaryLogoUrl) {
       try {
+        const fmt = getImageFormatForPdf(clinicConfig.secondaryLogoUrl);
         doc.addImage(
           clinicConfig.secondaryLogoUrl,
-          "PNG",
+          fmt,
           pageWidth - 30,
           8,
           20,
@@ -21845,6 +21858,13 @@ export default function App() {
       alert("Doar administratorul poate schimba setările clinicii.");
       return;
     }
+    setClinicConfig((prev) => {
+      const updated = { ...prev, ...updates };
+      try {
+        localStorage.setItem("clinic_config_cache", JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
     await setDoc(doc(db, "settings", "clinic"), removeUndefined(updates), {
       merge: true,
     });
@@ -21885,12 +21905,26 @@ export default function App() {
 
           ctx.drawImage(img, 0, 0, width, height);
 
-          let quality = 0.8;
-          let dataUrl = canvas.toDataURL("image/jpeg", quality);
+          const isPng = file.type === "image/png" || file.name.toLowerCase().endsWith(".png");
+          let mime = isPng ? "image/png" : "image/jpeg";
+          let quality = 0.85;
+          let dataUrl = canvas.toDataURL(mime, quality);
 
-          while (dataUrl.length * 0.75 > maxBytes && quality > 0.1) {
+          if (isPng && dataUrl.length * 0.75 > maxBytes) {
+            // If PNG is too big, convert to JPEG with white background
+            mime = "image/jpeg";
+            const ctx2 = canvas.getContext("2d");
+            if (ctx2) {
+              ctx2.globalCompositeOperation = "destination-over";
+              ctx2.fillStyle = "#ffffff";
+              ctx2.fillRect(0, 0, width, height);
+            }
+            dataUrl = canvas.toDataURL(mime, quality);
+          }
+
+          while (dataUrl.length * 0.75 > maxBytes && quality > 0.2) {
             quality -= 0.1;
-            dataUrl = canvas.toDataURL("image/jpeg", quality);
+            dataUrl = canvas.toDataURL(mime, quality);
           }
 
           resolve(dataUrl);

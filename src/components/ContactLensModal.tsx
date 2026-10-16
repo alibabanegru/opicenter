@@ -13,6 +13,7 @@ import {
 import {
   cn,
   vertexCompensation,
+  recalculateContactLensCylinder,
   ContactLensPrescription,
 } from "../appConstants";
 
@@ -77,7 +78,9 @@ export const ContactLensModal: React.FC<ContactLensModalProps> = ({
           sph: currentMedicalRecord?.od?.sph
             ? vertexCompensation(currentMedicalRecord.od.sph)
             : "",
-          cyl: currentMedicalRecord?.od?.cyl || "",
+          cyl: currentMedicalRecord?.cl_od?.cyl !== undefined
+            ? currentMedicalRecord.cl_od.cyl
+            : recalculateContactLensCylinder(currentMedicalRecord?.od?.cyl),
           axis: currentMedicalRecord?.od?.axis || "",
           base: "8.6",
           radius: "14.2",
@@ -90,7 +93,9 @@ export const ContactLensModal: React.FC<ContactLensModalProps> = ({
           sph: currentMedicalRecord?.os?.sph
             ? vertexCompensation(currentMedicalRecord.os.sph)
             : "",
-          cyl: currentMedicalRecord?.os?.cyl || "",
+          cyl: currentMedicalRecord?.cl_os?.cyl !== undefined
+            ? currentMedicalRecord.cl_os.cyl
+            : recalculateContactLensCylinder(currentMedicalRecord?.os?.cyl),
           axis: currentMedicalRecord?.os?.axis || "",
           base: "8.6",
           radius: "14.2",
@@ -109,7 +114,9 @@ export const ContactLensModal: React.FC<ContactLensModalProps> = ({
               sph: currentMedicalRecord?.od?.sph
                 ? vertexCompensation(currentMedicalRecord.od.sph)
                 : "",
-              cyl: currentMedicalRecord?.od?.cyl || "",
+              cyl: currentMedicalRecord?.cl_od?.cyl !== undefined
+            ? currentMedicalRecord.cl_od.cyl
+            : recalculateContactLensCylinder(currentMedicalRecord?.od?.cyl),
               axis: currentMedicalRecord?.od?.axis || "",
               base: "8.6",
               radius: "14.2",
@@ -122,7 +129,9 @@ export const ContactLensModal: React.FC<ContactLensModalProps> = ({
               sph: currentMedicalRecord?.os?.sph
                 ? vertexCompensation(currentMedicalRecord.os.sph)
                 : "",
-              cyl: currentMedicalRecord?.os?.cyl || "",
+              cyl: currentMedicalRecord?.cl_os?.cyl !== undefined
+            ? currentMedicalRecord.cl_os.cyl
+            : recalculateContactLensCylinder(currentMedicalRecord?.os?.cyl),
               axis: currentMedicalRecord?.os?.axis || "",
               base: "8.6",
               radius: "14.2",
@@ -216,12 +225,19 @@ export const ContactLensModal: React.FC<ContactLensModalProps> = ({
     }
   };
 
-  // Recalculate vertex compensation from spectacle
+  // Recalculate vertex compensation from spectacle and recalculate toric cylinder
   const handleRecalculateVertex = () => {
+    const updates: Partial<ContactLensPrescription> = {};
     if (spectacleEye?.sph) {
-      const compensated = vertexCompensation(spectacleEye.sph);
-      updateActiveCl({ sph: compensated });
+      updates.sph = vertexCompensation(spectacleEye.sph);
     }
+    if (spectacleEye?.cyl) {
+      updates.cyl = recalculateContactLensCylinder(spectacleEye.cyl);
+    }
+    if (spectacleEye?.axis && !activeCl.axis) {
+      updates.axis = spectacleEye.axis;
+    }
+    updateActiveCl(updates);
   };
 
   // Copy prescription to the other eye

@@ -108,3 +108,55 @@ export const escapeCsvField = (str: any): string => {
   const s = String(str).replace(/"/g, '""');
   return `"${s}"`;
 };
+
+/**
+ * Asigură formatul corect de imagine Base64 sau URL pentru jsPDF (PNG sau JPEG).
+ * Tratează automat atât png, jpeg, jpg, webp sau prefixe data:image.
+ */
+export const getImageFormatForPdf = (dataUrlOrUri: string | undefined | null): "PNG" | "JPEG" => {
+  if (!dataUrlOrUri) return "PNG";
+  const lower = dataUrlOrUri.toLowerCase();
+  if (lower.startsWith("data:image/jpeg") || lower.startsWith("data:image/jpg") || lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+    return "JPEG";
+  }
+  return "PNG";
+};
+
+/**
+ * Recalculează cilindrul pentru lentile de contact conform disponibilității standard de fabricație:
+ * Lentilele torice standard se fabrică doar în treptele: -0.75, -1.25, -1.75, -2.25, -2.75.
+ * Dacă cilindrul din fișă este mai mare de 2.75 (ex: -3.00, -3.50 etc.), se păstrează cilindrul din fișa pacientului.
+ * Dacă cilindrul este sub 0.75 (ex: -0.25, -0.50), nu justifică lentilă torică (poate fi 0 sau convertit în echivalent sferic).
+ */
+export const recalculateContactLensCylinder = (rawCyl: string | undefined | null): string => {
+  if (!rawCyl || !rawCyl.trim()) return "";
+  const cleanVal = rawCyl.trim().replace(",", ".");
+  const p = parseFloat(cleanVal);
+  if (isNaN(p)) return rawCyl;
+
+  const absP = Math.abs(p);
+  // Dacă cilindrul este 0 sau neglijabil sub 0.50
+  if (absP < 0.5) return "";
+
+  // Dacă este mai mare de 2.75, se păstrează cilindrul din fișa pacientului
+  if (absP > 2.75) {
+    const sign = p < 0 ? "-" : "+";
+    return `${sign}${absP.toFixed(2)}`;
+  }
+
+  // Trepte standard torice pentru lentile de contact: 0.75, 1.25, 1.75, 2.25, 2.75
+  const standardSteps = [0.75, 1.25, 1.75, 2.25, 2.75];
+  let closest = standardSteps[0];
+  let minDiff = Math.abs(absP - closest);
+
+  for (let i = 1; i < standardSteps.length; i++) {
+    const diff = Math.abs(absP - standardSteps[i]);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = standardSteps[i];
+    }
+  }
+
+  // Lentilele de contact torice sunt aproape exclusiv notate cu cilindru negativ (-)
+  return `-${closest.toFixed(2)}`;
+};

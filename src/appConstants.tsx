@@ -1,4 +1,4 @@
-export { cleanStr, cleanStrExceptTAndS, normalizeForPDF, formatPhoneNumber, escapeCsvField } from "./lib/stringUtils";
+export { cleanStr, cleanStrExceptTAndS, normalizeForPDF, formatPhoneNumber, escapeCsvField, getImageFormatForPdf, recalculateContactLensCylinder } from "./lib/stringUtils";
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { auth } from "./firebase";
 import { ClassValue, clsx } from "clsx";
