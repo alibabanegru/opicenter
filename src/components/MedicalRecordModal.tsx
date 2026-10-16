@@ -1255,10 +1255,11 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
 
                   {/* Mentions spanning horizontally on the right */}
                   <div className="flex items-center justify-end gap-3 flex-1 max-w-[500px]">
-                    <div className="flex items-center gap-4 mr-2">
-                      <label className="flex items-center gap-1.5 cursor-pointer group">
+                    <div className="flex items-center gap-2 sm:gap-3 mr-2 bg-slate-100/80 dark:bg-slate-800/60 p-1.5 rounded-xl border border-slate-200/60 dark:border-slate-700/60">
+                      <label className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer transition-all select-none hover:bg-blue-500/10 active:scale-95 group">
                         <input
                           type="checkbox"
+                          id="consult-complet-checkbox"
                           checked={
                             currentMedicalRecord.isConsultComplet || false
                           }
@@ -1268,15 +1269,19 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               isConsultComplet: e.target.checked,
                             })
                           }
-                          className="w-3.5 h-3.5 rounded border-slate-300 focus:ring-blue-500 text-blue-600 transition-all cursor-pointer"
+                          className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 focus:ring-blue-500 text-blue-600 transition-all cursor-pointer"
                         />
-                        <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest leading-tight whitespace-nowrap group-hover:text-blue-400 pb-0.5">
+                        <span className={cn(
+                          "text-[11px] font-black uppercase tracking-wider leading-tight whitespace-nowrap transition-colors",
+                          currentMedicalRecord.isConsultComplet ? "text-blue-600 dark:text-blue-400 font-extrabold" : "text-slate-500 dark:text-slate-400 group-hover:text-blue-500"
+                        )}>
                           Consult complet
                         </span>
                       </label>
-                      <label className="flex items-center gap-1.5 cursor-pointer group">
+                      <label className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer transition-all select-none hover:bg-amber-500/10 active:scale-95 group">
                         <input
                           type="checkbox"
+                          id="revenire-checkbox"
                           checked={currentMedicalRecord.isControl || false}
                           onChange={(e) =>
                             setCurrentMedicalRecord({
@@ -1287,15 +1292,19 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 : currentMedicalRecord.isGratis,
                             })
                           }
-                          className="w-3.5 h-3.5 rounded border-slate-300 focus:ring-blue-500 text-blue-600 transition-all cursor-pointer"
+                          className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 focus:ring-amber-500 text-amber-500 transition-all cursor-pointer"
                         />
-                        <span className="text-[10px] font-black text-orange-500 uppercase tracking-widest leading-tight whitespace-nowrap group-hover:text-orange-400 pb-0.5">
+                        <span className={cn(
+                          "text-[11px] font-black uppercase tracking-wider leading-tight whitespace-nowrap transition-colors",
+                          currentMedicalRecord.isControl ? "text-amber-600 dark:text-amber-400 font-extrabold" : "text-slate-500 dark:text-slate-400 group-hover:text-amber-500"
+                        )}>
                           Revenire
                         </span>
                       </label>
-                      <label className="flex items-center gap-1.5 cursor-pointer group">
+                      <label className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer transition-all select-none hover:bg-emerald-500/10 active:scale-95 group">
                         <input
                           type="checkbox"
+                          id="gratis-checkbox"
                           checked={currentMedicalRecord.isGratis || false}
                           onChange={(e) =>
                             setCurrentMedicalRecord({
@@ -1306,9 +1315,12 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 : currentMedicalRecord.isControl,
                             })
                           }
-                          className="w-3.5 h-3.5 rounded border-slate-300 focus:ring-green-500 text-green-600 transition-all cursor-pointer"
+                          className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 focus:ring-emerald-500 text-emerald-600 transition-all cursor-pointer"
                         />
-                        <span className="text-[10px] font-black text-green-500 uppercase tracking-widest leading-tight whitespace-nowrap group-hover:text-green-400 pb-0.5">
+                        <span className={cn(
+                          "text-[11px] font-black uppercase tracking-wider leading-tight whitespace-nowrap transition-colors",
+                          currentMedicalRecord.isGratis ? "text-emerald-600 dark:text-emerald-400 font-extrabold" : "text-slate-500 dark:text-slate-400 group-hover:text-emerald-500"
+                        )}>
                           Gratis
                         </span>
                       </label>
@@ -7967,15 +7979,16 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                         return;
                       }
 
-                      // Salvează fișa și trimite comanda de printare a prescripției/fișei
+                      // 1. Salvează fișa și sincronizează instantaneu cu baza de date
+                      const success = await saveMedicalRecord(true);
+
+                      // 2. Trimite comanda de printare a prescripției/fișei
                       try {
                         printPrescription();
                       } catch (pErr) {
                         console.error("Print prescription error:", pErr);
                       }
 
-                      // Salvează și închide automat fereastra fișei pacientului
-                      const success = await saveMedicalRecord(true);
                       if (success) {
                         setSuccessMessage("Fișa a fost salvată, trimisă la tipărire și închisă cu succes!");
                       }

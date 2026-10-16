@@ -10597,6 +10597,7 @@ export default function App() {
       degresiv_os: (currentMedicalRecord as any).degresiv_os,
       isControl: currentMedicalRecord.isControl,
       isGratis: currentMedicalRecord.isGratis,
+      isConsultComplet: currentMedicalRecord.isConsultComplet,
     };
 
     if (activePrescriptionIndex !== null) {
@@ -10620,7 +10621,10 @@ export default function App() {
         currentMedicalRecord.lensMaterial ||
         currentMedicalRecord.lensTreatment ||
         (currentMedicalRecord as any).lensHeliomat ||
-        currentMedicalRecord.examinationInterpretation;
+        currentMedicalRecord.examinationInterpretation ||
+        currentMedicalRecord.isConsultComplet ||
+        currentMedicalRecord.isControl ||
+        currentMedicalRecord.isGratis;
 
       if (hasData) {
         newHistory = [currentItem, ...newHistory];
@@ -10806,90 +10810,87 @@ export default function App() {
       });
       originalPatientNameRef.current = newPatientName;
 
-      // 2. Granular Firestore update to prevent overwriting reception data concurrently
-      const savePromise = (async () => {
-        try {
-          // Granular payload containing exclusively medical examination, prescription, and patient diagnostic fields
-          const granularMedicalPayload = removeUndefined({
-            od: updatedRecord.od,
-            os: updatedRecord.os,
-            dp: updatedRecord.dp,
-            dp_od: updatedRecord.dp_od,
-            dp_os: updatedRecord.dp_os,
-            dp_aproape: updatedRecord.dp_aproape,
-            dp_aproape_od: updatedRecord.dp_aproape_od,
-            dp_aproape_os: updatedRecord.dp_aproape_os,
-            treatment: updatedRecord.treatment,
-            diagnostic: updatedRecord.diagnostic,
-            recomandari: updatedRecord.recomandari,
-            symptoms: updatedRecord.symptoms,
-            history: updatedRecord.history,
-            specialMentions: updatedRecord.specialMentions,
-            examinations: updatedRecord.examinations,
-            examinationInterpretation: updatedRecord.examinationInterpretation,
-            prescriptionHistory: updatedRecord.prescriptionHistory,
-            axialLength: updatedRecord.axialLength,
-            keratometry: updatedRecord.keratometry,
-            iop: updatedRecord.iop,
-            correctedIop: updatedRecord.correctedIop,
-            pachymetry: updatedRecord.pachymetry,
-            cycloplegia: updatedRecord.cycloplegia,
-            nonCycloplegic: updatedRecord.nonCycloplegic,
-            cl_od: updatedRecord.cl_od,
-            cl_os: updatedRecord.cl_os,
-            lensType: updatedRecord.lensType,
-            lensMaterial: updatedRecord.lensMaterial,
-            lensTreatment: updatedRecord.lensTreatment,
-            lensHeliomat: (updatedRecord as any).lensHeliomat,
-            heliomat_od: (updatedRecord as any).heliomat_od,
-            heliomat_os: (updatedRecord as any).heliomat_os,
-            progresiv_od: (updatedRecord as any).progresiv_od,
-            progresiv_os: (updatedRecord as any).progresiv_os,
-            bifocal_od: (updatedRecord as any).bifocal_od,
-            bifocal_os: (updatedRecord as any).bifocal_os,
-            degresiv_od: (updatedRecord as any).degresiv_od,
-            degresiv_os: (updatedRecord as any).degresiv_os,
-            isControl: updatedRecord.isControl,
-            isGratis: updatedRecord.isGratis,
-            isConsultComplet: updatedRecord.isConsultComplet,
-            onsetAndEvolution: updatedRecord.onsetAndEvolution,
-            recentHospitalizations: updatedRecord.recentHospitalizations,
-            clinicalTreatment: updatedRecord.clinicalTreatment,
-            dependencyStatus: updatedRecord.dependencyStatus,
-            mobilityStatus: updatedRecord.mobilityStatus,
-            recoveryPlan: updatedRecord.recoveryPlan,
-            recoveryPrognosis: updatedRecord.recoveryPrognosis,
-            medications: updatedRecord.medications,
-            patientName: newPatientName,
-            patientPhone: phone || undefined,
-            patientCnp: updatedRecord.patientCnp || undefined,
-            patientAge: finalAge !== undefined ? finalAge : undefined,
-            patientBirthDate: updatedRecord.patientBirthDate || undefined,
-            patientSex: updatedRecord.patientSex || undefined,
-            updatedAt: now,
-          });
+      // 2. Direct Firestore update for medical record (awaited to guarantee all other connected accounts see it instantly)
+      try {
+        const granularMedicalPayload = removeUndefined({
+          od: updatedRecord.od,
+          os: updatedRecord.os,
+          dp: updatedRecord.dp,
+          dp_od: updatedRecord.dp_od,
+          dp_os: updatedRecord.dp_os,
+          dp_aproape: updatedRecord.dp_aproape,
+          dp_aproape_od: updatedRecord.dp_aproape_od,
+          dp_aproape_os: updatedRecord.dp_aproape_os,
+          treatment: updatedRecord.treatment,
+          diagnostic: updatedRecord.diagnostic,
+          recomandari: updatedRecord.recomandari,
+          symptoms: updatedRecord.symptoms,
+          history: updatedRecord.history,
+          specialMentions: updatedRecord.specialMentions,
+          examinations: updatedRecord.examinations,
+          examinationInterpretation: updatedRecord.examinationInterpretation,
+          prescriptionHistory: updatedRecord.prescriptionHistory,
+          axialLength: updatedRecord.axialLength,
+          keratometry: updatedRecord.keratometry,
+          iop: updatedRecord.iop,
+          correctedIop: updatedRecord.correctedIop,
+          pachymetry: updatedRecord.pachymetry,
+          cycloplegia: updatedRecord.cycloplegia,
+          nonCycloplegic: updatedRecord.nonCycloplegic,
+          cl_od: updatedRecord.cl_od,
+          cl_os: updatedRecord.cl_os,
+          lensType: updatedRecord.lensType,
+          lensMaterial: updatedRecord.lensMaterial,
+          lensTreatment: updatedRecord.lensTreatment,
+          lensHeliomat: (updatedRecord as any).lensHeliomat,
+          heliomat_od: (updatedRecord as any).heliomat_od,
+          heliomat_os: (updatedRecord as any).heliomat_os,
+          progresiv_od: (updatedRecord as any).progresiv_od,
+          progresiv_os: (updatedRecord as any).progresiv_os,
+          bifocal_od: (updatedRecord as any).bifocal_od,
+          bifocal_os: (updatedRecord as any).bifocal_os,
+          degresiv_od: (updatedRecord as any).degresiv_od,
+          degresiv_os: (updatedRecord as any).degresiv_os,
+          isControl: updatedRecord.isControl,
+          isGratis: updatedRecord.isGratis,
+          isConsultComplet: updatedRecord.isConsultComplet,
+          onsetAndEvolution: updatedRecord.onsetAndEvolution,
+          recentHospitalizations: updatedRecord.recentHospitalizations,
+          clinicalTreatment: updatedRecord.clinicalTreatment,
+          dependencyStatus: updatedRecord.dependencyStatus,
+          mobilityStatus: updatedRecord.mobilityStatus,
+          recoveryPlan: updatedRecord.recoveryPlan,
+          recoveryPrognosis: updatedRecord.recoveryPrognosis,
+          medications: updatedRecord.medications,
+          patientName: newPatientName,
+          patientPhone: phone || undefined,
+          patientCnp: updatedRecord.patientCnp || undefined,
+          patientAge: finalAge !== undefined ? finalAge : undefined,
+          patientBirthDate: updatedRecord.patientBirthDate || undefined,
+          patientSex: updatedRecord.patientSex || undefined,
+          updatedAt: now,
+        });
 
-          if (oldRecordId !== newRecordId) {
-            // Patient identity or phone changed, transfer full record to new doc ID
-            await setDoc(doc(db, "medicalRecords", newRecordId), updatedRecord, { merge: true });
-            try {
-              await deleteDoc(doc(db, "medicalRecords", oldRecordId));
-            } catch (delErr) {
-              console.warn("Could not delete old medicalRecord doc:", delErr);
-            }
-          } else {
-            // Target existing doc: use updateDoc to preserve reception edits (orders, contacts, GDPR)
-            try {
-              await updateDoc(doc(db, "medicalRecords", oldRecordId), granularMedicalPayload);
-            } catch (upErr: any) {
-              // If document does not exist yet, fallback to setDoc with merge
-              await setDoc(doc(db, "medicalRecords", oldRecordId), updatedRecord, { merge: true });
-            }
+        if (oldRecordId !== newRecordId) {
+          // Patient identity or phone changed, transfer full record to new doc ID
+          await setDoc(doc(db, "medicalRecords", newRecordId), updatedRecord, { merge: true });
+          try {
+            await deleteDoc(doc(db, "medicalRecords", oldRecordId));
+          } catch (delErr) {
+            console.warn("Could not delete old medicalRecord doc:", delErr);
           }
-        } catch (dbErr) {
-          console.warn("Firestore medicalRecords save notice:", dbErr);
+        } else {
+          // Target existing doc: use updateDoc to preserve reception edits (orders, contacts, GDPR)
+          try {
+            await updateDoc(doc(db, "medicalRecords", oldRecordId), granularMedicalPayload);
+          } catch (upErr: any) {
+            // If document does not exist yet, fallback to setDoc with merge
+            await setDoc(doc(db, "medicalRecords", oldRecordId), updatedRecord, { merge: true });
+          }
         }
-      })();
+      } catch (dbErr) {
+        console.warn("Firestore medicalRecords save notice:", dbErr);
+      }
       // 3. Instant UI feedback
       setShowSavedAnimation(true);
       setSuccessMessage(`Fișa pacientului "${newPatientName}" a fost salvată cu succes!`);
@@ -11051,6 +11052,10 @@ export default function App() {
             }
           }
 
+          const isConsultCompletVal = !!currentMedicalRecord.isConsultComplet;
+          const isControlVal = !!currentMedicalRecord.isControl;
+          const isGratisVal = !!currentMedicalRecord.isGratis;
+
           const updatePromises = Array.from(uniqueAppDocs.keys()).map((docId) =>
             updateDoc(
               doc(db, "appointments", docId),
@@ -11061,6 +11066,9 @@ export default function App() {
                 patientAge: finalAge !== undefined ? finalAge : uniqueAppDocs.get(docId)?.patientAge,
                 patientBirthDate: currentMedicalRecord.patientBirthDate || "",
                 patientSex: currentMedicalRecord.patientSex || "",
+                isConsultComplet: isConsultCompletVal,
+                isControl: isControlVal,
+                isGratis: isGratisVal,
               }),
             ),
           );
@@ -11073,7 +11081,7 @@ export default function App() {
               const isNewNameMatch =
                 newPatientName && app.patientName?.toLowerCase().trim() === newPatientName.toLowerCase().trim();
               const isActiveMatch =
-                activeAppointment && app.id === activeAppointment.id && (isOldNameMatch || isNewNameMatch);
+                activeAppointment && app.id === activeAppointment.id;
 
               if (
                 isOldNameMatch ||
@@ -11088,6 +11096,9 @@ export default function App() {
                   patientAge: finalAge !== undefined ? finalAge : app.patientAge,
                   patientBirthDate: currentMedicalRecord.patientBirthDate || app.patientBirthDate,
                   patientSex: (currentMedicalRecord.patientSex as any) || app.patientSex,
+                  isConsultComplet: isConsultCompletVal,
+                  isControl: isControlVal,
+                  isGratis: isGratisVal,
                 };
               }
               return app;
@@ -11125,6 +11136,9 @@ export default function App() {
                       patientAge: finalAge !== undefined ? finalAge : prev.patientAge,
                       patientBirthDate: currentMedicalRecord.patientBirthDate || prev.patientBirthDate,
                       patientSex: (currentMedicalRecord.patientSex as any) || prev.patientSex,
+                      isConsultComplet: isConsultCompletVal,
+                      isControl: isControlVal,
+                      isGratis: isGratisVal,
                     }
                   : null,
               );
@@ -15775,7 +15789,10 @@ export default function App() {
         currentMedicalRecord.lensMaterial ||
         currentMedicalRecord.lensTreatment ||
         (currentMedicalRecord as any).lensHeliomat ||
-        currentMedicalRecord.examinationInterpretation;
+        currentMedicalRecord.examinationInterpretation ||
+        currentMedicalRecord.isConsultComplet ||
+        currentMedicalRecord.isControl ||
+        currentMedicalRecord.isGratis;
       if (hasData) {
         newHistory = [currentItem, ...newHistory];
         shifted = true;
