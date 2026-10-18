@@ -7181,6 +7181,9 @@ export default function App() {
                 patientBirthDate: targetBirthDate,
                 patientSex: (targetSex as any) || app.patientSex,
                 patientAge: calculatedAge ?? app.patientAge,
+                isConsultComplet: app.isConsultComplet,
+                isControl: app.isControl,
+                isGratis: app.isGratis,
               };
             }
             return app;
@@ -7337,11 +7340,9 @@ export default function App() {
       }
     );
 
-    // 4. Medical Records (Smart / Lazy Loading)
-    // Descarcă la pornire doar cele mai recente fișe (limit 120), prevenind blocarea la startup.
-    // Toate fișele vechi din arhivă sunt aduse automat în milisecunde la căutare după nume, telefon sau CNP.
+    // 4. Medical Records - Sincronizare Completă în Timp Real (toate fișele se sincronizează instantaneu între toate conturile)
     const unsubMedicalRecords = onSnapshot(
-      query(collection(db, "medicalRecords"), limit(120)),
+      collection(db, "medicalRecords"),
       (snapshot) => {
         setMedicalRecords((prev) => {
           const fresh = snapshot.docs.map(
@@ -10888,6 +10889,109 @@ export default function App() {
             await setDoc(doc(db, "medicalRecords", oldRecordId), updatedRecord, { merge: true });
           }
         }
+
+        // SINCRONIZARE GARANTATĂ ÎN TIMP REAL CU APPOINTMENTS ÎN FIRESTORE
+        try {
+          const appointmentsRef = collection(db, "appointments");
+          const uniqueAppDocs = new Map<string, any>();
+
+          if (activeAppointment?.id) {
+            uniqueAppDocs.set(activeAppointment.id, activeAppointment);
+          }
+
+          const appQueries = [];
+          if (oldPatientName && oldPatientName.trim() !== "") {
+            appQueries.push(query(appointmentsRef, where("patientName", "==", oldPatientName)));
+          }
+          if (newPatientName && newPatientName !== oldPatientName) {
+            appQueries.push(query(appointmentsRef, where("patientName", "==", newPatientName)));
+          }
+          if (phone && phone.trim() !== "") {
+            appQueries.push(query(appointmentsRef, where("patientPhone", "==", phone.trim())));
+          }
+
+          if (appQueries.length > 0) {
+            const appSnaps = await Promise.all(appQueries.map((q) => getDocs(q)));
+            appSnaps.forEach((snap) => {
+              snap.docs.forEach((d) => uniqueAppDocs.set(d.id, d.data()));
+            });
+          }
+
+          const isConsultCompletVal = !!currentMedicalRecord.isConsultComplet;
+          const isControlVal = !!currentMedicalRecord.isControl;
+          const isGratisVal = !!currentMedicalRecord.isGratis;
+
+          const updatePromises = Array.from(uniqueAppDocs.keys()).map((docId) =>
+            updateDoc(
+              doc(db, "appointments", docId),
+              removeUndefined({
+                patientName: newPatientName,
+                patientPhone: phone || undefined,
+                patientCnp: currentMedicalRecord.patientCnp || undefined,
+                patientAge: finalAge !== undefined ? finalAge : uniqueAppDocs.get(docId)?.patientAge,
+                patientBirthDate: currentMedicalRecord.patientBirthDate || "",
+                patientSex: currentMedicalRecord.patientSex || "",
+                isConsultComplet: isConsultCompletVal,
+                isControl: isControlVal,
+                isGratis: isGratisVal,
+              }),
+            ),
+          );
+          await Promise.all(updatePromises);
+
+          setAppointments((prev) =>
+            prev.map((app) => {
+              const isOldNameMatch =
+                oldPatientName && app.patientName?.toLowerCase().trim() === oldPatientName.toLowerCase().trim();
+              const isNewNameMatch =
+                newPatientName && app.patientName?.toLowerCase().trim() === newPatientName.toLowerCase().trim();
+              const isPhoneMatch =
+                phone && (app.patientPhone || "").replace(/\D/g, "") === phone.replace(/\D/g, "");
+              const isActiveMatch =
+                activeAppointment && app.id === activeAppointment.id;
+
+              if (
+                isOldNameMatch ||
+                isNewNameMatch ||
+                isPhoneMatch ||
+                isActiveMatch
+              ) {
+                return {
+                  ...app,
+                  patientName: newPatientName,
+                  patientPhone: phone || app.patientPhone,
+                  patientCnp: currentMedicalRecord.patientCnp || app.patientCnp,
+                  patientAge: finalAge !== undefined ? finalAge : app.patientAge,
+                  patientBirthDate: currentMedicalRecord.patientBirthDate || app.patientBirthDate,
+                  patientSex: (currentMedicalRecord.patientSex as any) || app.patientSex,
+                  isConsultComplet: isConsultCompletVal,
+                  isControl: isControlVal,
+                  isGratis: isGratisVal,
+                };
+              }
+              return app;
+            }),
+          );
+
+          if (activeAppointment) {
+            setActiveAppointment((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    patientName: newPatientName,
+                    patientAge: finalAge !== undefined ? finalAge : prev.patientAge,
+                    patientBirthDate: currentMedicalRecord.patientBirthDate || prev.patientBirthDate,
+                    patientSex: (currentMedicalRecord.patientSex as any) || prev.patientSex,
+                    isConsultComplet: isConsultCompletVal,
+                    isControl: isControlVal,
+                    isGratis: isGratisVal,
+                  }
+                : null,
+            );
+          }
+        } catch (appErr) {
+          console.warn("Direct appointments sync error:", appErr);
+        }
       } catch (dbErr) {
         console.warn("Firestore medicalRecords save notice:", dbErr);
       }
@@ -11027,84 +11131,6 @@ export default function App() {
         ).catch(() => {});
 
         try {
-          const appointmentsRef = collection(db, "appointments");
-          const appQueries = [];
-
-          if (oldPatientName && oldPatientName.trim() !== "") {
-            appQueries.push(query(appointmentsRef, where("patientName", "==", oldPatientName)));
-          }
-          if (newPatientName && newPatientName !== oldPatientName) {
-            appQueries.push(query(appointmentsRef, where("patientName", "==", newPatientName)));
-          }
-
-          const appSnaps = await Promise.all(appQueries.map((q) => getDocs(q)));
-          const uniqueAppDocs = new Map<string, any>();
-          appSnaps.forEach((snap) => {
-            snap.docs.forEach((d) => uniqueAppDocs.set(d.id, d.data()));
-          });
-
-          if (activeAppointment?.id && !uniqueAppDocs.has(activeAppointment.id)) {
-            const isNameMatch =
-              (oldPatientName && activeAppointment.patientName?.toLowerCase().trim() === oldPatientName.toLowerCase().trim()) ||
-              (newPatientName && activeAppointment.patientName?.toLowerCase().trim() === newPatientName.toLowerCase().trim());
-            if (isNameMatch) {
-              uniqueAppDocs.set(activeAppointment.id, activeAppointment);
-            }
-          }
-
-          const isConsultCompletVal = !!currentMedicalRecord.isConsultComplet;
-          const isControlVal = !!currentMedicalRecord.isControl;
-          const isGratisVal = !!currentMedicalRecord.isGratis;
-
-          const updatePromises = Array.from(uniqueAppDocs.keys()).map((docId) =>
-            updateDoc(
-              doc(db, "appointments", docId),
-              removeUndefined({
-                patientName: newPatientName,
-                patientPhone: phone || undefined,
-                patientCnp: currentMedicalRecord.patientCnp || undefined,
-                patientAge: finalAge !== undefined ? finalAge : uniqueAppDocs.get(docId)?.patientAge,
-                patientBirthDate: currentMedicalRecord.patientBirthDate || "",
-                patientSex: currentMedicalRecord.patientSex || "",
-                isConsultComplet: isConsultCompletVal,
-                isControl: isControlVal,
-                isGratis: isGratisVal,
-              }),
-            ),
-          );
-          await Promise.all(updatePromises);
-
-          setAppointments((prev) =>
-            prev.map((app) => {
-              const isOldNameMatch =
-                oldPatientName && app.patientName?.toLowerCase().trim() === oldPatientName.toLowerCase().trim();
-              const isNewNameMatch =
-                newPatientName && app.patientName?.toLowerCase().trim() === newPatientName.toLowerCase().trim();
-              const isActiveMatch =
-                activeAppointment && app.id === activeAppointment.id;
-
-              if (
-                isOldNameMatch ||
-                isNewNameMatch ||
-                isActiveMatch
-              ) {
-                return {
-                  ...app,
-                  patientName: newPatientName,
-                  patientPhone: phone || app.patientPhone,
-                  patientCnp: currentMedicalRecord.patientCnp || app.patientCnp,
-                  patientAge: finalAge !== undefined ? finalAge : app.patientAge,
-                  patientBirthDate: currentMedicalRecord.patientBirthDate || app.patientBirthDate,
-                  patientSex: (currentMedicalRecord.patientSex as any) || app.patientSex,
-                  isConsultComplet: isConsultCompletVal,
-                  isControl: isControlVal,
-                  isGratis: isGratisVal,
-                };
-              }
-              return app;
-            }),
-          );
-
           await syncPatientUniversal(
             {
               patientName: newPatientName,
@@ -11121,31 +11147,8 @@ export default function App() {
               patientAge: finalAge,
             },
           );
-
-          if (activeAppointment) {
-            const isOldNameMatch =
-              oldPatientName && activeAppointment.patientName?.toLowerCase().trim() === oldPatientName.toLowerCase().trim();
-            const isNewNameMatch =
-              newPatientName && activeAppointment.patientName?.toLowerCase().trim() === newPatientName.toLowerCase().trim();
-            if (isOldNameMatch || isNewNameMatch) {
-              setActiveAppointment((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      patientName: newPatientName,
-                      patientAge: finalAge !== undefined ? finalAge : prev.patientAge,
-                      patientBirthDate: currentMedicalRecord.patientBirthDate || prev.patientBirthDate,
-                      patientSex: (currentMedicalRecord.patientSex as any) || prev.patientSex,
-                      isConsultComplet: isConsultCompletVal,
-                      isControl: isControlVal,
-                      isGratis: isGratisVal,
-                    }
-                  : null,
-              );
-            }
-          }
         } catch (err) {
-          console.warn("Could not sync with appointments:", err);
+          console.warn("Could not sync with universal patient data:", err);
         }
 
         try {
@@ -13802,13 +13805,13 @@ export default function App() {
           if (!matchesPhone) return false;
 
           return (
-            isSameDay(parseISO(r.updatedAt), appTime) ||
+            (r.updatedAt && isSameDay(parseISO(r.updatedAt), appTime)) ||
             (r.createdAt && isSameDay(parseISO(r.createdAt), appTime)) ||
             (r.prescriptionHistory || []).some((item) =>
               item.date ? isSameDay(parseISO(item.date), appTime) : false
             )
           );
-        }) || null;
+        }) || (matchingRecords.length > 0 && (app.isConsultComplet || app.isControl || app.isGratis) ? matchingRecords[0] : null);
 
       let matchingDocs: any[] = [];
       if (appName && docMap.has(appName)) matchingDocs = docMap.get(appName)!;
@@ -13956,32 +13959,25 @@ export default function App() {
 
           let matchingRecords: MedicalRecord[] = [];
           if (appName && recMap.has(appName)) matchingRecords = recMap.get(appName)!;
+          if (matchingRecords.length === 0 && appPhone && recMap.has(appPhone)) matchingRecords = recMap.get(appPhone)!;
 
           const matchingRecord = matchingRecords.find((r) => {
             const rName = cleanStr(r.patientName);
             const rPhone = (r.patientPhone || "").replace(/\D/g, "");
             const matchesName = appName !== "" && rName === appName;
-            if (!matchesName) return false;
-            if (appPhone !== "" && rPhone !== "" && rPhone !== appPhone) return false;
-            return true;
-          });
+            const matchesPhone = appPhone !== "" && rPhone !== "" && rPhone === appPhone;
+            if (matchesName) return true;
+            if (matchesPhone) return true;
+            return false;
+          }) || (matchingRecords.length > 0 ? matchingRecords[0] : undefined);
 
           const historyItemForDay = matchingRecord?.prescriptionHistory?.find(
             (item) => (item.date ? isSameDay(parseISO(item.date), targetDay) : false)
           );
 
-          const isC =
-            !!app.isConsultComplet ||
-            !!historyItemForDay?.isConsultComplet ||
-            !!matchingRecord?.isConsultComplet;
-          const isR =
-            !!app.isControl ||
-            !!historyItemForDay?.isControl ||
-            !!matchingRecord?.isControl;
-          const isG =
-            !!app.isGratis ||
-            !!historyItemForDay?.isGratis ||
-            !!matchingRecord?.isGratis;
+          const isC = !!app.isConsultComplet || !!historyItemForDay?.isConsultComplet || (!app.isControl && !app.isGratis && !!matchingRecord?.isConsultComplet);
+          const isR = !!app.isControl || !!historyItemForDay?.isControl || (!app.isConsultComplet && !app.isGratis && !!matchingRecord?.isControl);
+          const isG = !!app.isGratis || !!historyItemForDay?.isGratis || (!app.isConsultComplet && !app.isControl && !!matchingRecord?.isGratis);
 
           if (isC) {
             countC++;
@@ -25347,7 +25343,7 @@ export default function App() {
                             const isGratisToday =
                               patientRecordForToday?.isGratis;
                             const isConsultedToday =
-                              ((!!patientRecordForToday || hasMedicalReportToday) || appointment?.forceSeen) &&
+                              ((!!patientRecordForToday || hasMedicalReportToday || !!appointment?.isConsultComplet || !!appointment?.isControl || !!appointment?.isGratis || isConsultCompletStatus || isControlStatus || isGratisStatus) || appointment?.forceSeen) &&
                               !appointment?.ignoreSeen;
 
                             const isNoShow =
@@ -25514,7 +25510,7 @@ export default function App() {
                                           )}
                                           {isControlStatus && (
                                             <span
-                                              className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8.5px] font-black bg-red-600 text-white shadow-xs select-none shrink-0"
+                                              className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8.5px] font-black bg-amber-500 text-white shadow-xs select-none shrink-0"
                                               title="Revenire"
                                             >
                                               R
@@ -25633,11 +25629,19 @@ export default function App() {
                                            🌐 Online
                                          </span>
                                        )}
-                                       {appointment.isControl && (
-                                         <span className="text-orange-500 animate-blink-orange font-black mr-1">
+                                       {isControlStatus ? (
+                                         <span className="text-amber-500 animate-blink-orange font-black mr-1" title="Revenire">
                                            R
                                          </span>
-                                       )}
+                                       ) : isConsultCompletStatus ? (
+                                         <span className="text-blue-500 font-black mr-1" title="Consult Complet">
+                                           C
+                                         </span>
+                                       ) : isGratisStatus ? (
+                                         <span className="text-emerald-500 font-black mr-1" title="Gratis">
+                                           G
+                                         </span>
+                                       ) : null}
                                        {appointment.patientName}
                                        {(() => {
                                          const ageStr = calculateDetailedAge(appointment.patientBirthDate || "") || (appointment.patientAge ? appointment.patientAge + "ani" : "");
