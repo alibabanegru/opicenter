@@ -113,11 +113,14 @@ export const escapeCsvField = (str: any): string => {
  * Asigură formatul corect de imagine Base64 sau URL pentru jsPDF (PNG sau JPEG).
  * Tratează automat atât png, jpeg, jpg, webp sau prefixe data:image.
  */
-export const getImageFormatForPdf = (dataUrlOrUri: string | undefined | null): "PNG" | "JPEG" => {
+export const getImageFormatForPdf = (dataUrlOrUri: string | undefined | null): "PNG" | "JPEG" | "WEBP" => {
   if (!dataUrlOrUri) return "PNG";
   const lower = dataUrlOrUri.toLowerCase();
   if (lower.startsWith("data:image/jpeg") || lower.startsWith("data:image/jpg") || lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
     return "JPEG";
+  }
+  if (lower.startsWith("data:image/webp") || lower.endsWith(".webp")) {
+    return "WEBP";
   }
   return "PNG";
 };

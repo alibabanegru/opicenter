@@ -1562,6 +1562,7 @@ export default function App() {
       }
 
       await deleteDoc(doc(db, "appointments", appId));
+      setAppointments((prev) => prev.filter((a) => a.id !== appId));
       await logActivity("Respingere/Ștergere Programare", detailsText);
       setSuccessMessage("Solicitarea de programare a fost respinsă și ștearsă.");
     } catch (err) {
@@ -1934,8 +1935,11 @@ export default function App() {
   });
   const [clinicConfig, setClinicConfig] = useState<ClinicConfig>(() => {
     try {
-      const saved = localStorage.getItem("clinic_config_cache");
-      if (saved) return JSON.parse(saved);
+      const saved = localStorage.getItem("clinic_config_cache") || localStorage.getItem("opticenter_clinic_config");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && (parsed.logoUrl || parsed.secondaryLogoUrl)) return parsed;
+      }
     } catch {}
     return { logoUrl: "", secondaryLogoUrl: "" };
   });
@@ -7466,23 +7470,70 @@ export default function App() {
   }, [googleUser]);
 
   useEffect(() => {
-    if (!profile) return;
-
+    // Încărcare și ascultare setări clinică și logo-uri (activă permanent pentru toate componentele și documentele PDF)
     const unsubClinicConfig = onSnapshot(
       doc(db, "settings", "clinic"),
-      (snapshot) => {
+      async (snapshot) => {
         if (snapshot.exists()) {
           const cfg = snapshot.data() as ClinicConfig;
+          // Dacă documentul settings/clinic nu are logoUrl, încercăm fallback din clinic_config/main
+          if (!cfg.logoUrl && !cfg.secondaryLogoUrl) {
+            try {
+              const fallbackSnap = await getDoc(doc(db, "clinic_config", "main")).catch(() => null);
+              if (fallbackSnap && fallbackSnap.exists()) {
+                const fbData = fallbackSnap.data() as any;
+                if (fbData.logoUrl || fbData.secondaryLogoUrl) {
+                  const mergedCfg: ClinicConfig = {
+                    ...cfg,
+                    logoUrl: fbData.logoUrl || cfg.logoUrl || "",
+                    secondaryLogoUrl: fbData.secondaryLogoUrl || cfg.secondaryLogoUrl || "",
+                  };
+                  setClinicConfig(mergedCfg);
+                  try {
+                    localStorage.setItem("clinic_config_cache", JSON.stringify(mergedCfg));
+                    localStorage.setItem("opticenter_clinic_config", JSON.stringify(mergedCfg));
+                  } catch {}
+                  return;
+                }
+              }
+            } catch (e) {}
+          }
           setClinicConfig(cfg);
           try {
             localStorage.setItem("clinic_config_cache", JSON.stringify(cfg));
+            localStorage.setItem("opticenter_clinic_config", JSON.stringify(cfg));
           } catch {}
+        } else {
+          // Fallback din clinic_config/main dacă documentul settings/clinic nu a fost încă creat
+          try {
+            const fallbackSnap = await getDoc(doc(db, "clinic_config", "main")).catch(() => null);
+            if (fallbackSnap && fallbackSnap.exists()) {
+              const fbData = fallbackSnap.data() as any;
+              if (fbData.logoUrl || fbData.secondaryLogoUrl) {
+                const mergedCfg: ClinicConfig = {
+                  logoUrl: fbData.logoUrl || "",
+                  secondaryLogoUrl: fbData.secondaryLogoUrl || "",
+                };
+                setClinicConfig(mergedCfg);
+                try {
+                  localStorage.setItem("clinic_config_cache", JSON.stringify(mergedCfg));
+                  localStorage.setItem("opticenter_clinic_config", JSON.stringify(mergedCfg));
+                } catch {}
+              }
+            }
+          } catch (e) {}
         }
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, "settings/clinic");
       },
     );
+
+    if (!profile) {
+      return () => {
+        unsubClinicConfig();
+      };
+    }
 
     let unsubCurrentProfile: (() => void) | undefined;
     if (profile?.uid && profile.role !== "patient") {
@@ -15443,6 +15494,8 @@ export default function App() {
 
     setDeletedAppointments((prev) => [...prev, appointmentToCancel].slice(-20));
     await deleteDoc(doc(db, "appointments", appointmentToCancel.id));
+    // Eliminare garantată și instantanee din starea calendarului din memorie (pentru programări de la orice dată din trecut)
+    setAppointments((prev) => prev.filter((a) => a.id !== appointmentToCancel.id));
     setIsCancelOptionsModalOpen(false);
     setIsDeleteConfirmModalOpen(false);
     setAppointmentToCancel(null);
@@ -16467,10 +16520,25 @@ export default function App() {
       doc.setLineWidth(0.2);
     };
 
-    if (clinicConfig.logoUrl) {
+    // Asigură fallback la logouri din cache dacă state-ul nu s-a populat încă
+    const effectiveLogoUrl = clinicConfig?.logoUrl || (() => {
       try {
-        const fmt = getImageFormatForPdf(clinicConfig.logoUrl);
-        doc.addImage(clinicConfig.logoUrl, fmt, 14, 3, 30, 20);
+        const c = localStorage.getItem("clinic_config_cache") || localStorage.getItem("opticenter_clinic_config");
+        return c ? JSON.parse(c)?.logoUrl : "";
+      } catch { return ""; }
+    })();
+
+    const effectiveSecondaryLogoUrl = clinicConfig?.secondaryLogoUrl || (() => {
+      try {
+        const c = localStorage.getItem("clinic_config_cache") || localStorage.getItem("opticenter_clinic_config");
+        return c ? JSON.parse(c)?.secondaryLogoUrl : "";
+      } catch { return ""; }
+    })();
+
+    if (effectiveLogoUrl) {
+      try {
+        const fmt = getImageFormatForPdf(effectiveLogoUrl);
+        doc.addImage(effectiveLogoUrl, fmt, 14, 3, 30, 20);
       } catch (e) {
         console.error("Could not load logo in PDF", e);
       }
@@ -16482,11 +16550,11 @@ export default function App() {
       console.error("Could not load QR code in PDF", e);
     }
 
-    if (clinicConfig.secondaryLogoUrl) {
+    if (effectiveSecondaryLogoUrl) {
       try {
-        const fmt = getImageFormatForPdf(clinicConfig.secondaryLogoUrl);
+        const fmt = getImageFormatForPdf(effectiveSecondaryLogoUrl);
         doc.addImage(
-          clinicConfig.secondaryLogoUrl,
+          effectiveSecondaryLogoUrl,
           fmt,
           pageWidth - 51.5,
           8,
@@ -18120,10 +18188,25 @@ export default function App() {
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
 
-    if (clinicConfig.logoUrl) {
+    // Asigură fallback la logouri din cache dacă state-ul nu s-a populat încă
+    const effectiveLogoUrl = clinicConfig?.logoUrl || (() => {
       try {
-        const fmt = getImageFormatForPdf(clinicConfig.logoUrl);
-        doc.addImage(clinicConfig.logoUrl, fmt, 10, 2, 24, 15);
+        const c = localStorage.getItem("clinic_config_cache") || localStorage.getItem("opticenter_clinic_config");
+        return c ? JSON.parse(c)?.logoUrl : "";
+      } catch { return ""; }
+    })();
+
+    const effectiveSecondaryLogoUrl = clinicConfig?.secondaryLogoUrl || (() => {
+      try {
+        const c = localStorage.getItem("clinic_config_cache") || localStorage.getItem("opticenter_clinic_config");
+        return c ? JSON.parse(c)?.secondaryLogoUrl : "";
+      } catch { return ""; }
+    })();
+
+    if (effectiveLogoUrl) {
+      try {
+        const fmt = getImageFormatForPdf(effectiveLogoUrl);
+        doc.addImage(effectiveLogoUrl, fmt, 10, 2, 24, 15);
       } catch (e) {
         console.error("Could not load logo in PDF", e);
       }
@@ -18135,11 +18218,11 @@ export default function App() {
       console.error("Could not load QR code in PDF", e);
     }
 
-    if (clinicConfig.secondaryLogoUrl) {
+    if (effectiveSecondaryLogoUrl) {
       try {
-        const fmt = getImageFormatForPdf(clinicConfig.secondaryLogoUrl);
+        const fmt = getImageFormatForPdf(effectiveSecondaryLogoUrl);
         doc.addImage(
-          clinicConfig.secondaryLogoUrl,
+          effectiveSecondaryLogoUrl,
           fmt,
           pageWidth - 30,
           8,
@@ -21881,6 +21964,10 @@ export default function App() {
     await setDoc(doc(db, "settings", "clinic"), removeUndefined(updates), {
       merge: true,
     });
+    // Sincronizare redundantă în clinic_config/main pentru siguranță completă
+    await setDoc(doc(db, "clinic_config", "main"), removeUndefined(updates), {
+      merge: true,
+    }).catch(() => {});
   };
 
   const compressAndResizeImage = (
