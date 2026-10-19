@@ -12994,39 +12994,75 @@ export default function App() {
     }
 
     const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
 
+    // 1. Logo principal stânga (garantat cu cache fallback)
+    const effectiveLogoUrl = clinicConfig?.logoUrl || (() => {
+      try {
+        const c = localStorage.getItem("clinic_config_cache") || localStorage.getItem("opticenter_clinic_config");
+        return c ? JSON.parse(c)?.logoUrl : "";
+      } catch { return ""; }
+    })();
+
+    const effectiveSecondaryLogoUrl = clinicConfig?.secondaryLogoUrl || (() => {
+      try {
+        const c = localStorage.getItem("clinic_config_cache") || localStorage.getItem("opticenter_clinic_config");
+        return c ? JSON.parse(c)?.secondaryLogoUrl : "";
+      } catch { return ""; }
+    })();
+
+    if (effectiveLogoUrl) {
+      try {
+        const fmt = getImageFormatForPdf(effectiveLogoUrl);
+        doc.addImage(effectiveLogoUrl, fmt, 12, 4, 28, 18);
+      } catch (e) {
+        console.error("Could not load logo in glasses order PDF", e);
+      }
+    }
+
+    // QR Code Recenzii & Servicii
     try {
-      doc.addImage(QR_CODE_REVIEW_BASE64, "JPEG", 8, 3, 32, 32);
+      doc.addImage(QR_CODE_REVIEW_BASE64, "JPEG", 44, 4, 18, 18);
     } catch (e) {
       console.error("Could not load QR image in order PDF", e);
+    }
+
+    // 2. Logo secundar dreapta
+    if (effectiveSecondaryLogoUrl) {
+      try {
+        const fmt = getImageFormatForPdf(effectiveSecondaryLogoUrl);
+        doc.addImage(effectiveSecondaryLogoUrl, fmt, pageWidth - 42, 4, 28, 18);
+      } catch (e) {
+        console.error("Could not load secondary logo in order PDF", e);
+      }
     }
 
     const normalize = (text: string | undefined): string => {
       return normalizeForPDF(text).toUpperCase();
     };
 
-    doc.setFontSize(20);
+    doc.setFontSize(16);
     doc.setTextColor(30, 41, 59);
     doc.setFont("helvetica", "bold");
-    doc.text("CLINICA NEGREANU", 105, 12, { align: "center" });
+    doc.text("CLINICA NEGREANU", 105, 10, { align: "center" });
 
     doc.setFontSize(8);
     doc.setTextColor(100);
     doc.setFont("helvetica", "normal");
-    doc.text("CLINICA OFTALMOLOGICA SI OPTOMETRICA", 105, 16, {
+    doc.text("CLINICA OFTALMOLOGICA SI OPTOMETRICA", 105, 15, {
       align: "center",
     });
-    doc.text("PITESTI, STR. MIHAI EMINESCU, BL. 30, SC. A, AP. 2", 105, 20, {
+    doc.text("PITESTI, STR. MIHAI EMINESCU, BL. 30, SC. A, AP. 2", 105, 19, {
       align: "center",
     });
-    doc.text("TELEFON: 0248 223 162", 105, 24, { align: "center" });
+    doc.text("TELEFON: 0248 223 162", 105, 23, { align: "center" });
 
     doc.setDrawColor(200);
     doc.line(20, 26, 190, 26);
 
     doc.setFontSize(12);
     doc.setTextColor(30, 41, 59);
-    doc.text(`COMANDA OCHELARI NR. ${normalize(order.orderNumber)}`, 42, 32);
+    doc.text(`COMANDA OCHELARI NR. ${normalize(order.orderNumber)}`, 20, 32);
 
     if (order.isUrgent || order.nearIsUrgent) {
       doc.setFontSize(36);
@@ -13039,7 +13075,7 @@ export default function App() {
     doc.setTextColor(100);
     doc.text(
       `DATA PLASARE: ${format(new Date(order.createdAt), "dd.MM.yyyy HH:mm")}`,
-      42,
+      20,
       37,
     );
     doc.setTextColor(30, 41, 59);
@@ -13373,29 +13409,18 @@ export default function App() {
 
     let drawStartY = Math.max(finalY + 18, order.note ? (notesY + 3.5 + splitNotes.length * 4 + 4) : finalY + 18);
 
-    const hasFrameConfig =
+    // Secțiunea cu desenul ramei și parametrii detaliați de montaj apare doar dacă utilizatorul a ales explicit o formă de ramă (Mod Montaj)
+    const hasFrameConfig = Boolean(
       order.frameShape ||
-      order.frameType ||
-      order.lensWidth ||
-      order.lensHeight ||
-      order.bridgeSize ||
-      order.lensDiameter ||
-      order.fittingHeight_od ||
-      order.fittingHeight_os ||
-      order.dp_od ||
-      order.dp_os;
+      (order.fittingHeight_od && order.fittingHeight_od.trim() !== "") ||
+      (order.fittingHeight_os && order.fittingHeight_os.trim() !== "")
+    );
 
-    const hasNearFrameConfig =
+    const hasNearFrameConfig = Boolean(
       order.nearFrameShape ||
-      order.nearFrameType ||
-      order.nearLensWidth ||
-      order.nearLensHeight ||
-      order.nearBridgeSize ||
-      order.nearLensDiameter ||
-      order.nearFittingHeight_od ||
-      order.nearFittingHeight_os ||
-      order.nearDp_od ||
-      order.nearDp_os;
+      (order.nearFittingHeight_od && order.nearFittingHeight_od.trim() !== "") ||
+      (order.nearFittingHeight_os && order.nearFittingHeight_os.trim() !== "")
+    );
 
     if (hasFrameConfig || hasNearFrameConfig) {
       if (drawStartY > 210) {
