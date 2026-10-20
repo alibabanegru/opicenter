@@ -1256,10 +1256,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                   {/* Mentions spanning horizontally on the right */}
                   <div className="flex items-center justify-end gap-3 flex-1 max-w-[500px]">
                     <div className="flex items-center gap-2 sm:gap-3 mr-2 bg-slate-100/80 dark:bg-slate-800/60 p-1.5 rounded-xl border border-slate-200/60 dark:border-slate-700/60">
-                      <label className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer transition-all select-none hover:bg-blue-500/10 active:scale-95 group">
+                      {/* Consult complet: exclusiv mutual cu Revenire și Gratis */}
+                      <label className={cn(
+                        "flex items-center gap-1.5 px-2 py-1 rounded-lg select-none transition-all",
+                        (currentMedicalRecord.isControl || currentMedicalRecord.isGratis)
+                          ? "opacity-35 cursor-not-allowed pointer-events-none"
+                          : "cursor-pointer hover:bg-blue-500/10 active:scale-95 group"
+                      )}>
                         <input
                           type="checkbox"
                           id="consult-complet-checkbox"
+                          disabled={!!(currentMedicalRecord.isControl || currentMedicalRecord.isGratis)}
                           checked={
                             currentMedicalRecord.isConsultComplet || false
                           }
@@ -1267,9 +1274,11 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                             setCurrentMedicalRecord({
                               ...currentMedicalRecord,
                               isConsultComplet: e.target.checked,
+                              isControl: e.target.checked ? false : currentMedicalRecord.isControl,
+                              isGratis: e.target.checked ? false : currentMedicalRecord.isGratis,
                             })
                           }
-                          className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 focus:ring-blue-500 text-blue-600 transition-all cursor-pointer"
+                          className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 focus:ring-blue-500 text-blue-600 transition-all cursor-pointer disabled:cursor-not-allowed"
                         />
                         <span className={cn(
                           "text-[11px] font-black uppercase tracking-wider leading-tight whitespace-nowrap transition-colors",
@@ -1278,21 +1287,28 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           Consult complet
                         </span>
                       </label>
-                      <label className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer transition-all select-none hover:bg-amber-500/10 active:scale-95 group">
+
+                      {/* Revenire: exclusiv mutual cu Consult complet și Gratis */}
+                      <label className={cn(
+                        "flex items-center gap-1.5 px-2 py-1 rounded-lg select-none transition-all",
+                        (currentMedicalRecord.isConsultComplet || currentMedicalRecord.isGratis)
+                          ? "opacity-35 cursor-not-allowed pointer-events-none"
+                          : "cursor-pointer hover:bg-amber-500/10 active:scale-95 group"
+                      )}>
                         <input
                           type="checkbox"
                           id="revenire-checkbox"
+                          disabled={!!(currentMedicalRecord.isConsultComplet || currentMedicalRecord.isGratis)}
                           checked={currentMedicalRecord.isControl || false}
                           onChange={(e) =>
                             setCurrentMedicalRecord({
                               ...currentMedicalRecord,
                               isControl: e.target.checked,
-                              isGratis: e.target.checked
-                                ? false
-                                : currentMedicalRecord.isGratis,
+                              isConsultComplet: e.target.checked ? false : currentMedicalRecord.isConsultComplet,
+                              isGratis: e.target.checked ? false : currentMedicalRecord.isGratis,
                             })
                           }
-                          className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 focus:ring-amber-500 text-amber-500 transition-all cursor-pointer"
+                          className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 focus:ring-amber-500 text-amber-500 transition-all cursor-pointer disabled:cursor-not-allowed"
                         />
                         <span className={cn(
                           "text-[11px] font-black uppercase tracking-wider leading-tight whitespace-nowrap transition-colors",
@@ -1301,21 +1317,28 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           Revenire
                         </span>
                       </label>
-                      <label className="flex items-center gap-1.5 px-2 py-1 rounded-lg cursor-pointer transition-all select-none hover:bg-emerald-500/10 active:scale-95 group">
+
+                      {/* Gratis: exclusiv mutual cu Consult complet și Revenire */}
+                      <label className={cn(
+                        "flex items-center gap-1.5 px-2 py-1 rounded-lg select-none transition-all",
+                        (currentMedicalRecord.isConsultComplet || currentMedicalRecord.isControl)
+                          ? "opacity-35 cursor-not-allowed pointer-events-none"
+                          : "cursor-pointer hover:bg-emerald-500/10 active:scale-95 group"
+                      )}>
                         <input
                           type="checkbox"
                           id="gratis-checkbox"
+                          disabled={!!(currentMedicalRecord.isConsultComplet || currentMedicalRecord.isControl)}
                           checked={currentMedicalRecord.isGratis || false}
                           onChange={(e) =>
                             setCurrentMedicalRecord({
                               ...currentMedicalRecord,
                               isGratis: e.target.checked,
-                              isControl: e.target.checked
-                                ? false
-                                : currentMedicalRecord.isControl,
+                              isConsultComplet: e.target.checked ? false : currentMedicalRecord.isConsultComplet,
+                              isControl: e.target.checked ? false : currentMedicalRecord.isControl,
                             })
                           }
-                          className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 focus:ring-emerald-500 text-emerald-600 transition-all cursor-pointer"
+                          className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 focus:ring-emerald-500 text-emerald-600 transition-all cursor-pointer disabled:cursor-not-allowed"
                         />
                         <span className={cn(
                           "text-[11px] font-black uppercase tracking-wider leading-tight whitespace-nowrap transition-colors",

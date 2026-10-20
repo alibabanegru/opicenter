@@ -1549,47 +1549,74 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                             </div>
     
                             <div className="flex items-center gap-6 pt-5">
-                              <label className="flex items-center gap-2 cursor-pointer font-bold text-xs text-black dark:text-slate-200">
+                              {/* Consult Complet: devine inactiv daca e bifat Revenire sau Gratis */}
+                              <label className={cn(
+                                "flex items-center gap-2 font-bold text-xs text-black dark:text-slate-200 select-none transition-all",
+                                (documentForm.isControl || documentForm.isGratis)
+                                  ? "opacity-35 cursor-not-allowed pointer-events-none"
+                                  : "cursor-pointer"
+                              )}>
                                 <input
                                   type="checkbox"
+                                  disabled={!!(documentForm.isControl || documentForm.isGratis)}
                                   checked={!!documentForm.isConsultComplet}
                                   onChange={(e) =>
                                     setDocumentForm({
                                       ...documentForm,
                                       isConsultComplet: e.target.checked,
+                                      isControl: e.target.checked ? false : documentForm.isControl,
+                                      isGratis: e.target.checked ? false : documentForm.isGratis,
                                     })
                                   }
-                                  className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300"
+                                  className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300 cursor-pointer disabled:cursor-not-allowed"
                                 />
                                 Consult Complet
                               </label>
     
-                              <label className="flex items-center gap-2 cursor-pointer font-bold text-xs text-black dark:text-slate-200">
+                              {/* Revenire / Control: devine inactiv daca e bifat Consult Complet sau Gratis */}
+                              <label className={cn(
+                                "flex items-center gap-2 font-bold text-xs text-black dark:text-slate-200 select-none transition-all",
+                                (documentForm.isConsultComplet || documentForm.isGratis)
+                                  ? "opacity-35 cursor-not-allowed pointer-events-none"
+                                  : "cursor-pointer"
+                              )}>
                                 <input
                                   type="checkbox"
+                                  disabled={!!(documentForm.isConsultComplet || documentForm.isGratis)}
                                   checked={!!documentForm.isControl}
                                   onChange={(e) =>
                                     setDocumentForm({
                                       ...documentForm,
                                       isControl: e.target.checked,
+                                      isConsultComplet: e.target.checked ? false : documentForm.isConsultComplet,
+                                      isGratis: e.target.checked ? false : documentForm.isGratis,
                                     })
                                   }
-                                  className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300"
+                                  className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer disabled:cursor-not-allowed"
                                 />
                                 Revenire / Control
                               </label>
     
-                              <label className="flex items-center gap-2 cursor-pointer font-bold text-xs text-black dark:text-slate-200">
+                              {/* Gratis: devine inactiv daca e bifat Consult Complet sau Revenire */}
+                              <label className={cn(
+                                "flex items-center gap-2 font-bold text-xs text-black dark:text-slate-200 select-none transition-all",
+                                (documentForm.isConsultComplet || documentForm.isControl)
+                                  ? "opacity-35 cursor-not-allowed pointer-events-none"
+                                  : "cursor-pointer"
+                              )}>
                                 <input
                                   type="checkbox"
+                                  disabled={!!(documentForm.isConsultComplet || documentForm.isControl)}
                                   checked={!!documentForm.isGratis}
                                   onChange={(e) =>
                                     setDocumentForm({
                                       ...documentForm,
                                       isGratis: e.target.checked,
+                                      isConsultComplet: e.target.checked ? false : documentForm.isConsultComplet,
+                                      isControl: e.target.checked ? false : documentForm.isControl,
                                     })
                                   }
-                                  className="w-4 h-4 rounded text-green-600 focus:ring-green-500 border-slate-300"
+                                  className="w-4 h-4 rounded text-green-600 focus:ring-green-500 border-slate-300 cursor-pointer disabled:cursor-not-allowed"
                                 />
                                 Gratis
                               </label>

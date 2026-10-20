@@ -584,7 +584,9 @@ export interface PrescriptionHistoryItem {
   colorVision?: "Normală (Tricromatică)" | "Dicromatism (Protanopie)" | "Discromatism (Deuteranopie)" | "Discromatism (Tritanopie)" | "Monocromatism" | "";
   binocularVision?: "Normală" | "Slabă (diplopie)" | "Slabă (Probleme de convergență)" | "Slabă (Probleme de divergență)" | "Slabă (Ambliopie)" | "";
   anteriorSegment?: { od: string; os: string };
+  anteriorSegmentAo?: boolean;
   posteriorSegment?: { od: string; os: string };
+  posteriorSegmentAo?: boolean;
   otherEyeDiseases?: string;
   scutire?: string;
   keratometry?: {

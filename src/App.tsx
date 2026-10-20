@@ -9920,11 +9920,16 @@ export default function App() {
             od: latestDoc?.formValues?.anteriorSegmentOd || "",
             os: latestDoc?.formValues?.anteriorSegmentOs || "",
           },
+        anteriorSegmentAo: targetPrescription?.anteriorSegmentAo ?? data.anteriorSegmentAo ?? false,
         posteriorSegment: targetPrescription?.posteriorSegment ||
           data.posteriorSegment || {
             od: latestDoc?.formValues?.posteriorSegmentOd || "",
             os: latestDoc?.formValues?.posteriorSegmentOs || "",
           },
+        posteriorSegmentAo: targetPrescription?.posteriorSegmentAo ?? data.posteriorSegmentAo ?? false,
+        contrastSensitivity: targetPrescription?.contrastSensitivity || data.contrastSensitivity || "",
+        colorVision: targetPrescription?.colorVision || data.colorVision || "",
+        binocularVision: targetPrescription?.binocularVision || data.binocularVision || "",
         keratometry: targetPrescription?.keratometry ||
           data.keratometry || {
             od: latestDoc?.formValues?.keratometryOd || "",
@@ -10625,6 +10630,19 @@ export default function App() {
       keratometry: currentMedicalRecord.keratometry
         ? { ...currentMedicalRecord.keratometry }
         : { od: "", os: "" },
+      anteriorSegment: currentMedicalRecord.anteriorSegment
+        ? { ...currentMedicalRecord.anteriorSegment }
+        : { od: "", os: "" },
+      anteriorSegmentAo: currentMedicalRecord.anteriorSegmentAo,
+      posteriorSegment: currentMedicalRecord.posteriorSegment
+        ? { ...currentMedicalRecord.posteriorSegment }
+        : { od: "", os: "" },
+      posteriorSegmentAo: currentMedicalRecord.posteriorSegmentAo,
+      contrastSensitivity: currentMedicalRecord.contrastSensitivity,
+      colorVision: currentMedicalRecord.colorVision,
+      binocularVision: currentMedicalRecord.binocularVision,
+      otherEyeDiseases: currentMedicalRecord.otherEyeDiseases,
+      scutire: currentMedicalRecord.scutire,
       examinations: currentMedicalRecord.examinations
         ? { ...currentMedicalRecord.examinations }
         : { ...DEFAULT_EXAMINATIONS },
@@ -10674,6 +10692,16 @@ export default function App() {
         currentMedicalRecord.lensTreatment ||
         (currentMedicalRecord as any).lensHeliomat ||
         currentMedicalRecord.examinationInterpretation ||
+        currentMedicalRecord.anteriorSegment?.od ||
+        currentMedicalRecord.anteriorSegment?.os ||
+        currentMedicalRecord.posteriorSegment?.od ||
+        currentMedicalRecord.posteriorSegment?.os ||
+        currentMedicalRecord.keratometry?.od ||
+        currentMedicalRecord.keratometry?.os ||
+        currentMedicalRecord.contrastSensitivity ||
+        currentMedicalRecord.colorVision ||
+        currentMedicalRecord.binocularVision ||
+        currentMedicalRecord.otherEyeDiseases ||
         currentMedicalRecord.isConsultComplet ||
         currentMedicalRecord.isControl ||
         currentMedicalRecord.isGratis;
@@ -10884,6 +10912,15 @@ export default function App() {
           prescriptionHistory: updatedRecord.prescriptionHistory,
           axialLength: updatedRecord.axialLength,
           keratometry: updatedRecord.keratometry,
+          anteriorSegment: updatedRecord.anteriorSegment,
+          anteriorSegmentAo: updatedRecord.anteriorSegmentAo,
+          posteriorSegment: updatedRecord.posteriorSegment,
+          posteriorSegmentAo: updatedRecord.posteriorSegmentAo,
+          contrastSensitivity: updatedRecord.contrastSensitivity,
+          colorVision: updatedRecord.colorVision,
+          binocularVision: updatedRecord.binocularVision,
+          otherEyeDiseases: updatedRecord.otherEyeDiseases,
+          scutire: updatedRecord.scutire,
           iop: updatedRecord.iop,
           correctedIop: updatedRecord.correctedIop,
           pachymetry: updatedRecord.pachymetry,
@@ -15737,6 +15774,14 @@ export default function App() {
         doc(db, "appointments", lastDeleted.id),
         removeUndefined(lastDeleted),
       );
+      // Actualizare instantanee a stării locale din calendar
+      setAppointments((prev) => {
+        const exists = prev.some((a) => a.id === lastDeleted.id);
+        if (exists) {
+          return prev.map((a) => (a.id === lastDeleted.id ? lastDeleted : a));
+        }
+        return [lastDeleted, ...prev];
+      });
       setDeletedAppointments((prev) => prev.slice(0, -1));
       setSuccessMessage(
         `Pacientul ${lastDeleted.patientName} a fost restaurat cu succes în calendar!`,
@@ -15808,6 +15853,11 @@ export default function App() {
         : { od: "", os: "" },
       otherEyeDiseases: currentMedicalRecord.otherEyeDiseases || "",
       scutire: currentMedicalRecord.scutire || "",
+      anteriorSegmentAo: currentMedicalRecord.anteriorSegmentAo,
+      posteriorSegmentAo: currentMedicalRecord.posteriorSegmentAo,
+      contrastSensitivity: currentMedicalRecord.contrastSensitivity,
+      colorVision: currentMedicalRecord.colorVision,
+      binocularVision: currentMedicalRecord.binocularVision,
       examinations: currentMedicalRecord.examinations
         ? { ...currentMedicalRecord.examinations }
         : { ...DEFAULT_EXAMINATIONS },
@@ -16069,6 +16119,11 @@ export default function App() {
           : { od: "", os: "" },
         otherEyeDiseases: targetItem.otherEyeDiseases || "",
         scutire: targetItem.scutire || "",
+        anteriorSegmentAo: targetItem.anteriorSegmentAo || false,
+        posteriorSegmentAo: targetItem.posteriorSegmentAo || false,
+        contrastSensitivity: targetItem.contrastSensitivity || "",
+        colorVision: targetItem.colorVision || "",
+        binocularVision: targetItem.binocularVision || "",
         keratometry: targetItem.keratometry
           ? { ...targetItem.keratometry }
           : { od: "", os: "" },
