@@ -3507,7 +3507,7 @@ export default function App() {
   );
   const [birthdayTemplate, setBirthdayTemplate] = useState<string>(() => {
     const saved = localStorage.getItem("clinic_birthday_template");
-    return saved || "La mulți ani cu ocazia împlinirii frumoasei vârste de {varsta} de ani, {nume}! 🎂🥳 Echipa noastră vă dorește din tot sufletul multă sănătate, fericire, bucurii și o vedere limpede spre toate minunile vieții! Să aveți o zi minunată! 🎈🥂✨";
+    return saved || "La mulți ani cu ocazia împlinirii frumoasei vârste de {varsta} de ani, {nume}! 🎂🥳 echipa opticii Negreanu vă dorește din tot sufletul multă sănătate, fericire, bucurii și o vedere limpede spre toate minunile vieții! Să aveți o zi minunată! 🎈🥂✨";
   });
   const [isEditingTemplate, setIsEditingTemplate] = useState<boolean>(false);
   const [eqSfericActiveOD, setEqSfericActiveOD] = useState(false);
@@ -3596,27 +3596,36 @@ export default function App() {
       if (
         !baseTemplate ||
         baseTemplate.trim() === "" ||
-        baseTemplate.includes("Echipa noastră vă urează o zi plină de soare, sănătate, fericire și o vedere limpede")
+        baseTemplate.includes("Echipa noastră vă urează o zi plină de soare, sănătate, fericire și o vedere limpede") ||
+        baseTemplate.includes("Echipa noastră") ||
+        baseTemplate.includes("echipa noastră")
       ) {
         if (age !== undefined && age !== null && age > 0) {
           if (age >= 60) {
             baseTemplate =
-              "La mulți ani cu deosebit respect și aleasă prețuire, {nume}! 🎂 Cu ocazia împlinirii frumoasei vârste de {varsta} de ani, echipa noastră vă dorește din tot sufletul multă sănătate, liniște sufletească, bucurii alături de cei dragi și o vedere limpede și senină! Să aveți o zi binecuvântată! 🎈🥂✨";
+              "La mulți ani cu deosebit respect și aleasă prețuire, {nume}! 🎂 Cu ocazia împlinirii frumoasei vârste de {varsta} de ani, echipa opticii Negreanu vă dorește din tot sufletul multă sănătate, liniște sufletească, bucurii alături de cei dragi și o vedere limpede și senină! Să aveți o zi binecuvântată! 🎈🥂✨";
           } else {
             baseTemplate =
-              "La mulți ani cu ocazia împlinirii frumoasei vârste de {varsta} de ani, {nume}! 🎂🥳 Echipa noastră vă dorește o zi plină de soare, sănătate, fericire și o vedere limpede spre toate minunile vieții! Să aveți o zi minunată! 🎈🥂✨";
+              "La mulți ani cu ocazia împlinirii frumoasei vârste de {varsta} de ani, {nume}! 🎂🥳 echipa opticii Negreanu vă dorește o zi plină de soare, sănătate, fericire și o vedere limpede spre toate minunile vieții! Să aveți o zi minunată! 🎈🥂✨";
           }
         } else {
           baseTemplate =
-            "La mulți ani frumoși, {nume}! 🎂🥳 Echipa noastră vă dorește o zi plină de soare, sănătate, fericire și o vedere limpede spre toate minunile vieții! Să aveți o zi minunată! 🎈🥂✨";
+            "La mulți ani frumoși, {nume}! 🎂🥳 echipa opticii Negreanu vă dorește o zi plină de soare, sănătate, fericire și o vedere limpede spre toate minunile vieții! Să aveți o zi minunată! 🎈🥂✨";
         }
       }
 
       // If patient has advanced age (>= 60) and standard template is used, apply respectful wording
       if (age !== undefined && age !== null && age >= 60 && baseTemplate.startsWith("La mulți ani cu ocazia împlinirii frumoasei vârste de {varsta}")) {
         baseTemplate =
-          "La mulți ani cu deosebit respect și aleasă prețuire, {nume}! 🎂 Cu ocazia împlinirii frumoasei vârste de {varsta} de ani, echipa noastră vă dorește din tot sufletul multă sănătate, liniște sufletească, bucurii alături de cei dragi și o vedere limpede și senină! Să aveți o zi binecuvântată! 🎈🥂✨";
+          "La mulți ani cu deosebit respect și aleasă prețuire, {nume}! 🎂 Cu ocazia împlinirii frumoasei vârste de {varsta} de ani, echipa opticii Negreanu vă dorește din tot sufletul multă sănătate, liniște sufletească, bucurii alături de cei dragi și o vedere limpede și senină! Să aveți o zi binecuvântată! 🎈🥂✨";
       }
+
+      // Înlocuire automată a oricărei apariții "Echipa noastră" / "echipa noastră" cu "echipa opticii Negreanu"
+      baseTemplate = baseTemplate
+        .replace(/Echipa noastră/g, "echipa opticii Negreanu")
+        .replace(/echipa noastră/g, "echipa opticii Negreanu")
+        .replace(/Echipa noastra/g, "echipa opticii Negreanu")
+        .replace(/echipa noastra/g, "echipa opticii Negreanu");
 
       // Replace {nume}
       let msg = baseTemplate.replace(/{nume}/g, patientName);
@@ -16964,10 +16973,38 @@ export default function App() {
 
     let finalY = y;
 
+    // Verificăm dacă există valori introduse la Distanță (sferă, cilindru, ax)
+    const hasDistanceDiopters = !!(
+      (currentMedicalRecord.od.sph && currentMedicalRecord.od.sph.trim() !== "" && currentMedicalRecord.od.sph !== "-") ||
+      (currentMedicalRecord.od.cyl && currentMedicalRecord.od.cyl.trim() !== "" && currentMedicalRecord.od.cyl !== "-") ||
+      (currentMedicalRecord.od.axis && currentMedicalRecord.od.axis.trim() !== "" && currentMedicalRecord.od.axis !== "-") ||
+      (currentMedicalRecord.os.sph && currentMedicalRecord.os.sph.trim() !== "" && currentMedicalRecord.os.sph !== "-") ||
+      (currentMedicalRecord.os.cyl && currentMedicalRecord.os.cyl.trim() !== "" && currentMedicalRecord.os.cyl !== "-") ||
+      (currentMedicalRecord.os.axis && currentMedicalRecord.os.axis.trim() !== "" && currentMedicalRecord.os.axis !== "-")
+    );
+
+    const odAddParsedForPdf =
+      parseFloat(String(currentMedicalRecord.od.add || "").replace(",", ".")) || 0;
+    const osAddParsedForPdf =
+      parseFloat(String(currentMedicalRecord.os.add || "").replace(",", ".")) || 0;
+    const hasPrescriptionAddition =
+      odAddParsedForPdf !== 0 || osAddParsedForPdf !== 0;
+
+    // Verificăm dacă există valori introduse la Aproape (adiție sau dioptrii dedicate de aproape)
+    const hasNearDiopters = !!(
+      hasPrescriptionAddition ||
+      (currentMedicalRecord.od.near_sph && currentMedicalRecord.od.near_sph.trim() !== "" && currentMedicalRecord.od.near_sph !== "-") ||
+      (currentMedicalRecord.os.near_sph && currentMedicalRecord.os.near_sph.trim() !== "" && currentMedicalRecord.os.near_sph !== "-") ||
+      (currentMedicalRecord.od.near_cyl && currentMedicalRecord.od.near_cyl.trim() !== "" && currentMedicalRecord.od.near_cyl !== "-") ||
+      (currentMedicalRecord.os.near_cyl && currentMedicalRecord.os.near_cyl.trim() !== "" && currentMedicalRecord.os.near_cyl !== "-")
+    );
+
     if (shouldShowDioptersTable) {
       y += 0;
-      drawProtractorPDF(doc, odCenter, y + 14, currentMedicalRecord.od.axis);
-      drawProtractorPDF(doc, osCenter, y + 14, currentMedicalRecord.os.axis);
+      const odAxisToDraw = (hasDistanceDiopters ? currentMedicalRecord.od.axis : (hasNearDiopters ? finalNearAxisOD : "")) || "";
+      const osAxisToDraw = (hasDistanceDiopters ? currentMedicalRecord.os.axis : (hasNearDiopters ? finalNearAxisOS : "")) || "";
+      drawProtractorPDF(doc, odCenter, y + 14, odAxisToDraw);
+      drawProtractorPDF(doc, osCenter, y + 14, osAxisToDraw);
 
       y += 14.5;
 
@@ -16996,14 +17033,7 @@ export default function App() {
             ? `${(dpTotal - 2).toString()}`
             : "-";
 
-      const odAddParsedForPdf =
-        parseFloat(String(currentMedicalRecord.od.add || "").replace(",", ".")) ||
-        0;
-      const osAddParsedForPdf =
-        parseFloat(String(currentMedicalRecord.os.add || "").replace(",", ".")) ||
-        0;
-      const hasPrescriptionAddition =
-        odAddParsedForPdf !== 0 || osAddParsedForPdf !== 0;
+
 
       const formatNumericCellForTable = (val: string) => {
         const displayVal = val || "-";
@@ -17019,8 +17049,13 @@ export default function App() {
         };
       };
 
-      const tableBody: any[] = [
-        [
+
+
+      const tableBody: any[] = [];
+
+      // Rândul Distanță apare DOAR dacă avem dioptrii de distanță (sau dacă nu e nimic la aproape, dar există DP de distanță)
+      if (hasDistanceDiopters || (!hasNearDiopters && hasDpInPrescription)) {
+        tableBody.push([
           {
             content: cleanStr("Distanță"),
             styles: {
@@ -17049,10 +17084,11 @@ export default function App() {
           formatNumericCellForTable(currentMedicalRecord.os.sph),
           formatNumericCellForTable(currentMedicalRecord.os.cyl),
           formatNumericCellForTable(currentMedicalRecord.os.axis),
-        ],
-      ];
+        ]);
+      }
 
-      if (hasPrescriptionAddition) {
+      // Rândul Aproape apare DOAR dacă avem aditie/dioptrii de aproape
+      if (hasNearDiopters) {
         tableBody.push([
           {
             content: cleanStr("Aproape"),
@@ -26088,19 +26124,6 @@ export default function App() {
                                            🌐 Online
                                          </span>
                                        )}
-                                       {isControlStatus ? (
-                                         <span className="text-amber-500 animate-blink-orange font-black mr-1" title="Revenire">
-                                           R
-                                         </span>
-                                       ) : isConsultCompletStatus ? (
-                                         <span className="text-blue-500 font-black mr-1" title="Consult Complet">
-                                           C
-                                         </span>
-                                       ) : isGratisStatus ? (
-                                         <span className="text-emerald-500 font-black mr-1" title="Gratis">
-                                           G
-                                         </span>
-                                       ) : null}
                                        {appointment.patientName}
                                        {(() => {
                                          const ageStr = calculateDetailedAge(appointment.patientBirthDate || "") || (appointment.patientAge ? appointment.patientAge + "ani" : "");
