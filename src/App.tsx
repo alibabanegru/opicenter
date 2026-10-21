@@ -2457,6 +2457,7 @@ export default function App() {
   }, [selectedDate, profile]);
 
   const [isLoadingAllHistory, setIsLoadingAllHistory] = useState(false);
+  const [isLoading30Days, setIsLoading30Days] = useState(false);
   const [hasLoadedAllHistory, setHasLoadedAllHistory] = useState(false);
 
   const handleLoadFullArchive = async () => {
@@ -2483,6 +2484,33 @@ export default function App() {
       setErrorMessage("Eroare la descărcarea arhivei din baza de date. Verificați conexiunea la internet.");
     } finally {
       setIsLoadingAllHistory(false);
+    }
+  };
+
+  const handleLoad30Days = async () => {
+    if (isLoading30Days) return;
+    setIsLoading30Days(true);
+    try {
+      const thirtyDaysAgoISO = subDays(startOfDay(new Date()), 30).toISOString();
+      const appSnap = await getDocs(
+        query(
+          collection(db, "appointments"),
+          where("startTime", ">=", thirtyDaysAgoISO),
+        ),
+      );
+      const apps30 = appSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Appointment));
+      setAppointments((prev) => {
+        const freshIds = new Set(apps30.map((a) => a.id));
+        const futureOrOther = prev.filter((a) => !freshIds.has(a.id) && a.startTime >= thirtyDaysAgoISO);
+        return [...apps30, ...futureOrOther];
+      });
+      setHasLoadedAllHistory(false);
+      setSuccessMessage(`Modul Smart Loading (30 zile) a fost activat! (${apps30.length} programări recente)`);
+    } catch (e) {
+      console.error("Error loading 30 days:", e);
+      setErrorMessage("Eroare la sincronizarea ultimelor 30 de zile.");
+    } finally {
+      setIsLoading30Days(false);
     }
   };
   const [showDatePickerDropdown, setShowDatePickerDropdown] = useState(false);
@@ -3372,6 +3400,20 @@ export default function App() {
   const [newAxialDateOs, setNewAxialDateOs] = useState("");
   const myopiaChartRef = useRef<HTMLDivElement>(null);
   const [myopiaChartEye, setMyopiaChartEye] = useState<"OD" | "OS">("OD");
+  const [isMyopiaCombinedView, setIsMyopiaCombinedView] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("myopia_chart_combined_view") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const handleToggleMyopiaCombinedView = (val: boolean) => {
+    setIsMyopiaCombinedView(val);
+    try {
+      localStorage.setItem("myopia_chart_combined_view", String(val));
+    } catch {}
+  };
   const [isNewPatientFromSearchModalOpen, setIsNewPatientFromSearchModalOpen] =
     useState(false);
   const [isOrdersModalOpen, setIsOrdersModalOpen] = useState(false);
@@ -8488,6 +8530,8 @@ export default function App() {
     height: number,
     sex: "M" | "F",
     patientData: { age: number; axialLength: number }[],
+    patientDataOs?: { age: number; axialLength: number }[],
+    isCombinedMode?: boolean,
   ) => {
     const data = sex === "M" ? MYOPIA_BOYS_DATA : MYOPIA_GIRLS_DATA;
     const padding = 15;
@@ -8612,10 +8656,11 @@ export default function App() {
       );
     });
 
-    if (patientData.length > 0) {
-      doc.setDrawColor(59, 130, 246);
-      doc.setLineWidth(1);
+    // Linia OD (Ochi Drept) - În modul combinat: linie mai groasă (1.4) și puncte mai mari (2.4mm) pentru recunoaștere sigură alb-negru
+    if (patientData && patientData.length > 0) {
       const sorted = [...patientData].sort((a, b) => a.age - b.age);
+      doc.setDrawColor(37, 99, 235);
+      doc.setLineWidth(isCombinedMode ? 1.4 : 1);
       for (let i = 0; i < sorted.length - 1; i++) {
         doc.line(
           getX(sorted[i].age),
@@ -8625,9 +8670,39 @@ export default function App() {
         );
       }
       sorted.forEach((p) => {
-        doc.setFillColor(59, 130, 246);
-        doc.circle(getX(p.age), getY(p.axialLength), 1.5, "F");
+        doc.setFillColor(37, 99, 235);
+        // Punct mai gros pentru OD (2.4mm în modul combinat)
+        doc.circle(getX(p.age), getY(p.axialLength), isCombinedMode ? 2.4 : 1.5, "F");
       });
+    }
+
+    // Linia OS (Ochi Stâng) dacă modul combinat este activat - linie mai subțire (0.6) și punct mai mic (1.2mm)
+    if (isCombinedMode && patientDataOs && patientDataOs.length > 0) {
+      const sortedOs = [...patientDataOs].sort((a, b) => a.age - b.age);
+      doc.setDrawColor(16, 185, 129);
+      doc.setLineWidth(0.6);
+      for (let i = 0; i < sortedOs.length - 1; i++) {
+        doc.line(
+          getX(sortedOs[i].age),
+          getY(sortedOs[i].axialLength),
+          getX(sortedOs[i + 1].age),
+          getY(sortedOs[i + 1].axialLength),
+        );
+      }
+      sortedOs.forEach((p) => {
+        doc.setFillColor(16, 185, 129);
+        // Punct mai mic pentru OS (1.2mm)
+        doc.circle(getX(p.age), getY(p.axialLength), 1.2, "F");
+      });
+
+      // Legendă pe grafic pentru identificare la print alb-negru
+      doc.setFontSize(7.5);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(37, 99, 235);
+      doc.text("--- OD (Punct & Linie Groasa)", startX + padding + 4, startY + padding + 6);
+      doc.setTextColor(16, 185, 129);
+      doc.text("- - OS (Punct & Linie Subtire)", startX + padding + 4, startY + padding + 10);
+      doc.setTextColor(0);
     }
 
     doc.setFontSize(8);
@@ -9031,38 +9106,62 @@ export default function App() {
       { align: "center" },
     );
 
-    const chartWidth = (pageWidth - 30) / 2; // ~133.5 mm wide for each eye's chart
-    const chartHeight = pageHeight - 65; // ~145 mm tall
-
     const odData = getComprehensivePatientAxialData("OD", record);
-    doc.setFontSize(11);
-    doc.setFont("helvetica", "bold");
-    doc.text(cleanStrForMyopia("Ochi Drept (OD)"), 15 + chartWidth / 2, 31, { align: "center" });
-
-    drawMyopiaGraph(
-      doc,
-      10,
-      34,
-      chartWidth,
-      chartHeight,
-      record.patientSex || "F",
-      odData,
-    );
-
     const osData = getComprehensivePatientAxialData("OS", record);
-    doc.setFontSize(11);
-    doc.setFont("helvetica", "bold");
-    doc.text(cleanStrForMyopia("Ochi Stang (OS)"), 20 + chartWidth + chartWidth / 2, 31, { align: "center" });
 
-    drawMyopiaGraph(
-      doc,
-      20 + chartWidth,
-      34,
-      chartWidth,
-      chartHeight,
-      record.patientSex || "F",
-      osData,
-    );
+    if (isMyopiaCombinedView) {
+      // Mod Grafic Combinat A4 (un singur grafic mare cu OD și OS suprapuse)
+      const singleChartWidth = pageWidth - 20;
+      const singleChartHeight = pageHeight - 65;
+
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text(cleanStrForMyopia("Grafic Comparativ Suprapus (OD & OS)"), pageWidth / 2, 31, { align: "center" });
+
+      drawMyopiaGraph(
+        doc,
+        10,
+        34,
+        singleChartWidth,
+        singleChartHeight,
+        record.patientSex || "F",
+        odData,
+        osData,
+        true,
+      );
+    } else {
+      // Mod Două Grafice Separate A4
+      const chartWidth = (pageWidth - 30) / 2; // ~133.5 mm wide for each eye's chart
+      const chartHeight = pageHeight - 65; // ~145 mm tall
+
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text(cleanStrForMyopia("Ochi Drept (OD)"), 15 + chartWidth / 2, 31, { align: "center" });
+
+      drawMyopiaGraph(
+        doc,
+        10,
+        34,
+        chartWidth,
+        chartHeight,
+        record.patientSex || "F",
+        odData,
+      );
+
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text(cleanStrForMyopia("Ochi Stang (OS)"), 20 + chartWidth + chartWidth / 2, 31, { align: "center" });
+
+      drawMyopiaGraph(
+        doc,
+        20 + chartWidth,
+        34,
+        chartWidth,
+        chartHeight,
+        record.patientSex || "F",
+        osData,
+      );
+    }
 
     const riskLabels = record.patientSex === "M" ? BOYS_RISK : GIRLS_RISK;
     const chartD = record.patientSex === "M" ? MYOPIA_BOYS_DATA : MYOPIA_GIRLS_DATA;
@@ -9114,10 +9213,11 @@ export default function App() {
       doc.text(cleanStrForMyopia("OD: Nicio informatie disponibila."), 15, pageHeight - 7);
     }
 
+    const secondColumnX = isMyopiaCombinedView ? pageWidth / 2 + 5 : 20 + ((pageWidth - 30) / 2);
     if (osPercentileStr) {
-      doc.text(cleanStrForMyopia(osPercentileStr), 20 + chartWidth, pageHeight - 7);
+      doc.text(cleanStrForMyopia(osPercentileStr), secondColumnX, pageHeight - 7);
     } else {
-      doc.text(cleanStrForMyopia("OS: Nicio informatie disponibila."), 20 + chartWidth, pageHeight - 7);
+      doc.text(cleanStrForMyopia("OS: Nicio informatie disponibila."), secondColumnX, pageHeight - 7);
     }
 
     doc.save(
@@ -16401,6 +16501,8 @@ export default function App() {
       height: number,
       sex: "M" | "F",
       patientData: { age: number; axialLength: number }[],
+      patientDataOs?: { age: number; axialLength: number }[],
+      isCombinedMode?: boolean,
     ) => {
       const data = sex === "M" ? MYOPIA_BOYS_DATA : MYOPIA_GIRLS_DATA;
       const padding = 12;
@@ -16515,9 +16617,10 @@ export default function App() {
         }
       });
 
-      if (patientData.length > 0) {
-        doc.setDrawColor(59, 130, 246);
-        doc.setLineWidth(0.8);
+      // Linia OD (Ochi Drept) - În modul combinat: linie mai groasă (1.3) și punct mai gros (2.0mm)
+      if (patientData && patientData.length > 0) {
+        doc.setDrawColor(37, 99, 235);
+        doc.setLineWidth(isCombinedMode ? 1.3 : 0.8);
         const sorted = [...patientData].sort((a, b) => a.age - b.age);
         for (let i = 0; i < sorted.length - 1; i++) {
           doc.line(
@@ -16528,9 +16631,36 @@ export default function App() {
           );
         }
         sorted.forEach((p) => {
-          doc.setFillColor(59, 130, 246);
-          doc.circle(getX(p.age), getY(p.axialLength), 1.2, "F");
+          doc.setFillColor(37, 99, 235);
+          doc.circle(getX(p.age), getY(p.axialLength), isCombinedMode ? 2.0 : 1.2, "F");
         });
+      }
+
+      // Linia OS (Ochi Stâng) dacă modul combinat este activat - linie mai subțire (0.5) și punct mai mic (1.0mm)
+      if (isCombinedMode && patientDataOs && patientDataOs.length > 0) {
+        doc.setDrawColor(16, 185, 129);
+        doc.setLineWidth(0.5);
+        const sortedOs = [...patientDataOs].sort((a, b) => a.age - b.age);
+        for (let i = 0; i < sortedOs.length - 1; i++) {
+          doc.line(
+            getX(sortedOs[i].age),
+            getY(sortedOs[i].axialLength),
+            getX(sortedOs[i + 1].age),
+            getY(sortedOs[i + 1].axialLength),
+          );
+        }
+        sortedOs.forEach((p) => {
+          doc.setFillColor(16, 185, 129);
+          doc.circle(getX(p.age), getY(p.axialLength), 1.0, "F");
+        });
+
+        doc.setFontSize(6.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(37, 99, 235);
+        doc.text("OD (Punct & Linie Groasa)", startX + padding + 2, startY + padding + 5);
+        doc.setTextColor(16, 185, 129);
+        doc.text("OS (Punct & Linie Subtire)", startX + padding + 2, startY + padding + 8.5);
+        doc.setTextColor(0);
       }
 
       doc.setFontSize(6);
@@ -18050,6 +18180,104 @@ export default function App() {
 
     if (hasMyopiaData) {
       const isDual = myopiaHistoryOD.length > 0 && myopiaHistoryOS.length > 0;
+
+      if (isMyopiaCombinedView && isDual) {
+        // Mod Combinat: un singur grafic mare cu OD și OS suprapuse
+        const singleGraphWidth = pageWidth - 40;
+        const graphHeight = 65;
+
+        if (finalY + 15 + graphHeight + 25 > pageHeight) {
+          doc.addPage();
+          finalY = 15;
+        } else {
+          finalY += 1;
+        }
+
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.text(cleanStr("Management Miopie - Grafic Combinat (OD & OS)"), pageWidth / 2, finalY, {
+          align: "center",
+        });
+        finalY += 4;
+
+        const odPatientData = myopiaHistoryOD.map((h) => ({
+          age: currentMedicalRecord.patientBirthDate
+            ? calculateAge(
+                currentMedicalRecord.patientBirthDate,
+                new Date(h.date),
+              ) || 0
+            : currentMedicalRecord.patientAge,
+          axialLength: h.axialLength,
+        }));
+
+        const osPatientData = myopiaHistoryOS.map((h) => ({
+          age: currentMedicalRecord.patientBirthDate
+            ? calculateAge(
+                currentMedicalRecord.patientBirthDate,
+                new Date(h.date),
+              ) || 0
+            : currentMedicalRecord.patientAge,
+          axialLength: h.axialLength,
+        }));
+
+        drawMyopiaGraph(
+          doc,
+          20,
+          finalY,
+          singleGraphWidth,
+          graphHeight,
+          currentMedicalRecord.patientSex || "F",
+          odPatientData,
+          osPatientData,
+          true,
+        );
+
+        finalY += graphHeight + 6;
+
+        const riskLabels =
+          currentMedicalRecord.patientSex === "M" ? BOYS_RISK : GIRLS_RISK;
+        const chartD =
+          currentMedicalRecord.patientSex === "M"
+            ? MYOPIA_BOYS_DATA
+            : MYOPIA_GIRLS_DATA;
+
+        let odStr = "";
+        if (odPatientData.length > 0) {
+          const lastOD = odPatientData[odPatientData.length - 1];
+          const agePoint = chartD.reduce((prev, curr) =>
+            Math.abs(curr.age - lastOD.age) < Math.abs(prev.age - lastOD.age) ? curr : prev
+          );
+          const percentiles = [98, 95, 90, 75, 50, 25, 10, 5, 2];
+          let closestP = 2;
+          for (const p of percentiles) {
+            if (lastOD.axialLength >= (agePoint as any)[`p${p}`]) { closestP = p; break; }
+          }
+          odStr = `Analiză Risc OD (P${closestP}): ${riskLabels[`p${closestP}`]}`;
+        }
+
+        let osStr = "";
+        if (osPatientData.length > 0) {
+          const lastOS = osPatientData[osPatientData.length - 1];
+          const agePoint = chartD.reduce((prev, curr) =>
+            Math.abs(curr.age - lastOS.age) < Math.abs(prev.age - lastOS.age) ? curr : prev
+          );
+          const percentiles = [98, 95, 90, 75, 50, 25, 10, 5, 2];
+          let closestP = 2;
+          for (const p of percentiles) {
+            if (lastOS.axialLength >= (agePoint as any)[`p${p}`]) { closestP = p; break; }
+          }
+          osStr = `Analiză Risc OS (P${closestP}): ${riskLabels[`p${closestP}`]}`;
+        }
+
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(37, 99, 235);
+        doc.text(cleanStr(odStr), 20, finalY);
+        doc.setTextColor(16, 185, 129);
+        doc.text(cleanStr(osStr), 20, finalY + 4.5);
+        doc.setTextColor(0);
+        finalY += 9;
+      } else {
       const graphHeight = isDual ? 55 : 70; // Slightly shorter graphs
       const sideBySide = isDual;
       const graphGap = 2; // Reduced gap to bring them closer
@@ -18175,7 +18403,8 @@ export default function App() {
         const thisEyeFinalY = currentEyeY + 16 + splitRisk.length * 3.2;
         if (thisEyeFinalY > currentMaxY) currentMaxY = thisEyeFinalY;
       });
-      finalY = currentMaxY;
+        finalY = currentMaxY;
+      }
     }
 
     if (isBirthdayOnConsultDay) {
@@ -20873,67 +21102,107 @@ export default function App() {
       const chartHeight = 92;
       const chartStartX = 14;
 
-      // OD Section
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(37, 99, 235);
-      doc.text(cleanStrForMyopia("Ochi Drept (OD)"), 14, 35);
-      doc.setTextColor(0);
+      if (isMyopiaCombinedView) {
+        // Mod Combinat: un singur grafic mare cu OD și OS suprapuse pe Pagina 2
+        const combinedChartHeight = 180;
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 41, 59);
+        doc.text(cleanStrForMyopia("Grafic Comparativ Suprapus (OD & OS)"), 14, 35);
 
-      const latestOd = sortedOd.length > 0 ? sortedOd[sortedOd.length - 1] : null;
-      if (latestOd) {
+        const latestOd = sortedOd.length > 0 ? sortedOd[sortedOd.length - 1] : null;
+        const latestOs = sortedOs.length > 0 ? sortedOs[sortedOs.length - 1] : null;
+        let summaryText = "";
+        if (latestOd) summaryText += `OD: ${latestOd.axialLength.toFixed(2)} mm   `;
+        if (latestOs) summaryText += `OS: ${latestOs.axialLength.toFixed(2)} mm`;
+        if (summaryText) {
+          doc.setFontSize(8.5);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(37, 99, 235);
+          doc.text(summaryText, pageWidth - 14, 35, { align: "right" });
+          doc.setTextColor(0);
+        }
+
+        drawMyopiaGraph(doc, chartStartX, 38, chartWidth, combinedChartHeight, sex, sortedOd, sortedOs, true);
+
         doc.setFontSize(8.5);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(37, 99, 235);
         doc.text(
-          `Valoare măsurată: ${latestOd.axialLength.toFixed(2)} mm (vârstă: ${latestOd.age.toFixed(1)} ani)`,
-          pageWidth - 14,
-          35,
-          { align: "right" },
+          cleanStrForMyopia(`Analiză Risc OD: ${odPercentileStr || "Nicio valoare înregistrată."}`),
+          14,
+          225,
         );
-        doc.setTextColor(0);
-      }
-
-      drawMyopiaGraph(doc, chartStartX, 37, chartWidth, chartHeight, sex, sortedOd);
-
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "bold");
-      doc.text(
-        cleanStrForMyopia(`Analiză Risc OD: ${odPercentileStr || "Nicio valoare înregistrată."}`),
-        14,
-        133.5,
-      );
-
-      // OS Section
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(16, 185, 129);
-      doc.text(cleanStrForMyopia("Ochi Stâng (OS)"), 14, 142);
-      doc.setTextColor(0);
-
-      const latestOs = sortedOs.length > 0 ? sortedOs[sortedOs.length - 1] : null;
-      if (latestOs) {
-        doc.setFontSize(8.5);
-        doc.setFont("helvetica", "bold");
         doc.setTextColor(16, 185, 129);
         doc.text(
-          `Valoare măsurată: ${latestOs.axialLength.toFixed(2)} mm (vârstă: ${latestOs.age.toFixed(1)} ani)`,
-          pageWidth - 14,
-          142,
-          { align: "right" },
+          cleanStrForMyopia(`Analiză Risc OS: ${osPercentileStr || "Nicio valoare înregistrată."}`),
+          14,
+          232,
         );
         doc.setTextColor(0);
+      } else {
+        // OD Section
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(37, 99, 235);
+        doc.text(cleanStrForMyopia("Ochi Drept (OD)"), 14, 35);
+        doc.setTextColor(0);
+
+        const latestOd = sortedOd.length > 0 ? sortedOd[sortedOd.length - 1] : null;
+        if (latestOd) {
+          doc.setFontSize(8.5);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(37, 99, 235);
+          doc.text(
+            `Valoare măsurată: ${latestOd.axialLength.toFixed(2)} mm (vârstă: ${latestOd.age.toFixed(1)} ani)`,
+            pageWidth - 14,
+            35,
+            { align: "right" },
+          );
+          doc.setTextColor(0);
+        }
+
+        drawMyopiaGraph(doc, chartStartX, 37, chartWidth, chartHeight, sex, sortedOd);
+
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "bold");
+        doc.text(
+          cleanStrForMyopia(`Analiză Risc OD: ${odPercentileStr || "Nicio valoare înregistrată."}`),
+          14,
+          133.5,
+        );
+
+        // OS Section
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(16, 185, 129);
+        doc.text(cleanStrForMyopia("Ochi Stâng (OS)"), 14, 142);
+        doc.setTextColor(0);
+
+        const latestOs = sortedOs.length > 0 ? sortedOs[sortedOs.length - 1] : null;
+        if (latestOs) {
+          doc.setFontSize(8.5);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(16, 185, 129);
+          doc.text(
+            `Valoare măsurată: ${latestOs.axialLength.toFixed(2)} mm (vârstă: ${latestOs.age.toFixed(1)} ani)`,
+            pageWidth - 14,
+            142,
+            { align: "right" },
+          );
+          doc.setTextColor(0);
+        }
+
+        drawMyopiaGraph(doc, chartStartX, 144, chartWidth, chartHeight, sex, sortedOs);
+
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "bold");
+        doc.text(
+          cleanStrForMyopia(`Analiză Risc OS: ${osPercentileStr || "Nicio valoare înregistrată."}`),
+          14,
+          240.5,
+        );
       }
-
-      drawMyopiaGraph(doc, chartStartX, 144, chartWidth, chartHeight, sex, sortedOs);
-
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "bold");
-      doc.text(
-        cleanStrForMyopia(`Analiză Risc OS: ${osPercentileStr || "Nicio valoare înregistrată."}`),
-        14,
-        240.5,
-      );
 
       // Bottom Section on Page 2
       doc.setLineWidth(0.2);
@@ -24767,23 +25036,46 @@ export default function App() {
                 </button>
               )}
 
-              {(profile?.role === "admin" || profile?.role === "frontdesk") && (
-                <button
-                  onClick={handleLoadFullArchive}
-                  disabled={isLoadingAllHistory}
-                  className={cn(
-                    "flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all shadow-md border text-[11px] font-bold shrink-0 cursor-pointer disabled:opacity-50",
-                    hasLoadedAllHistory
-                      ? (darkMode ? "bg-emerald-950/40 border-emerald-800 text-emerald-300" : "bg-emerald-50 border-emerald-200 text-emerald-700")
-                      : (darkMode ? "bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300" : "bg-white border-slate-200 hover:bg-slate-50 text-slate-700")
-                  )}
-                  title={hasLoadedAllHistory ? "Toată arhiva clinică este încărcată în memorie" : "Încărcare inteligentă activă (Ultimele 30 zile). Click pentru a încărca toată arhiva."}
-                >
-                  <Database className={cn("w-3.5 h-3.5", isLoadingAllHistory && "animate-spin text-blue-500", hasLoadedAllHistory && "text-emerald-500")} />
-                  <span className="hidden xl:inline">
-                    {isLoadingAllHistory ? "Se încarcă arhiva..." : hasLoadedAllHistory ? "Arhivă Completă" : "Smart Loading"}
-                  </span>
-                </button>
+              {(profile?.role === "admin" || profile?.role === "frontdesk" || profile?.role?.startsWith("doctor")) && (
+                <div className="flex flex-col gap-1 shrink-0">
+                  {/* Buton 1: Smart Loading Total (Toată Arhiva) */}
+                  <button
+                    type="button"
+                    onClick={handleLoadFullArchive}
+                    disabled={isLoadingAllHistory}
+                    className={cn(
+                      "flex items-center gap-1 px-2 py-0.5 rounded-lg transition-all shadow-xs border text-[10px] font-bold shrink-0 cursor-pointer disabled:opacity-50",
+                      hasLoadedAllHistory
+                        ? (darkMode ? "bg-emerald-950/40 border-emerald-800 text-emerald-300" : "bg-emerald-50 border-emerald-200 text-emerald-700")
+                        : (darkMode ? "bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300" : "bg-white border-slate-200 hover:bg-slate-50 text-slate-700")
+                    )}
+                    title="Smart Loading Total: Descarcă toată arhiva clinică din baza de date"
+                  >
+                    <Database className={cn("w-3 h-3", isLoadingAllHistory && "animate-spin text-blue-500", hasLoadedAllHistory && "text-emerald-500")} />
+                    <span>
+                      {isLoadingAllHistory ? "Se încarcă..." : hasLoadedAllHistory ? "Arhivă Totală Activă" : "Smart Loading Total"}
+                    </span>
+                  </button>
+
+                  {/* Buton 2: Smart Loading 30 Zile (Economisire Credite Firebase) */}
+                  <button
+                    type="button"
+                    onClick={handleLoad30Days}
+                    disabled={isLoading30Days}
+                    className={cn(
+                      "flex items-center gap-1 px-2 py-0.5 rounded-lg transition-all shadow-xs border text-[10px] font-bold shrink-0 cursor-pointer disabled:opacity-50",
+                      !hasLoadedAllHistory
+                        ? (darkMode ? "bg-blue-950/40 border-blue-800 text-blue-300" : "bg-blue-50 border-blue-200 text-blue-700")
+                        : (darkMode ? "bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300" : "bg-white border-slate-200 hover:bg-slate-50 text-slate-700")
+                    )}
+                    title="Smart Loading 30 Zile: Sincronizează doar ultimele 30 zile pentru a economisi credite Firebase"
+                  >
+                    <ClockIcon className={cn("w-3 h-3", isLoading30Days && "animate-spin text-blue-500", !hasLoadedAllHistory && "text-blue-500")} />
+                    <span>
+                      {isLoading30Days ? "Sincronizare..." : !hasLoadedAllHistory ? "Smart Loading 30 Zile (Activ)" : "Smart Loading 30 Zile"}
+                    </span>
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -33347,19 +33639,230 @@ export default function App() {
                   };
 
                   return (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                      {/* OD Eye Section */}
-                      <div className={cn("p-6 rounded-3xl border flex flex-col justify-between", darkMode ? "border-slate-800 bg-slate-950/25" : "border-slate-100 bg-slate-50/50")}>
-                        <div>
-                          <h3 className={cn("text-base font-black uppercase tracking-wider text-center mb-1", darkMode ? "text-blue-400" : "text-blue-600")}>
-                            Ochiul Drept (OD)
-                          </h3>
-                          <MyopiaChart
-                            sex={currentMedicalRecord.patientSex || ""}
-                            patientData={odData}
-                            darkMode={darkMode}
-                            onDeletePoint={handleDeleteAxialLength}
+                    <div className="space-y-6">
+                      {/* Control bar pentru comutare Mod Suprapus (OD + OS) */}
+                      <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-2xl bg-slate-100/80 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80">
+                        <label className="flex items-center gap-3 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={isMyopiaCombinedView}
+                            onChange={(e) => handleToggleMyopiaCombinedView(e.target.checked)}
+                            className="w-5 h-5 rounded text-blue-600 focus:ring-blue-500 border-slate-300 dark:border-slate-600 cursor-pointer"
                           />
+                          <div className="flex flex-col">
+                            <span className="text-sm font-extrabold text-slate-800 dark:text-slate-100">
+                              Suprapune ambele grafice (OD și OS pe același grafic)
+                            </span>
+                            <span className="text-xs text-slate-500 dark:text-slate-400">
+                              OD: punct și linie mai groasă (recunoaștere la print alb-negru) • OS: punct și linie mai subțire
+                            </span>
+                          </div>
+                        </label>
+
+                        {isMyopiaCombinedView && (
+                          <div className="flex items-center gap-4 text-xs font-bold px-3 py-1.5 rounded-xl bg-white/80 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-700">
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-3.5 h-3.5 rounded-full bg-blue-600 border-2 border-white inline-block shadow-sm" />
+                              <span className="text-blue-600 dark:text-blue-400 font-black">OD (Gros)</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 border border-white inline-block shadow-xs" />
+                              <span className="text-emerald-600 dark:text-emerald-400 font-bold">OS (Subțire)</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {isMyopiaCombinedView ? (
+                        /* Grafic unic suprapus */
+                        <div className={cn("p-6 rounded-3xl border flex flex-col justify-between", darkMode ? "border-slate-800 bg-slate-950/25" : "border-slate-100 bg-slate-50/50")}>
+                          <div>
+                            <h3 className={cn("text-base font-black uppercase tracking-wider text-center mb-1", darkMode ? "text-slate-200" : "text-slate-800")}>
+                              Grafic Comparativ Suprapus (OD & OS)
+                            </h3>
+                            <MyopiaChart
+                              sex={currentMedicalRecord.patientSex || ""}
+                              patientData={odData}
+                              patientDataOs={osData}
+                              isCombined={true}
+                              darkMode={darkMode}
+                              onDeletePoint={handleDeleteAxialLength}
+                            />
+
+                            {/* Istoricuri măsurători afișate în două coloane sub graficul combinat */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6 border-t border-slate-200/60 dark:border-slate-800/40 pt-4">
+                              {/* Coloana OD */}
+                              <div>
+                                <h4 className={cn("text-xs font-black mb-2 uppercase tracking-wide flex items-center justify-between", darkMode ? "text-blue-400" : "text-blue-600")}>
+                                  <span>Istoric OD (Punct Gros)</span>
+                                  <span className="text-[10px] font-normal text-slate-400">({odData.length} măsurători)</span>
+                                </h4>
+                                <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                                  {odData.length === 0 ? (
+                                    <p className="text-xs text-slate-400 italic">Nicio măsurătoare OD.</p>
+                                  ) : (
+                                    [...odData].reverse().map((item, idx) => (
+                                      <div
+                                        key={`comb-od-${idx}-${item.date || ""}`}
+                                        className={cn(
+                                          "flex items-center justify-between p-2 rounded-xl border text-xs font-semibold transition-all",
+                                          darkMode
+                                            ? "bg-slate-900/60 border-slate-800 text-slate-200"
+                                            : "bg-slate-50 border-slate-100 text-slate-800"
+                                        )}
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block" />
+                                          <span className="font-extrabold text-[13px] text-blue-500">{item.axialLength.toFixed(2)} mm</span>
+                                          <span className="text-slate-400 text-[11px]">({item.age.toFixed(1)} ani)</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-slate-400 font-mono text-[11px]">{formatDateSafe(item.date)}</span>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteAxialLength(item)}
+                                            className="text-red-500 hover:text-red-400 p-1 rounded-lg hover:bg-red-500/10"
+                                            title="Șterge"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Coloana OS */}
+                              <div>
+                                <h4 className={cn("text-xs font-black mb-2 uppercase tracking-wide flex items-center justify-between", darkMode ? "text-emerald-400" : "text-emerald-600")}>
+                                  <span>Istoric OS (Punct Subțire)</span>
+                                  <span className="text-[10px] font-normal text-slate-400">({osData.length} măsurători)</span>
+                                </h4>
+                                <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                                  {osData.length === 0 ? (
+                                    <p className="text-xs text-slate-400 italic">Nicio măsurătoare OS.</p>
+                                  ) : (
+                                    [...osData].reverse().map((item, idx) => (
+                                      <div
+                                        key={`comb-os-${idx}-${item.date || ""}`}
+                                        className={cn(
+                                          "flex items-center justify-between p-2 rounded-xl border text-xs font-semibold transition-all",
+                                          darkMode
+                                            ? "bg-slate-900/60 border-slate-800 text-slate-200"
+                                            : "bg-slate-50 border-slate-100 text-slate-800"
+                                        )}
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+                                          <span className="font-extrabold text-[13px] text-emerald-500">{item.axialLength.toFixed(2)} mm</span>
+                                          <span className="text-slate-400 text-[11px]">({item.age.toFixed(1)} ani)</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-slate-400 font-mono text-[11px]">{formatDateSafe(item.date)}</span>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteAxialLength(item)}
+                                            className="text-red-500 hover:text-red-400 p-1 rounded-lg hover:bg-red-500/10"
+                                            title="Șterge"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Formulare de adăugare măsurători în modul combinat */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6 border-t border-slate-200 dark:border-slate-800/60 pt-4">
+                            <div>
+                              <h4 className={cn("text-xs font-black mb-2 uppercase tracking-wide", darkMode ? "text-slate-300" : "text-slate-700")}>
+                                Adaugă măsurătoare istorică (OD)
+                              </h4>
+                              <div className="flex gap-2 items-end">
+                                <div className="flex-1">
+                                  <label className="block text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1">Data</label>
+                                  <input
+                                    type="date"
+                                    value={newAxialDateOd}
+                                    onChange={(e) => setNewAxialDateOd(e.target.value)}
+                                    className={cn("w-full px-2.5 py-1.5 rounded-xl border text-xs outline-none focus:ring-1 focus:ring-blue-500", darkMode ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-slate-200 text-slate-900")}
+                                  />
+                                </div>
+                                <div className="flex-1">
+                                  <label className="block text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1">Lungime (mm)</label>
+                                  <input
+                                    type="text"
+                                    placeholder="ex: 23.45"
+                                    value={newAxialValueOd}
+                                    onChange={(e) => setNewAxialValueOd(e.target.value.replace(/[^0-9.]/g, ""))}
+                                    className={cn("w-full px-2.5 py-1.5 rounded-xl border text-xs outline-none focus:ring-1 focus:ring-blue-500 font-bold", darkMode ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-slate-200 text-slate-900")}
+                                  />
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddHistoricalAxialLength("OD")}
+                                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition-all shadow-md"
+                                >
+                                  Adaugă OD
+                                </button>
+                              </div>
+                            </div>
+
+                            <div>
+                              <h4 className={cn("text-xs font-black mb-2 uppercase tracking-wide", darkMode ? "text-slate-300" : "text-slate-700")}>
+                                Adaugă măsurătoare istorică (OS)
+                              </h4>
+                              <div className="flex gap-2 items-end">
+                                <div className="flex-1">
+                                  <label className="block text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1">Data</label>
+                                  <input
+                                    type="date"
+                                    value={newAxialDateOs}
+                                    onChange={(e) => setNewAxialDateOs(e.target.value)}
+                                    className={cn("w-full px-2.5 py-1.5 rounded-xl border text-xs outline-none focus:ring-1 focus:ring-emerald-500", darkMode ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-slate-200 text-slate-900")}
+                                  />
+                                </div>
+                                <div className="flex-1">
+                                  <label className="block text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1">Lungime (mm)</label>
+                                  <input
+                                    type="text"
+                                    placeholder="ex: 23.45"
+                                    value={newAxialValueOs}
+                                    onChange={(e) => setNewAxialValueOs(e.target.value.replace(/[^0-9.]/g, ""))}
+                                    className={cn("w-full px-2.5 py-1.5 rounded-xl border text-xs outline-none focus:ring-1 focus:ring-emerald-500 font-bold", darkMode ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-slate-200 text-slate-900")}
+                                  />
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddHistoricalAxialLength("OS")}
+                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition-all shadow-md"
+                                >
+                                  Adaugă OS
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Două coloane separate (OD și OS) */
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                          {/* OD Eye Section */}
+                          <div className={cn("p-6 rounded-3xl border flex flex-col justify-between", darkMode ? "border-slate-800 bg-slate-950/25" : "border-slate-100 bg-slate-50/50")}>
+                            <div>
+                              <h3 className={cn("text-base font-black uppercase tracking-wider text-center mb-1", darkMode ? "text-blue-400" : "text-blue-600")}>
+                                Ochiul Drept (OD)
+                              </h3>
+                              <MyopiaChart
+                                sex={currentMedicalRecord.patientSex || ""}
+                                patientData={odData}
+                                darkMode={darkMode}
+                                onDeletePoint={handleDeleteAxialLength}
+                              />
 
                           {/* Existing Measurements List for OD */}
                           {odData.length > 0 && (
@@ -33568,7 +34071,9 @@ export default function App() {
                         </div>
                       </div>
                     </div>
-                  );
+                  )}
+                  </div>
+                );
                 })()}
 
                 <div className="mt-6 flex justify-between gap-4 border-t border-slate-200 dark:border-slate-800/60 pt-4">
