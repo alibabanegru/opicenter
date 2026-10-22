@@ -9933,6 +9933,16 @@ export default function App() {
           targetPrescription?.dp_aproape_od || data.dp_aproape_od || "",
         dp_aproape_os:
           targetPrescription?.dp_aproape_os || data.dp_aproape_os || "",
+        intermediate_enabled:
+          targetPrescription?.intermediate_enabled ?? data.intermediate_enabled ?? false,
+        intermediate_distance:
+          targetPrescription?.intermediate_distance || data.intermediate_distance || "",
+        intermediate_dp:
+          targetPrescription?.intermediate_dp || data.intermediate_dp || "",
+        intermediate_dp_od:
+          targetPrescription?.intermediate_dp_od || data.intermediate_dp_od || "",
+        intermediate_dp_os:
+          targetPrescription?.intermediate_dp_os || data.intermediate_dp_os || "",
         diagnostic:
           targetPrescription?.diagnostic ||
           data.diagnostic ||
@@ -10710,6 +10720,11 @@ export default function App() {
       dp_aproape: currentMedicalRecord.dp_aproape,
       dp_aproape_od: currentMedicalRecord.dp_aproape_od,
       dp_aproape_os: currentMedicalRecord.dp_aproape_os,
+      intermediate_enabled: currentMedicalRecord.intermediate_enabled,
+      intermediate_distance: currentMedicalRecord.intermediate_distance,
+      intermediate_dp: currentMedicalRecord.intermediate_dp,
+      intermediate_dp_od: currentMedicalRecord.intermediate_dp_od,
+      intermediate_dp_os: currentMedicalRecord.intermediate_dp_os,
       specialMentions: currentMedicalRecord.specialMentions,
       treatment: currentMedicalRecord.treatment,
       diagnostic: currentMedicalRecord.diagnostic,
@@ -11010,6 +11025,11 @@ export default function App() {
           dp_aproape: updatedRecord.dp_aproape,
           dp_aproape_od: updatedRecord.dp_aproape_od,
           dp_aproape_os: updatedRecord.dp_aproape_os,
+          intermediate_enabled: updatedRecord.intermediate_enabled,
+          intermediate_distance: updatedRecord.intermediate_distance,
+          intermediate_dp: updatedRecord.intermediate_dp,
+          intermediate_dp_od: updatedRecord.intermediate_dp_od,
+          intermediate_dp_os: updatedRecord.intermediate_dp_os,
           treatment: updatedRecord.treatment,
           diagnostic: updatedRecord.diagnostic,
           recomandari: updatedRecord.recomandari,
@@ -11220,7 +11240,11 @@ export default function App() {
             medicalRecordAny.od?.cyl ||
             medicalRecordAny.os?.cyl ||
             medicalRecordAny.od?.add ||
-            medicalRecordAny.os?.add
+            medicalRecordAny.os?.add ||
+            (medicalRecordAny.intermediate_enabled && (
+              medicalRecordAny.od?.intermediate_sph ||
+              medicalRecordAny.os?.intermediate_sph
+            ))
           );
 
           const rxLenses = !!(
@@ -16192,6 +16216,11 @@ export default function App() {
         dp_aproape: targetItem.dp_aproape || "",
         dp_aproape_od: targetItem.dp_aproape_od || "",
         dp_aproape_os: targetItem.dp_aproape_os || "",
+        intermediate_enabled: targetItem.intermediate_enabled || false,
+        intermediate_distance: targetItem.intermediate_distance || "",
+        intermediate_dp: targetItem.intermediate_dp || "",
+        intermediate_dp_od: targetItem.intermediate_dp_od || "",
+        intermediate_dp_os: targetItem.intermediate_dp_os || "",
         specialMentions: targetItem.specialMentions,
         treatment: targetItem.treatment || "",
         diagnostic: targetItem.diagnostic || "",
@@ -16291,7 +16320,9 @@ export default function App() {
       (currentMedicalRecord.os.sph && currentMedicalRecord.os.sph !== "-") ||
       (currentMedicalRecord.os.cyl && currentMedicalRecord.os.cyl !== "-") ||
       (currentMedicalRecord.os.axis && currentMedicalRecord.os.axis !== "-") ||
-      (currentMedicalRecord.os.add && currentMedicalRecord.os.add !== "-")
+      (currentMedicalRecord.os.add && currentMedicalRecord.os.add !== "-") ||
+      (currentMedicalRecord.od.intermediate_sph && currentMedicalRecord.od.intermediate_sph !== "-") ||
+      (currentMedicalRecord.os.intermediate_sph && currentMedicalRecord.os.intermediate_sph !== "-")
     );
 
     const hasDpCheck = !!(
@@ -16954,7 +16985,9 @@ export default function App() {
       (currentMedicalRecord.os.sph && currentMedicalRecord.os.sph !== "-") ||
       (currentMedicalRecord.os.cyl && currentMedicalRecord.os.cyl !== "-") ||
       (currentMedicalRecord.os.axis && currentMedicalRecord.os.axis !== "-") ||
-      (currentMedicalRecord.os.add && currentMedicalRecord.os.add !== "-")
+      (currentMedicalRecord.os.add && currentMedicalRecord.os.add !== "-") ||
+      (currentMedicalRecord.od.intermediate_sph && currentMedicalRecord.od.intermediate_sph !== "-") ||
+      (currentMedicalRecord.os.intermediate_sph && currentMedicalRecord.os.intermediate_sph !== "-")
     );
 
     const hasDpInPrescription = !!(
@@ -16990,6 +17023,16 @@ export default function App() {
     const hasPrescriptionAddition =
       odAddParsedForPdf !== 0 || osAddParsedForPdf !== 0;
 
+    // Verificăm dacă există valori introduse la Semidistanță (Intermediar)
+    const hasIntermediateDiopters = !!(
+      (currentMedicalRecord.od?.intermediate_sph && currentMedicalRecord.od.intermediate_sph.trim() !== "" && currentMedicalRecord.od.intermediate_sph !== "-") ||
+      (currentMedicalRecord.os?.intermediate_sph && currentMedicalRecord.os.intermediate_sph.trim() !== "" && currentMedicalRecord.os.intermediate_sph !== "-") ||
+      (currentMedicalRecord.od?.intermediate_cyl && currentMedicalRecord.od.intermediate_cyl.trim() !== "" && currentMedicalRecord.od.intermediate_cyl !== "-") ||
+      (currentMedicalRecord.os?.intermediate_cyl && currentMedicalRecord.os.intermediate_cyl.trim() !== "" && currentMedicalRecord.os.intermediate_cyl !== "-") ||
+      (currentMedicalRecord.od?.intermediate_axis && currentMedicalRecord.od.intermediate_axis.trim() !== "" && currentMedicalRecord.od.intermediate_axis !== "-") ||
+      (currentMedicalRecord.os?.intermediate_axis && currentMedicalRecord.os.intermediate_axis.trim() !== "" && currentMedicalRecord.os.intermediate_axis !== "-")
+    );
+
     // Verificăm dacă există valori introduse la Aproape (adiție sau dioptrii dedicate de aproape)
     const hasNearDiopters = !!(
       hasPrescriptionAddition ||
@@ -17001,8 +17044,8 @@ export default function App() {
 
     if (shouldShowDioptersTable) {
       y += 0;
-      const odAxisToDraw = (hasDistanceDiopters ? currentMedicalRecord.od.axis : (hasNearDiopters ? finalNearAxisOD : "")) || "";
-      const osAxisToDraw = (hasDistanceDiopters ? currentMedicalRecord.os.axis : (hasNearDiopters ? finalNearAxisOS : "")) || "";
+      const odAxisToDraw = (hasDistanceDiopters ? currentMedicalRecord.od.axis : (hasIntermediateDiopters ? currentMedicalRecord.od?.intermediate_axis : (hasNearDiopters ? finalNearAxisOD : ""))) || "";
+      const osAxisToDraw = (hasDistanceDiopters ? currentMedicalRecord.os.axis : (hasIntermediateDiopters ? currentMedicalRecord.os?.intermediate_axis : (hasNearDiopters ? finalNearAxisOS : ""))) || "";
       drawProtractorPDF(doc, odCenter, y + 14, odAxisToDraw);
       drawProtractorPDF(doc, osCenter, y + 14, osAxisToDraw);
 
@@ -17032,6 +17075,25 @@ export default function App() {
           : dpTotal > 0
             ? `${(dpTotal - 2).toString()}`
             : "-";
+
+      // DP la semidistanță: cu 1 mm mai mică decât cea de distanță (sau 1 mm mai mare decât cea de aproape)
+      const dpIntermediateVal = (() => {
+        if (hasDifferentDp) {
+          const odVal = parseFloat(currentMedicalRecord.dp_od || "0");
+          const osVal = parseFloat(currentMedicalRecord.dp_os || "0");
+          const odInter = odVal > 0 ? (odVal - 0.5) : 0;
+          const osInter = osVal > 0 ? (osVal - 0.5) : 0;
+          return `OD: ${odInter.toFixed(1).replace(/\.0$/, "")}\nOS: ${osInter.toFixed(1).replace(/\.0$/, "")}`;
+        }
+        if (dpTotal > 0) {
+          return (dpTotal - 1).toString();
+        }
+        const nearTotal = parseFloat(currentMedicalRecord.dp_aproape || "0");
+        if (nearTotal > 0) {
+          return (nearTotal + 1).toString();
+        }
+        return "-";
+      })();
 
 
 
@@ -17084,6 +17146,44 @@ export default function App() {
           formatNumericCellForTable(currentMedicalRecord.os.sph),
           formatNumericCellForTable(currentMedicalRecord.os.cyl),
           formatNumericCellForTable(currentMedicalRecord.os.axis),
+        ]);
+      }
+
+      // Rândul Semidistanță apare între Distanță și Aproape dacă sunt introduse dioptrii de semidistanță
+      if (hasIntermediateDiopters) {
+        const distLabel = currentMedicalRecord.intermediate_distance
+          ? `Semidistanță\n(${currentMedicalRecord.intermediate_distance})`
+          : "Semidistanță";
+
+        tableBody.push([
+          {
+            content: cleanStr(distLabel),
+            styles: {
+              halign: "center",
+              valign: "middle",
+              fontStyle: "bold",
+              fontSize: currentMedicalRecord.intermediate_distance ? 10.5 : 12.5,
+              cellPadding: 1.2,
+            },
+          },
+          formatNumericCellForTable(currentMedicalRecord.od?.intermediate_sph || ""),
+          formatNumericCellForTable(currentMedicalRecord.od?.intermediate_cyl || ""),
+          formatNumericCellForTable(currentMedicalRecord.od?.intermediate_axis || ""),
+          {
+            content: dpIntermediateVal,
+            styles: {
+              halign: "center",
+              valign: "middle",
+              fontStyle: "bold",
+              font: "courier",
+              fontSize: String(dpIntermediateVal).includes("OD:") ? 11 : 18,
+              cellPadding: 1.2,
+              textColor: "#7e22ce", // Purple
+            },
+          },
+          formatNumericCellForTable(currentMedicalRecord.os?.intermediate_sph || ""),
+          formatNumericCellForTable(currentMedicalRecord.os?.intermediate_cyl || ""),
+          formatNumericCellForTable(currentMedicalRecord.os?.intermediate_axis || ""),
         ]);
       }
 
@@ -24409,6 +24509,40 @@ export default function App() {
                     glassesInfo += ` | Recomandat: ${recommendedLens}`;
                   }
                   recDetails.push(glassesInfo);
+
+                  // Detalii Ochelari Semidistanță dacă sunt activați
+                  const intermediateActive = latestPresc?.intermediate_enabled ?? patientRecord?.intermediate_enabled;
+                  const interOd = latestPresc?.od?.intermediate_sph ? latestPresc.od : patientRecord?.od;
+                  const interOs = latestPresc?.os?.intermediate_sph ? latestPresc.os : patientRecord?.os;
+                  const hasInterVals = !!(interOd?.intermediate_sph || interOs?.intermediate_sph);
+
+                  if (intermediateActive || hasInterVals) {
+                    const formatInterEye = (sph?: string, cyl?: string, axis?: string) => {
+                      if (!sph && !cyl) return "";
+                      const parts = [];
+                      if (sph) {
+                        const val = parseFloat(sph);
+                        parts.push(`${!isNaN(val) && val > 0 && !String(sph).startsWith("+") ? "+" : ""}${sph} SF`);
+                      }
+                      if (cyl) {
+                        const val = parseFloat(cyl);
+                        parts.push(`${!isNaN(val) && val > 0 && !String(cyl).startsWith("+") ? "+" : ""}${cyl} CIL`);
+                      }
+                      if (axis) parts.push(`${axis}°`);
+                      return parts.join(" ");
+                    };
+
+                    const interOdStr = formatInterEye(interOd?.intermediate_sph, interOd?.intermediate_cyl, interOd?.intermediate_axis);
+                    const interOsStr = formatInterEye(interOs?.intermediate_sph, interOs?.intermediate_cyl, interOs?.intermediate_axis);
+                    const interDist = latestPresc?.intermediate_distance || patientRecord?.intermediate_distance || "";
+
+                    let interInfo = "👓 Semidistanță";
+                    if (interDist) interInfo += ` (${interDist})`;
+                    if (interOdStr || interOsStr) {
+                      interInfo += `: OD: ${interOdStr || "—"} / OS: ${interOsStr || "—"}`;
+                    }
+                    recDetails.push(interInfo);
+                  }
                 }
                 if (alert.contactLenses) {
                   const formatEyeCL = (cl: any) => {

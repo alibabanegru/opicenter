@@ -375,6 +375,9 @@ export interface EyePrescription {
   near_sph?: string;
   near_cyl?: string;
   near_axis?: string;
+  intermediate_sph?: string;
+  intermediate_cyl?: string;
+  intermediate_axis?: string;
   radius?: string;
   brand?: string;
 }
@@ -562,6 +565,11 @@ export interface PrescriptionHistoryItem {
   dp_aproape?: string;
   dp_aproape_od?: string;
   dp_aproape_os?: string;
+  intermediate_enabled?: boolean;
+  intermediate_distance?: string;
+  intermediate_dp?: string;
+  intermediate_dp_od?: string;
+  intermediate_dp_os?: string;
   specialMentions: string;
   treatment?: string;
   diagnostic?: string;
@@ -670,6 +678,11 @@ export interface MedicalRecord {
   dp_aproape?: string;
   dp_aproape_od?: string;
   dp_aproape_os?: string;
+  intermediate_enabled?: boolean;
+  intermediate_distance?: string; // distanța în cm, ex: "60 cm"
+  intermediate_dp?: string;
+  intermediate_dp_od?: string;
+  intermediate_dp_os?: string;
   treatment: string;
   diagnostic?: string;
   recomandari?: string;

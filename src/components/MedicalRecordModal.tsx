@@ -2208,6 +2208,160 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               ))}
                           </div>
 
+                          {/* Customizable Semidistance (Intermediate) Diopters Section (OD) */}
+                          {currentMedicalRecord.intermediate_enabled && (
+                            <div
+                              className={cn(
+                                "mt-4 w-full p-3 rounded-xl border transition-all",
+                                darkMode
+                                  ? "bg-slate-900 border-purple-800/60"
+                                  : "bg-purple-50/50 border-purple-200 shadow-sm",
+                              )}
+                            >
+                              <div className="flex items-center justify-between mb-2">
+                                <span
+                                  className={cn(
+                                    "block text-[11px] font-bold uppercase tracking-wider",
+                                    darkMode ? "text-purple-400" : "text-purple-700",
+                                  )}
+                                >
+                                  👓 Semidistanță OD {currentMedicalRecord.intermediate_distance ? `(${currentMedicalRecord.intermediate_distance})` : ""}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2">
+                                <div>
+                                  <label
+                                    className={cn(
+                                      "block text-[10px] font-black uppercase mb-1",
+                                      darkMode ? "text-slate-400" : "text-slate-600",
+                                    )}
+                                  >
+                                    Inter SPH
+                                  </label>
+                                  <input
+                                    type="text"
+                                    placeholder="ex: +1.50"
+                                    value={currentMedicalRecord.od.intermediate_sph || ""}
+                                    onChange={(e) => {
+                                      let val = e.target.value.replace(/[^0-9.,+-]/g, "").replace(",", ".");
+                                      setCurrentMedicalRecord({
+                                        ...currentMedicalRecord,
+                                        od: {
+                                          ...currentMedicalRecord.od,
+                                          intermediate_sph: val,
+                                        },
+                                      });
+                                    }}
+                                    onBlur={(e) => {
+                                      let val = e.target.value.trim();
+                                      if (!val) return;
+                                      let num = parseFloat(val);
+                                      if (!isNaN(num)) {
+                                        num = Math.round(num * 4) / 4;
+                                        num = Math.max(-25, Math.min(22, num));
+                                        const sign = num >= 0 ? "+" : "";
+                                        setCurrentMedicalRecord({
+                                          ...currentMedicalRecord,
+                                          od: {
+                                            ...currentMedicalRecord.od,
+                                            intermediate_sph: `${sign}${num.toFixed(2)}`,
+                                          },
+                                        });
+                                      }
+                                    }}
+                                    className={cn(
+                                      "w-full p-2 border rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-purple-500/20 transition-all text-center",
+                                      darkMode
+                                        ? "bg-white border-slate-700 text-black animate-none"
+                                        : "bg-white border-slate-300 text-slate-900 animate-none",
+                                    )}
+                                  />
+                                </div>
+                                <div>
+                                  <label
+                                    className={cn(
+                                      "block text-[10px] font-black uppercase mb-1",
+                                      darkMode ? "text-slate-400" : "text-slate-600",
+                                    )}
+                                  >
+                                    Inter CYL
+                                  </label>
+                                  <input
+                                    type="text"
+                                    placeholder="ex: -0.75"
+                                    value={currentMedicalRecord.od.intermediate_cyl || ""}
+                                    onChange={(e) => {
+                                      let val = e.target.value.replace(/[^0-9.,+-]/g, "").replace(",", ".");
+                                      setCurrentMedicalRecord({
+                                        ...currentMedicalRecord,
+                                        od: {
+                                          ...currentMedicalRecord.od,
+                                          intermediate_cyl: val,
+                                        },
+                                      });
+                                    }}
+                                    onBlur={(e) => {
+                                      let val = e.target.value.trim();
+                                      if (!val) return;
+                                      let num = parseFloat(val);
+                                      if (!isNaN(num)) {
+                                        num = Math.round(num * 4) / 4;
+                                        num = Math.max(-7, Math.min(7, num));
+                                        const sign = num >= 0 ? "+" : "";
+                                        setCurrentMedicalRecord({
+                                          ...currentMedicalRecord,
+                                          od: {
+                                            ...currentMedicalRecord.od,
+                                            intermediate_cyl: `${sign}${num.toFixed(2)}`,
+                                          },
+                                        });
+                                      }
+                                    }}
+                                    className={cn(
+                                      "w-full p-2 border rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-purple-500/20 transition-all text-center",
+                                      darkMode
+                                        ? "bg-white border-slate-700 text-black animate-none"
+                                        : "bg-white border-slate-300 text-slate-900 animate-none",
+                                    )}
+                                  />
+                                </div>
+                                <div>
+                                  <label
+                                    className={cn(
+                                      "block text-[10px] font-black uppercase mb-1",
+                                      darkMode ? "text-slate-400" : "text-slate-600",
+                                    )}
+                                  >
+                                    Inter AXIS
+                                  </label>
+                                  <input
+                                    type="text"
+                                    placeholder="ex: 90"
+                                    value={currentMedicalRecord.od.intermediate_axis || ""}
+                                    onChange={(e) => {
+                                      let val = e.target.value.replace(/[^0-9]/g, "");
+                                      let n = parseInt(val);
+                                      if (!isNaN(n) && n > 180) val = "180";
+                                      setCurrentMedicalRecord({
+                                        ...currentMedicalRecord,
+                                        od: {
+                                          ...currentMedicalRecord.od,
+                                          intermediate_axis: val,
+                                        },
+                                      });
+                                    }}
+                                    className={cn(
+                                      "w-full p-2 border rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-purple-500/20 transition-all text-center",
+                                      darkMode
+                                        ? "bg-white border-slate-700 text-black animate-none"
+                                        : "bg-white border-slate-300 text-slate-900 animate-none",
+                                    )}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Customizable Near Vision Diopters Section (OD) */}
                           {currentMedicalRecord.od.add && (
                             <div
@@ -4155,6 +4309,78 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               </div>
                             </div>
                           </div>
+                          {/* Buton și Câmp Semidistanță */}
+                          <div
+                            className={cn(
+                              "mt-3 w-full p-2.5 rounded-2xl border shadow-md flex flex-col gap-2 transition-all",
+                              currentMedicalRecord.intermediate_enabled
+                                ? darkMode
+                                  ? "bg-purple-950/40 border-purple-800/80 text-purple-200"
+                                  : "bg-purple-50/80 border-purple-300 text-purple-900"
+                                : darkMode
+                                  ? "bg-slate-800/60 border-slate-700/60 text-slate-400"
+                                  : "bg-slate-50 border-slate-200 text-slate-600"
+                            )}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const nextState = !currentMedicalRecord.intermediate_enabled;
+                                  setCurrentMedicalRecord({
+                                    ...currentMedicalRecord,
+                                    intermediate_enabled: nextState,
+                                    intermediate_distance: nextState
+                                      ? (currentMedicalRecord.intermediate_distance || "60 cm")
+                                      : currentMedicalRecord.intermediate_distance,
+                                  });
+                                }}
+                                className={cn(
+                                  "flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl font-black text-xs uppercase tracking-tight transition-all shadow-xs cursor-pointer",
+                                  currentMedicalRecord.intermediate_enabled
+                                    ? "bg-purple-600 hover:bg-purple-700 text-white shadow-purple-900/20"
+                                    : darkMode
+                                      ? "bg-slate-700 hover:bg-slate-650 text-slate-200"
+                                      : "bg-white hover:bg-slate-100 text-slate-800 border border-slate-300"
+                                )}
+                              >
+                                <span>👓 Ochelari Semidistanță</span>
+                                <span className={cn(
+                                  "text-[10px] px-1.5 py-0.5 rounded-md font-extrabold",
+                                  currentMedicalRecord.intermediate_enabled
+                                    ? "bg-purple-800/60 text-purple-200"
+                                    : "bg-slate-200 dark:bg-slate-800 text-slate-500"
+                                )}>
+                                  {currentMedicalRecord.intermediate_enabled ? "ACTIVAT" : "OPRIT"}
+                                </span>
+                              </button>
+                            </div>
+
+                            {currentMedicalRecord.intermediate_enabled && (
+                              <div className="flex items-center gap-2 pt-1 border-t border-purple-200 dark:border-purple-800/50">
+                                <label className="text-[10px] font-black uppercase tracking-wider text-purple-700 dark:text-purple-300 whitespace-nowrap">
+                                  Distanță de lucru:
+                                </label>
+                                <input
+                                  type="text"
+                                  placeholder="ex: 60 cm, 70 cm"
+                                  value={currentMedicalRecord.intermediate_distance || ""}
+                                  onChange={(e) => {
+                                    setCurrentMedicalRecord({
+                                      ...currentMedicalRecord,
+                                      intermediate_distance: e.target.value,
+                                    });
+                                  }}
+                                  className={cn(
+                                    "flex-1 px-2.5 py-1 border rounded-xl text-xs font-bold text-center outline-none focus:ring-2 focus:ring-purple-500/20",
+                                    darkMode
+                                      ? "bg-slate-900 border-purple-700 text-white"
+                                      : "bg-white border-purple-300 text-purple-950"
+                                  )}
+                                />
+                              </div>
+                            )}
+                          </div>
                         </div>
 
                         {/* Left Eye (OS) */}
@@ -4747,6 +4973,160 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 </div>
                               ))}
                           </div>
+
+                          {/* Customizable Semidistance (Intermediate) Diopters Section (OS) */}
+                          {currentMedicalRecord.intermediate_enabled && (
+                            <div
+                              className={cn(
+                                "mt-4 w-full p-3 rounded-xl border transition-all",
+                                darkMode
+                                  ? "bg-slate-900 border-purple-800/60"
+                                  : "bg-purple-50/50 border-purple-200 shadow-sm",
+                              )}
+                            >
+                              <div className="flex items-center justify-between mb-2">
+                                <span
+                                  className={cn(
+                                    "block text-[11px] font-bold uppercase tracking-wider",
+                                    darkMode ? "text-purple-400" : "text-purple-700",
+                                  )}
+                                >
+                                  👓 Semidistanță OS {currentMedicalRecord.intermediate_distance ? `(${currentMedicalRecord.intermediate_distance})` : ""}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2">
+                                <div>
+                                  <label
+                                    className={cn(
+                                      "block text-[10px] font-black uppercase mb-1",
+                                      darkMode ? "text-slate-400" : "text-slate-600",
+                                    )}
+                                  >
+                                    Inter SPH
+                                  </label>
+                                  <input
+                                    type="text"
+                                    placeholder="ex: +1.50"
+                                    value={currentMedicalRecord.os.intermediate_sph || ""}
+                                    onChange={(e) => {
+                                      let val = e.target.value.replace(/[^0-9.,+-]/g, "").replace(",", ".");
+                                      setCurrentMedicalRecord({
+                                        ...currentMedicalRecord,
+                                        os: {
+                                          ...currentMedicalRecord.os,
+                                          intermediate_sph: val,
+                                        },
+                                      });
+                                    }}
+                                    onBlur={(e) => {
+                                      let val = e.target.value.trim();
+                                      if (!val) return;
+                                      let num = parseFloat(val);
+                                      if (!isNaN(num)) {
+                                        num = Math.round(num * 4) / 4;
+                                        num = Math.max(-25, Math.min(22, num));
+                                        const sign = num >= 0 ? "+" : "";
+                                        setCurrentMedicalRecord({
+                                          ...currentMedicalRecord,
+                                          os: {
+                                            ...currentMedicalRecord.os,
+                                            intermediate_sph: `${sign}${num.toFixed(2)}`,
+                                          },
+                                        });
+                                      }
+                                    }}
+                                    className={cn(
+                                      "w-full p-2 border rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-purple-500/20 transition-all text-center",
+                                      darkMode
+                                        ? "bg-white border-slate-700 text-black animate-none"
+                                        : "bg-white border-slate-300 text-slate-900 animate-none",
+                                    )}
+                                  />
+                                </div>
+                                <div>
+                                  <label
+                                    className={cn(
+                                      "block text-[10px] font-black uppercase mb-1",
+                                      darkMode ? "text-slate-400" : "text-slate-600",
+                                    )}
+                                  >
+                                    Inter CYL
+                                  </label>
+                                  <input
+                                    type="text"
+                                    placeholder="ex: -0.75"
+                                    value={currentMedicalRecord.os.intermediate_cyl || ""}
+                                    onChange={(e) => {
+                                      let val = e.target.value.replace(/[^0-9.,+-]/g, "").replace(",", ".");
+                                      setCurrentMedicalRecord({
+                                        ...currentMedicalRecord,
+                                        os: {
+                                          ...currentMedicalRecord.os,
+                                          intermediate_cyl: val,
+                                        },
+                                      });
+                                    }}
+                                    onBlur={(e) => {
+                                      let val = e.target.value.trim();
+                                      if (!val) return;
+                                      let num = parseFloat(val);
+                                      if (!isNaN(num)) {
+                                        num = Math.round(num * 4) / 4;
+                                        num = Math.max(-7, Math.min(7, num));
+                                        const sign = num >= 0 ? "+" : "";
+                                        setCurrentMedicalRecord({
+                                          ...currentMedicalRecord,
+                                          os: {
+                                            ...currentMedicalRecord.os,
+                                            intermediate_cyl: `${sign}${num.toFixed(2)}`,
+                                          },
+                                        });
+                                      }
+                                    }}
+                                    className={cn(
+                                      "w-full p-2 border rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-purple-500/20 transition-all text-center",
+                                      darkMode
+                                        ? "bg-white border-slate-700 text-black animate-none"
+                                        : "bg-white border-slate-300 text-slate-900 animate-none",
+                                    )}
+                                  />
+                                </div>
+                                <div>
+                                  <label
+                                    className={cn(
+                                      "block text-[10px] font-black uppercase mb-1",
+                                      darkMode ? "text-slate-400" : "text-slate-600",
+                                    )}
+                                  >
+                                    Inter AXIS
+                                  </label>
+                                  <input
+                                    type="text"
+                                    placeholder="ex: 90"
+                                    value={currentMedicalRecord.os.intermediate_axis || ""}
+                                    onChange={(e) => {
+                                      let val = e.target.value.replace(/[^0-9]/g, "");
+                                      let n = parseInt(val);
+                                      if (!isNaN(n) && n > 180) val = "180";
+                                      setCurrentMedicalRecord({
+                                        ...currentMedicalRecord,
+                                        os: {
+                                          ...currentMedicalRecord.os,
+                                          intermediate_axis: val,
+                                        },
+                                      });
+                                    }}
+                                    className={cn(
+                                      "w-full p-2 border rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-purple-500/20 transition-all text-center",
+                                      darkMode
+                                        ? "bg-white border-slate-700 text-black animate-none"
+                                        : "bg-white border-slate-300 text-slate-900 animate-none",
+                                    )}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          )}
 
                           {/* Customizable Near Vision Diopters Section (OS) */}
                           {currentMedicalRecord.os.add && (
