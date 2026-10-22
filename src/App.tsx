@@ -10706,25 +10706,36 @@ export default function App() {
 
     let newHistory = [...(currentMedicalRecord.prescriptionHistory || [])];
     const now = new Date().toISOString();
+    const isInterEnabledForSave = !!currentMedicalRecord.intermediate_enabled;
     const currentItem: PrescriptionHistoryItem = {
       date:
         activePrescriptionIndex !== null && newHistory[activePrescriptionIndex]
           ? newHistory[activePrescriptionIndex].date
           : currentMedicalRecord.updatedAt,
       doctorId: activeAppointment?.doctorId || profile?.role || "all",
-      od: { ...currentMedicalRecord.od },
-      os: { ...currentMedicalRecord.os },
+      od: {
+        ...currentMedicalRecord.od,
+        intermediate_sph: isInterEnabledForSave ? currentMedicalRecord.od.intermediate_sph : "",
+        intermediate_cyl: isInterEnabledForSave ? currentMedicalRecord.od.intermediate_cyl : "",
+        intermediate_axis: isInterEnabledForSave ? currentMedicalRecord.od.intermediate_axis : "",
+      },
+      os: {
+        ...currentMedicalRecord.os,
+        intermediate_sph: isInterEnabledForSave ? currentMedicalRecord.os.intermediate_sph : "",
+        intermediate_cyl: isInterEnabledForSave ? currentMedicalRecord.os.intermediate_cyl : "",
+        intermediate_axis: isInterEnabledForSave ? currentMedicalRecord.os.intermediate_axis : "",
+      },
       dp: currentMedicalRecord.dp,
       dp_od: currentMedicalRecord.dp_od,
       dp_os: currentMedicalRecord.dp_os,
       dp_aproape: currentMedicalRecord.dp_aproape,
       dp_aproape_od: currentMedicalRecord.dp_aproape_od,
       dp_aproape_os: currentMedicalRecord.dp_aproape_os,
-      intermediate_enabled: currentMedicalRecord.intermediate_enabled,
-      intermediate_distance: currentMedicalRecord.intermediate_distance,
-      intermediate_dp: currentMedicalRecord.intermediate_dp,
-      intermediate_dp_od: currentMedicalRecord.intermediate_dp_od,
-      intermediate_dp_os: currentMedicalRecord.intermediate_dp_os,
+      intermediate_enabled: isInterEnabledForSave,
+      intermediate_distance: isInterEnabledForSave ? currentMedicalRecord.intermediate_distance : "",
+      intermediate_dp: isInterEnabledForSave ? currentMedicalRecord.intermediate_dp : "",
+      intermediate_dp_od: isInterEnabledForSave ? currentMedicalRecord.intermediate_dp_od : "",
+      intermediate_dp_os: isInterEnabledForSave ? currentMedicalRecord.intermediate_dp_os : "",
       specialMentions: currentMedicalRecord.specialMentions,
       treatment: currentMedicalRecord.treatment,
       diagnostic: currentMedicalRecord.diagnostic,
@@ -10995,8 +11006,31 @@ export default function App() {
         ).catch(() => {});
       }
 
-      const updatedRecord = removeUndefined({
+      // Curățare câmpuri semidistanță dacă butonul a fost deselectat
+      const isInterActive = !!currentMedicalRecord.intermediate_enabled;
+      const sanitizedRecord: MedicalRecord = {
         ...currentMedicalRecord,
+        intermediate_enabled: isInterActive,
+        intermediate_distance: isInterActive ? (currentMedicalRecord.intermediate_distance || "") : "",
+        intermediate_dp: isInterActive ? (currentMedicalRecord.intermediate_dp || "") : "",
+        intermediate_dp_od: isInterActive ? (currentMedicalRecord.intermediate_dp_od || "") : "",
+        intermediate_dp_os: isInterActive ? (currentMedicalRecord.intermediate_dp_os || "") : "",
+        od: {
+          ...currentMedicalRecord.od,
+          intermediate_sph: isInterActive ? (currentMedicalRecord.od.intermediate_sph || "") : "",
+          intermediate_cyl: isInterActive ? (currentMedicalRecord.od.intermediate_cyl || "") : "",
+          intermediate_axis: isInterActive ? (currentMedicalRecord.od.intermediate_axis || "") : "",
+        },
+        os: {
+          ...currentMedicalRecord.os,
+          intermediate_sph: isInterActive ? (currentMedicalRecord.os.intermediate_sph || "") : "",
+          intermediate_cyl: isInterActive ? (currentMedicalRecord.os.intermediate_cyl || "") : "",
+          intermediate_axis: isInterActive ? (currentMedicalRecord.os.intermediate_axis || "") : "",
+        },
+      };
+
+      const updatedRecord = removeUndefined({
+        ...sanitizedRecord,
         id: newRecordId,
         patientName: newPatientName,
         prescriptionHistory: newHistory,
@@ -15952,6 +15986,14 @@ export default function App() {
       dp: currentMedicalRecord.dp,
       dp_od: currentMedicalRecord.dp_od,
       dp_os: currentMedicalRecord.dp_os,
+      dp_aproape: currentMedicalRecord.dp_aproape,
+      dp_aproape_od: currentMedicalRecord.dp_aproape_od,
+      dp_aproape_os: currentMedicalRecord.dp_aproape_os,
+      intermediate_enabled: !!currentMedicalRecord.intermediate_enabled,
+      intermediate_distance: currentMedicalRecord.intermediate_enabled ? (currentMedicalRecord.intermediate_distance || "") : "",
+      intermediate_dp: currentMedicalRecord.intermediate_enabled ? (currentMedicalRecord.intermediate_dp || "") : "",
+      intermediate_dp_od: currentMedicalRecord.intermediate_enabled ? (currentMedicalRecord.intermediate_dp_od || "") : "",
+      intermediate_dp_os: currentMedicalRecord.intermediate_enabled ? (currentMedicalRecord.intermediate_dp_os || "") : "",
       specialMentions: currentMedicalRecord.specialMentions,
       treatment: currentMedicalRecord.treatment,
       diagnostic: currentMedicalRecord.diagnostic,
@@ -16321,8 +16363,8 @@ export default function App() {
       (currentMedicalRecord.os.cyl && currentMedicalRecord.os.cyl !== "-") ||
       (currentMedicalRecord.os.axis && currentMedicalRecord.os.axis !== "-") ||
       (currentMedicalRecord.os.add && currentMedicalRecord.os.add !== "-") ||
-      (currentMedicalRecord.od.intermediate_sph && currentMedicalRecord.od.intermediate_sph !== "-") ||
-      (currentMedicalRecord.os.intermediate_sph && currentMedicalRecord.os.intermediate_sph !== "-")
+      (currentMedicalRecord.intermediate_enabled && currentMedicalRecord.od.intermediate_sph && currentMedicalRecord.od.intermediate_sph !== "-") ||
+      (currentMedicalRecord.intermediate_enabled && currentMedicalRecord.os.intermediate_sph && currentMedicalRecord.os.intermediate_sph !== "-")
     );
 
     const hasDpCheck = !!(
@@ -16986,8 +17028,8 @@ export default function App() {
       (currentMedicalRecord.os.cyl && currentMedicalRecord.os.cyl !== "-") ||
       (currentMedicalRecord.os.axis && currentMedicalRecord.os.axis !== "-") ||
       (currentMedicalRecord.os.add && currentMedicalRecord.os.add !== "-") ||
-      (currentMedicalRecord.od.intermediate_sph && currentMedicalRecord.od.intermediate_sph !== "-") ||
-      (currentMedicalRecord.os.intermediate_sph && currentMedicalRecord.os.intermediate_sph !== "-")
+      (currentMedicalRecord.intermediate_enabled && currentMedicalRecord.od.intermediate_sph && currentMedicalRecord.od.intermediate_sph !== "-") ||
+      (currentMedicalRecord.intermediate_enabled && currentMedicalRecord.os.intermediate_sph && currentMedicalRecord.os.intermediate_sph !== "-")
     );
 
     const hasDpInPrescription = !!(
@@ -17023,14 +17065,15 @@ export default function App() {
     const hasPrescriptionAddition =
       odAddParsedForPdf !== 0 || osAddParsedForPdf !== 0;
 
-    // Verificăm dacă există valori introduse la Semidistanță (Intermediar)
+    // Verificăm dacă există valori introduse la Semidistanță (Intermediar) și dacă butonul este ACTIVAT
     const hasIntermediateDiopters = !!(
-      (currentMedicalRecord.od?.intermediate_sph && currentMedicalRecord.od.intermediate_sph.trim() !== "" && currentMedicalRecord.od.intermediate_sph !== "-") ||
+      currentMedicalRecord.intermediate_enabled &&
+      ((currentMedicalRecord.od?.intermediate_sph && currentMedicalRecord.od.intermediate_sph.trim() !== "" && currentMedicalRecord.od.intermediate_sph !== "-") ||
       (currentMedicalRecord.os?.intermediate_sph && currentMedicalRecord.os.intermediate_sph.trim() !== "" && currentMedicalRecord.os.intermediate_sph !== "-") ||
       (currentMedicalRecord.od?.intermediate_cyl && currentMedicalRecord.od.intermediate_cyl.trim() !== "" && currentMedicalRecord.od.intermediate_cyl !== "-") ||
       (currentMedicalRecord.os?.intermediate_cyl && currentMedicalRecord.os.intermediate_cyl.trim() !== "" && currentMedicalRecord.os.intermediate_cyl !== "-") ||
       (currentMedicalRecord.od?.intermediate_axis && currentMedicalRecord.od.intermediate_axis.trim() !== "" && currentMedicalRecord.od.intermediate_axis !== "-") ||
-      (currentMedicalRecord.os?.intermediate_axis && currentMedicalRecord.os.intermediate_axis.trim() !== "" && currentMedicalRecord.os.intermediate_axis !== "-")
+      (currentMedicalRecord.os?.intermediate_axis && currentMedicalRecord.os.intermediate_axis.trim() !== "" && currentMedicalRecord.os.intermediate_axis !== "-"))
     );
 
     // Verificăm dacă există valori introduse la Aproape (adiție sau dioptrii dedicate de aproape)
@@ -24511,12 +24554,12 @@ export default function App() {
                   recDetails.push(glassesInfo);
 
                   // Detalii Ochelari Semidistanță dacă sunt activați
-                  const intermediateActive = latestPresc?.intermediate_enabled ?? patientRecord?.intermediate_enabled;
-                  const interOd = latestPresc?.od?.intermediate_sph ? latestPresc.od : patientRecord?.od;
-                  const interOs = latestPresc?.os?.intermediate_sph ? latestPresc.os : patientRecord?.os;
+                  const intermediateActive = !!(latestPresc ? latestPresc.intermediate_enabled : patientRecord?.intermediate_enabled);
+                  const interOd = latestPresc ? latestPresc.od : patientRecord?.od;
+                  const interOs = latestPresc ? latestPresc.os : patientRecord?.os;
                   const hasInterVals = !!(interOd?.intermediate_sph || interOs?.intermediate_sph);
 
-                  if (intermediateActive || hasInterVals) {
+                  if (intermediateActive && hasInterVals) {
                     const formatInterEye = (sph?: string, cyl?: string, axis?: string) => {
                       if (!sph && !cyl) return "";
                       const parts = [];

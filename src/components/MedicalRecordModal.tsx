@@ -4327,13 +4327,36 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 type="button"
                                 onClick={() => {
                                   const nextState = !currentMedicalRecord.intermediate_enabled;
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    intermediate_enabled: nextState,
-                                    intermediate_distance: nextState
-                                      ? (currentMedicalRecord.intermediate_distance || "60 cm")
-                                      : currentMedicalRecord.intermediate_distance,
-                                  });
+                                  if (nextState) {
+                                    // Activare: setăm enabled și distanța implicită (dacă nu e deja setată)
+                                    setCurrentMedicalRecord({
+                                      ...currentMedicalRecord,
+                                      intermediate_enabled: true,
+                                      intermediate_distance: currentMedicalRecord.intermediate_distance || "60 cm",
+                                    });
+                                  } else {
+                                    // Dezactivare / Anulare corecție semidistanță: resetăm complet semidistanța
+                                    setCurrentMedicalRecord({
+                                      ...currentMedicalRecord,
+                                      intermediate_enabled: false,
+                                      intermediate_distance: "",
+                                      intermediate_dp: "",
+                                      intermediate_dp_od: "",
+                                      intermediate_dp_os: "",
+                                      od: {
+                                        ...currentMedicalRecord.od,
+                                        intermediate_sph: "",
+                                        intermediate_cyl: "",
+                                        intermediate_axis: "",
+                                      },
+                                      os: {
+                                        ...currentMedicalRecord.os,
+                                        intermediate_sph: "",
+                                        intermediate_cyl: "",
+                                        intermediate_axis: "",
+                                      },
+                                    });
+                                  }
                                 }}
                                 className={cn(
                                   "flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl font-black text-xs uppercase tracking-tight transition-all shadow-xs cursor-pointer",
