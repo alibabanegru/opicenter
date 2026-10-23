@@ -7261,6 +7261,7 @@ export default function App() {
   const [hasStoredPhone, setHasStoredPhone] = useState(false);
   const [patientSex, setPatientSex] = useState<"M" | "F" | "">("");
   const [patientNotes, setPatientNotes] = useState("");
+  const [bookingConsultType, setBookingConsultType] = useState<"consult" | "control" | "gratis" | null>(null);
   const patientNameInputRef = useRef<HTMLInputElement>(null);
   const patientPhoneInputRef = useRef<HTMLInputElement>(null);
   const patientBirthDateInputRef = useRef<HTMLInputElement>(null);
@@ -10097,10 +10098,15 @@ export default function App() {
         bifocal_os: targetPrescription?.bifocal_os ?? data.bifocal_os,
         degresiv_od: targetPrescription?.degresiv_od ?? data.degresiv_od,
         degresiv_os: targetPrescription?.degresiv_os ?? data.degresiv_os,
-        isControl: targetPrescription?.isControl ?? data.isControl,
-        isGratis: targetPrescription?.isGratis ?? data.isGratis,
-        isConsultComplet:
-          targetPrescription?.isConsultComplet ?? data.isConsultComplet,
+        isControl: (appointment.isControl || appointment.isGratis || appointment.isConsultComplet)
+          ? !!appointment.isControl
+          : (targetPrescription?.isControl ?? data.isControl),
+        isGratis: (appointment.isControl || appointment.isGratis || appointment.isConsultComplet)
+          ? !!appointment.isGratis
+          : (targetPrescription?.isGratis ?? data.isGratis),
+        isConsultComplet: (appointment.isControl || appointment.isGratis || appointment.isConsultComplet)
+          ? !!appointment.isConsultComplet
+          : (targetPrescription?.isConsultComplet ?? data.isConsultComplet),
         specialMentions:
           targetPrescription?.specialMentions || data.specialMentions || "",
         od: targetPrescription?.od ||
@@ -10236,6 +10242,9 @@ export default function App() {
         examinations: { ...DEFAULT_EXAMINATIONS },
         glassesOrder: null,
         cycloplegia: { ...defaultCycloplegia },
+        isConsultComplet: !!appointment.isConsultComplet,
+        isControl: !!appointment.isControl,
+        isGratis: !!appointment.isGratis,
         updatedAt: new Date().toISOString(),
       } as MedicalRecord;
 
@@ -14348,6 +14357,9 @@ export default function App() {
           startTime: time.toISOString(),
           endTime: endTime.toISOString(),
           status: "scheduled",
+          isConsultComplet: true,
+          isControl: false,
+          isGratis: false,
         }),
       );
       setQuickBookingPatient(null);
@@ -15385,7 +15397,9 @@ export default function App() {
           startTime: selectedSlot.time.toISOString(),
           endTime: endTime.toISOString(),
           status: "scheduled" as const,
-          isControl: rescheduleAsControl,
+          isConsultComplet: bookingConsultType ? bookingConsultType === "consult" : undefined,
+          isControl: bookingConsultType ? bookingConsultType === "control" : undefined,
+          isGratis: bookingConsultType ? bookingConsultType === "gratis" : undefined,
           createdAt: new Date().toISOString(),
         };
         await addDoc(collection(db, "appointments"), removeUndefined(appData));
@@ -15438,6 +15452,9 @@ export default function App() {
             doctorId: selectedSlot.doctorId,
             startTime: selectedSlot.time.toISOString(),
             endTime: endTime.toISOString(),
+            isConsultComplet: bookingConsultType === "consult",
+            isControl: bookingConsultType === "control",
+            isGratis: bookingConsultType === "gratis",
           }),
         );
         if (oldCalendarName && newCalendarName && oldCalendarName !== newCalendarName) {
@@ -15480,6 +15497,9 @@ export default function App() {
           startTime: selectedSlot.time.toISOString(),
           endTime: endTime.toISOString(),
           status: "scheduled" as const,
+          isConsultComplet: bookingConsultType ? bookingConsultType === "consult" : undefined,
+          isControl: bookingConsultType ? bookingConsultType === "control" : undefined,
+          isGratis: bookingConsultType ? bookingConsultType === "gratis" : undefined,
           createdAt: new Date().toISOString(),
         };
         const docRef = await addDoc(
@@ -15521,6 +15541,7 @@ export default function App() {
       setPatientNotes("");
       setSymptomSelect("");
       setSymptomText("");
+      setBookingConsultType(null);
     } catch (error) {
       console.error("Error booking/updating appointment:", error);
       setBookingError("A apărut o problemă la salvare: " + (error instanceof Error ? error.message : String(error)));
@@ -19836,11 +19857,19 @@ export default function App() {
 
       const detectedFormSex = formCnpTrimmed ? getSexFromCNP(formCnpTrimmed) : null;
       const detectedFormBirth = formCnpTrimmed ? getBirthDateFromCNP(formCnpTrimmed) : null;
+      // Preia și sincronizează tipul de consult (Consult Complet / Revenire / Gratis) din document
+      const docIsConsultComplet = !!finalFormValues.isConsultComplet;
+      const docIsControl = !!finalFormValues.isControl;
+      const docIsGratis = !!finalFormValues.isGratis;
+
       const updatedRecord: MedicalRecord = {
         ...activeRec,
         ...(formCnpTrimmed ? { patientCnp: formCnpTrimmed } : {}),
         ...(detectedFormSex ? { patientSex: detectedFormSex } : {}),
         ...(detectedFormBirth ? { patientBirthDate: detectedFormBirth } : {}),
+        isConsultComplet: docIsConsultComplet,
+        isControl: docIsControl,
+        isGratis: docIsGratis,
         diagnostic: diagVal,
         treatment: treatVal,
         symptoms: sympVal,
@@ -19876,6 +19905,61 @@ export default function App() {
         removeUndefined(updatedRecord),
         { merge: true }
       ).catch((err) => console.warn("Firestore medicalRecords sync notice:", err));
+
+      // Sincronizare garantată cu programările din calendar (Appointments)
+      (async () => {
+        try {
+          const appointmentsRef = collection(db, "appointments");
+          const appQueries = [];
+          if (resolvedPatientName) {
+            appQueries.push(query(appointmentsRef, where("patientName", "==", resolvedPatientName)));
+          }
+          if (resolvedPatientPhone) {
+            appQueries.push(query(appointmentsRef, where("patientPhone", "==", resolvedPatientPhone)));
+          }
+          if (activeAppointment?.id) {
+            appQueries.push(query(appointmentsRef, where("__name__", "==", activeAppointment.id)));
+          }
+
+          const matchedDocs = new Map<string, any>();
+          if (activeAppointment?.id) {
+            matchedDocs.set(activeAppointment.id, activeAppointment);
+          }
+          if (appQueries.length > 0) {
+            const snaps = await Promise.all(appQueries.map((q) => getDocs(q)));
+            snaps.forEach((s) => s.docs.forEach((d) => matchedDocs.set(d.id, d.data())));
+          }
+
+          if (matchedDocs.size > 0) {
+            await Promise.all(
+              Array.from(matchedDocs.keys()).map((docId) =>
+                updateDoc(doc(db, "appointments", docId), {
+                  isConsultComplet: docIsConsultComplet,
+                  isControl: docIsControl,
+                  isGratis: docIsGratis,
+                })
+              )
+            );
+
+            // Update local state appointments
+            setAppointments((prev) =>
+              prev.map((app) => {
+                if (matchedDocs.has(app.id)) {
+                  return {
+                    ...app,
+                    isConsultComplet: docIsConsultComplet,
+                    isControl: docIsControl,
+                    isGratis: docIsGratis,
+                  };
+                }
+                return app;
+              })
+            );
+          }
+        } catch (appSyncErr) {
+          console.warn("Could not sync appointment from documentForm:", appSyncErr);
+        }
+      })();
     }
 
     setDocumentForm(finalFormValues);
@@ -21989,8 +22073,18 @@ export default function App() {
       setPatientNotes(appToUse.patientNotes || "");
       setSymptomSelect((appToUse as any).patientSymptomSelect || "");
       setSymptomText((appToUse as any).patientSymptomText || "");
+      if (rescheduleAsControl || appToUse.isControl) {
+        setBookingConsultType("control");
+      } else if (appToUse.isGratis) {
+        setBookingConsultType("gratis");
+      } else if (appToUse.isConsultComplet) {
+        setBookingConsultType("consult");
+      } else {
+        setBookingConsultType(null);
+      }
     } else if (quickBookingPatient) {
       setEditingAppointment(null);
+      setBookingConsultType(null);
       setPatientName(quickBookingPatient.name);
       setPatientAge(quickBookingPatient.age);
       setPatientBirthDate(quickBookingPatient.birthDate || "");
@@ -22006,6 +22100,7 @@ export default function App() {
       setQuickBookingPatient(null);
     } else {
       setEditingAppointment(null);
+      setBookingConsultType(null);
       setPatientName("");
       setPatientAge("");
       setPatientBirthDate("");
@@ -28331,6 +28426,76 @@ export default function App() {
                         : "bg-white border-slate-200 text-slate-900",
                     )}
                   />
+                </div>
+
+                {/* Tip Programare: Consult / Revenire / Gratis (Opțional) */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                      Tip Consultație (Opțional)
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-normal">
+                      Poate fi ales ulterior în fișă
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setBookingConsultType((prev) => (prev === "consult" ? null : "consult"))}
+                      className={cn(
+                        "flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all border shadow-xs cursor-pointer",
+                        bookingConsultType === "consult"
+                          ? "bg-blue-600 border-blue-700 text-white shadow-blue-500/25 ring-2 ring-blue-500/30 font-black"
+                          : darkMode
+                            ? "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-750"
+                            : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                      )}
+                    >
+                      <span className={cn(
+                        "w-2 h-2 rounded-full",
+                        bookingConsultType === "consult" ? "bg-white" : "bg-blue-500"
+                      )} />
+                      <span>Consult</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setBookingConsultType((prev) => (prev === "control" ? null : "control"))}
+                      className={cn(
+                        "flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all border shadow-xs cursor-pointer",
+                        bookingConsultType === "control"
+                          ? "bg-amber-500 border-amber-600 text-white shadow-amber-500/25 ring-2 ring-amber-500/30 font-black"
+                          : darkMode
+                            ? "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-750"
+                            : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                      )}
+                    >
+                      <span className={cn(
+                        "w-2 h-2 rounded-full",
+                        bookingConsultType === "control" ? "bg-white" : "bg-amber-500"
+                      )} />
+                      <span>Revenire</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setBookingConsultType((prev) => (prev === "gratis" ? null : "gratis"))}
+                      className={cn(
+                        "flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all border shadow-xs cursor-pointer",
+                        bookingConsultType === "gratis"
+                          ? "bg-emerald-600 border-emerald-700 text-white shadow-emerald-500/25 ring-2 ring-emerald-500/30 font-black"
+                          : darkMode
+                            ? "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-750"
+                            : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                      )}
+                    >
+                      <span className={cn(
+                        "w-2 h-2 rounded-full",
+                        bookingConsultType === "gratis" ? "bg-white" : "bg-emerald-500"
+                      )} />
+                      <span>Gratis</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div>

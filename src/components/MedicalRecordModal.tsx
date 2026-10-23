@@ -1096,12 +1096,35 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                 </div>
               </div>
 
-              {/* Doctor & Date info in a clean row moved all the way to the right */}
-              {(examiningDoctorName ||
-                currentMedicalRecord.prescriptionHistory?.[
-                  activePrescriptionIndex
-                ]) && (
-                <div className="flex items-center justify-end gap-4 flex-wrap ml-auto px-0.5">
+              {/* Rand comun: Ziua Curentă centrată la jumătatea paginii, pe aceeași linie cu Numele Medicului și Data Consult */}
+              <div className="w-full flex items-center justify-between gap-3 flex-wrap mt-1 px-0.5">
+                {/* Spacer pe stânga pentru a menține pastila centrată la jumătatea paginii */}
+                <div className="flex-1 hidden md:block" />
+
+                {/* Ziua Curentă centrată la mijloc */}
+                <div className="flex items-center justify-center flex-shrink-0 mx-auto md:mx-0">
+                  <div
+                    className={cn(
+                      "inline-flex items-center gap-2 px-3 py-1 rounded-full border shadow-xs transition-all",
+                      darkMode
+                        ? "bg-slate-800/90 border-slate-700 text-slate-200"
+                        : "bg-blue-50 border-blue-200 text-blue-900"
+                    )}
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                    <span className="text-xs font-black tracking-tight">
+                      {(() => {
+                        const now = new Date();
+                        const dayName = format(now, "eeee", { locale: ro });
+                        const capitalizedDay = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+                        return `Azi: ${format(now, "d MMMM", { locale: ro })} ${capitalizedDay}  ora: ${format(now, "HH:mm")}`;
+                      })()}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Doctor & Date info aliniat la dreapta pe aceeași linie */}
+                <div className="flex-1 flex items-center justify-end gap-4 flex-wrap">
                   {examiningDoctorName && (
                     <div className="flex items-center gap-1 shrink-0">
                       <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest leading-none">
@@ -1131,7 +1154,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                     </div>
                   )}
                 </div>
-              )}
+              </div>
             </div>
 
               {/* Draft Restored Banner (Protecție anti-pană de curent) */}
