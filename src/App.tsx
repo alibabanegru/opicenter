@@ -9974,20 +9974,41 @@ export default function App() {
       const history: PrescriptionHistoryItem[] = data.prescriptionHistory || [];
       const hasHistory = history.length > 0;
 
-      const targetIdx =
-        initialPrescriptionIndex !== undefined &&
-        initialPrescriptionIndex >= 0 &&
-        initialPrescriptionIndex < history.length
-          ? initialPrescriptionIndex
-          : hasHistory
-            ? 0
-            : null;
+      // Verificam daca deschidem o consultatie specifica din istoric sau o programare curenta
+      let targetIdx: number | null = null;
+      let isBrandNewConsultationForVisit = false;
+
+      if (initialPrescriptionIndex !== undefined && initialPrescriptionIndex >= 0 && initialPrescriptionIndex < history.length) {
+        targetIdx = initialPrescriptionIndex;
+      } else {
+        // Deschidere din calendar / programare: verificam daca exista deja o consultatie efectuata in ziua programarii
+        let appDate: Date | null = null;
+        try {
+          if (appointment?.startTime) {
+            appDate = parseISO(appointment.startTime);
+          }
+        } catch {
+          appDate = null;
+        }
+
+        const todayPrescriptionIndex = appDate
+          ? history.findIndex((item) => (item.date ? isSameDay(parseISO(item.date), appDate!) : false))
+          : -1;
+
+        if (todayPrescriptionIndex >= 0) {
+          targetIdx = todayPrescriptionIndex;
+        } else {
+          // Este o noua programare / zi diferita: deschide consultatie noua cu campurile clinice goale
+          isBrandNewConsultationForVisit = true;
+          targetIdx = null;
+        }
+      }
 
       const targetPrescription =
         targetIdx !== null && history[targetIdx] ? history[targetIdx] : null;
 
-      const savedOdAdd = targetPrescription?.od?.add || data.od?.add;
-      const savedOsAdd = targetPrescription?.os?.add || data.os?.add;
+      const savedOdAdd = isBrandNewConsultationForVisit ? "" : (targetPrescription?.od?.add || data.od?.add);
+      const savedOsAdd = isBrandNewConsultationForVisit ? "" : (targetPrescription?.os?.add || data.os?.add);
       setForceShowAddition(!!(savedOdAdd || savedOsAdd));
 
       const finalPatientName =
@@ -10032,185 +10053,70 @@ export default function App() {
           data.patientApartament || latestDoc?.formValues?.patientApartament || "",
         occupation: data.occupation || latestDoc?.formValues?.occupation || "",
         institution: data.institution || latestDoc?.formValues?.institution || "",
-        dp: targetPrescription?.dp || data.dp || "",
-        dp_od: targetPrescription?.dp_od || data.dp_od || "",
-        dp_os: targetPrescription?.dp_os || data.dp_os || "",
-        dp_aproape: targetPrescription?.dp_aproape || data.dp_aproape || "",
-        dp_aproape_od:
-          targetPrescription?.dp_aproape_od || data.dp_aproape_od || "",
-        dp_aproape_os:
-          targetPrescription?.dp_aproape_os || data.dp_aproape_os || "",
-        intermediate_enabled:
-          targetPrescription?.intermediate_enabled ?? data.intermediate_enabled ?? false,
-        intermediate_distance:
-          targetPrescription?.intermediate_distance || data.intermediate_distance || "",
-        intermediate_dp:
-          targetPrescription?.intermediate_dp || data.intermediate_dp || "",
-        intermediate_dp_od:
-          targetPrescription?.intermediate_dp_od || data.intermediate_dp_od || "",
-        intermediate_dp_os:
-          targetPrescription?.intermediate_dp_os || data.intermediate_dp_os || "",
-        diagnostic:
-          targetPrescription?.diagnostic ||
-          data.diagnostic ||
-          latestDoc?.formValues?.diagnostic ||
-          "",
-        symptoms:
-          appSymptoms ||
-          targetPrescription?.symptoms ||
-          data.symptoms ||
-          latestDoc?.formValues?.symptoms ||
-          "",
-        history:
-          targetPrescription?.history ||
-          data.history ||
-          latestDoc?.formValues?.history ||
-          "",
-        onsetAndEvolution:
-          targetPrescription?.onsetAndEvolution ||
-          data.onsetAndEvolution ||
-          latestDoc?.formValues?.onsetAndEvolution ||
-          "",
-        recentHospitalizations:
-          targetPrescription?.recentHospitalizations ||
-          data.recentHospitalizations ||
-          latestDoc?.formValues?.recentHospitalizations ||
-          "",
-        clinicalTreatment:
-          targetPrescription?.clinicalTreatment ||
-          data.clinicalTreatment ||
-          latestDoc?.formValues?.clinicalTreatment ||
-          "",
-        dependencyStatus:
-          targetPrescription?.dependencyStatus ||
-          data.dependencyStatus ||
-          latestDoc?.formValues?.dependencyStatus ||
-          "",
-        mobilityStatus:
-          targetPrescription?.mobilityStatus ||
-          data.mobilityStatus ||
-          latestDoc?.formValues?.mobilityStatus ||
-          "",
-        recoveryPlan:
-          targetPrescription?.recoveryPlan ||
-          data.recoveryPlan ||
-          latestDoc?.formValues?.recoveryPlan ||
-          "",
-        recoveryPrognosis:
-          targetPrescription?.recoveryPrognosis ||
-          data.recoveryPrognosis ||
-          latestDoc?.formValues?.recoveryPrognosis ||
-          "",
-        medications:
-          targetPrescription?.medications ||
-          data.medications ||
-          latestDoc?.formValues?.medications ||
-          "",
-        treatment:
-          targetPrescription?.treatment ||
-          data.treatment ||
-          latestDoc?.formValues?.treatment ||
-          "",
-        recomandari:
-          targetPrescription?.recomandari ||
-          data.recomandari ||
-          latestDoc?.formValues?.recomandari ||
-          "",
-        otherEyeDiseases:
-          targetPrescription?.otherEyeDiseases ||
-          data.otherEyeDiseases ||
-          latestDoc?.formValues?.otherEyeDiseases ||
-          "",
-        scutire:
-          targetPrescription?.scutire ||
-          data.scutire ||
-          latestDoc?.formValues?.scutire ||
-          "",
-        iop: targetPrescription?.iop ||
-          data.iop || {
-            od: latestDoc?.formValues?.iopOd || "",
-            os: latestDoc?.formValues?.iopOs || "",
-          },
-        correctedIop: targetPrescription?.correctedIop ||
-          data.correctedIop || {
-            od: latestDoc?.formValues?.correctedIopOd || "",
-            os: latestDoc?.formValues?.correctedIopOs || "",
-          },
-        pachymetry: targetPrescription?.pachymetry ||
-          data.pachymetry || {
-            od: latestDoc?.formValues?.pachymetryOd || "",
-            os: latestDoc?.formValues?.pachymetryOs || "",
-          },
-        anteriorSegment: targetPrescription?.anteriorSegment ||
-          data.anteriorSegment || {
-            od: latestDoc?.formValues?.anteriorSegmentOd || "",
-            os: latestDoc?.formValues?.anteriorSegmentOs || "",
-          },
-        anteriorSegmentAo: targetPrescription?.anteriorSegmentAo ?? data.anteriorSegmentAo ?? false,
-        posteriorSegment: targetPrescription?.posteriorSegment ||
-          data.posteriorSegment || {
-            od: latestDoc?.formValues?.posteriorSegmentOd || "",
-            os: latestDoc?.formValues?.posteriorSegmentOs || "",
-          },
-        posteriorSegmentAo: targetPrescription?.posteriorSegmentAo ?? data.posteriorSegmentAo ?? false,
-        contrastSensitivity: targetPrescription?.contrastSensitivity || data.contrastSensitivity || "",
-        colorVision: targetPrescription?.colorVision || data.colorVision || "",
-        binocularVision: targetPrescription?.binocularVision || data.binocularVision || "",
-        keratometry: targetPrescription?.keratometry ||
-          data.keratometry || {
-            od: latestDoc?.formValues?.keratometryOd || "",
-            os: latestDoc?.formValues?.keratometryOs || "",
-          },
-        axialLength: targetPrescription?.axialLength ||
-          data.axialLength || {
-            od: latestDoc?.formValues?.axialLengthOd || "",
-            os: latestDoc?.formValues?.axialLengthOs || "",
-          },
+        dp: isBrandNewConsultationForVisit ? "" : (targetPrescription?.dp || data.dp || ""),
+        dp_od: isBrandNewConsultationForVisit ? "" : (targetPrescription?.dp_od || data.dp_od || ""),
+        dp_os: isBrandNewConsultationForVisit ? "" : (targetPrescription?.dp_os || data.dp_os || ""),
+        dp_aproape: isBrandNewConsultationForVisit ? "" : (targetPrescription?.dp_aproape || data.dp_aproape || ""),
+        dp_aproape_od: isBrandNewConsultationForVisit ? "" : (targetPrescription?.dp_aproape_od || data.dp_aproape_od || ""),
+        dp_aproape_os: isBrandNewConsultationForVisit ? "" : (targetPrescription?.dp_aproape_os || data.dp_aproape_os || ""),
+        intermediate_enabled: isBrandNewConsultationForVisit ? false : (targetPrescription?.intermediate_enabled ?? data.intermediate_enabled ?? false),
+        intermediate_distance: isBrandNewConsultationForVisit ? "" : (targetPrescription?.intermediate_distance || data.intermediate_distance || ""),
+        intermediate_dp: isBrandNewConsultationForVisit ? "" : (targetPrescription?.intermediate_dp || data.intermediate_dp || ""),
+        intermediate_dp_od: isBrandNewConsultationForVisit ? "" : (targetPrescription?.intermediate_dp_od || data.intermediate_dp_od || ""),
+        intermediate_dp_os: isBrandNewConsultationForVisit ? "" : (targetPrescription?.intermediate_dp_os || data.intermediate_dp_os || ""),
+        diagnostic: isBrandNewConsultationForVisit ? "" : (targetPrescription?.diagnostic || data.diagnostic || latestDoc?.formValues?.diagnostic || ""),
+        symptoms: appSymptoms || (isBrandNewConsultationForVisit ? "" : (targetPrescription?.symptoms || data.symptoms || latestDoc?.formValues?.symptoms || "")),
+        history: isBrandNewConsultationForVisit ? "" : (targetPrescription?.history || data.history || latestDoc?.formValues?.history || ""),
+        onsetAndEvolution: isBrandNewConsultationForVisit ? "" : (targetPrescription?.onsetAndEvolution || data.onsetAndEvolution || latestDoc?.formValues?.onsetAndEvolution || ""),
+        recentHospitalizations: isBrandNewConsultationForVisit ? "" : (targetPrescription?.recentHospitalizations || data.recentHospitalizations || latestDoc?.formValues?.recentHospitalizations || ""),
+        clinicalTreatment: isBrandNewConsultationForVisit ? "" : (targetPrescription?.clinicalTreatment || data.clinicalTreatment || latestDoc?.formValues?.clinicalTreatment || ""),
+        dependencyStatus: isBrandNewConsultationForVisit ? "" : (targetPrescription?.dependencyStatus || data.dependencyStatus || latestDoc?.formValues?.dependencyStatus || ""),
+        mobilityStatus: isBrandNewConsultationForVisit ? "" : (targetPrescription?.mobilityStatus || data.mobilityStatus || latestDoc?.formValues?.mobilityStatus || ""),
+        recoveryPlan: isBrandNewConsultationForVisit ? "" : (targetPrescription?.recoveryPlan || data.recoveryPlan || latestDoc?.formValues?.recoveryPlan || ""),
+        recoveryPrognosis: isBrandNewConsultationForVisit ? "" : (targetPrescription?.recoveryPrognosis || data.recoveryPrognosis || latestDoc?.formValues?.recoveryPrognosis || ""),
+        medications: isBrandNewConsultationForVisit ? "" : (targetPrescription?.medications || data.medications || latestDoc?.formValues?.medications || ""),
+        treatment: isBrandNewConsultationForVisit ? "" : (targetPrescription?.treatment || data.treatment || latestDoc?.formValues?.treatment || ""),
+        recomandari: isBrandNewConsultationForVisit ? "" : (targetPrescription?.recomandari || data.recomandari || latestDoc?.formValues?.recomandari || ""),
+        otherEyeDiseases: isBrandNewConsultationForVisit ? "" : (targetPrescription?.otherEyeDiseases || data.otherEyeDiseases || latestDoc?.formValues?.otherEyeDiseases || ""),
+        scutire: isBrandNewConsultationForVisit ? "" : (targetPrescription?.scutire || data.scutire || latestDoc?.formValues?.scutire || ""),
+        iop: isBrandNewConsultationForVisit ? { od: "", os: "" } : (targetPrescription?.iop || data.iop || { od: latestDoc?.formValues?.iopOd || "", os: latestDoc?.formValues?.iopOs || "" }),
+        correctedIop: isBrandNewConsultationForVisit ? { od: "", os: "" } : (targetPrescription?.correctedIop || data.correctedIop || { od: latestDoc?.formValues?.correctedIopOd || "", os: latestDoc?.formValues?.correctedIopOs || "" }),
+        pachymetry: isBrandNewConsultationForVisit ? { od: "", os: "" } : (targetPrescription?.pachymetry || data.pachymetry || { od: latestDoc?.formValues?.pachymetryOd || "", os: latestDoc?.formValues?.pachymetryOs || "" }),
+        anteriorSegment: isBrandNewConsultationForVisit ? { od: "", os: "" } : (targetPrescription?.anteriorSegment || data.anteriorSegment || { od: latestDoc?.formValues?.anteriorSegmentOd || "", os: latestDoc?.formValues?.anteriorSegmentOs || "" }),
+        anteriorSegmentAo: isBrandNewConsultationForVisit ? false : (targetPrescription?.anteriorSegmentAo ?? data.anteriorSegmentAo ?? false),
+        posteriorSegment: isBrandNewConsultationForVisit ? { od: "", os: "" } : (targetPrescription?.posteriorSegment || data.posteriorSegment || { od: latestDoc?.formValues?.posteriorSegmentOd || "", os: latestDoc?.formValues?.posteriorSegmentOs || "" }),
+        posteriorSegmentAo: isBrandNewConsultationForVisit ? false : (targetPrescription?.posteriorSegmentAo ?? data.posteriorSegmentAo ?? false),
+        contrastSensitivity: isBrandNewConsultationForVisit ? "" : (targetPrescription?.contrastSensitivity || data.contrastSensitivity || ""),
+        colorVision: isBrandNewConsultationForVisit ? "" : (targetPrescription?.colorVision || data.colorVision || ""),
+        binocularVision: isBrandNewConsultationForVisit ? "" : (targetPrescription?.binocularVision || data.binocularVision || ""),
+        keratometry: isBrandNewConsultationForVisit ? { od: "", os: "" } : (targetPrescription?.keratometry || data.keratometry || { od: latestDoc?.formValues?.keratometryOd || "", os: latestDoc?.formValues?.keratometryOs || "" }),
+        axialLength: isBrandNewConsultationForVisit ? { od: "", os: "" } : (targetPrescription?.axialLength || data.axialLength || { od: latestDoc?.formValues?.axialLengthOd || "", os: latestDoc?.formValues?.axialLengthOs || "" }),
         prescriptionHistory: history,
         orderHistory: data.orderHistory || [],
-        examinations:
-          targetPrescription?.examinations ||
-          data.examinations || { ...DEFAULT_EXAMINATIONS },
-        examinationInterpretation:
-          targetPrescription?.examinationInterpretation ||
-          data.examinationInterpretation ||
-          latestDoc?.formValues?.examinationInterpretation ||
-          "",
-        glassesOrder:
-          data.glassesOrder ||
-          (data.orderHistory && data.orderHistory.length > 0
-            ? data.orderHistory[0]
-            : null),
+        examinations: isBrandNewConsultationForVisit ? { ...DEFAULT_EXAMINATIONS } : (targetPrescription?.examinations || data.examinations || { ...DEFAULT_EXAMINATIONS }),
+        examinationInterpretation: isBrandNewConsultationForVisit ? "" : (targetPrescription?.examinationInterpretation || data.examinationInterpretation || latestDoc?.formValues?.examinationInterpretation || ""),
+        glassesOrder: isBrandNewConsultationForVisit ? null : (data.glassesOrder || (data.orderHistory && data.orderHistory.length > 0 ? data.orderHistory[0] : null)),
         patientSex:
           data.patientSex || appointment.patientSex || latestDoc?.formValues?.patientSex || "",
-        cycloplegia:
-          targetPrescription?.cycloplegia ||
-          data.cycloplegia || { ...defaultCycloplegia },
-        nonCycloplegic:
-          targetPrescription?.nonCycloplegic ||
-          data.nonCycloplegic || { ...defaultCycloplegia },
-        lensType: targetPrescription?.lensType || data.lensType || "",
-        lensMaterial:
-          targetPrescription?.lensMaterial || data.lensMaterial || "",
-        lensTreatment:
-          targetPrescription?.lensTreatment || data.lensTreatment || "",
-        lensHeliomat:
-          targetPrescription?.lensHeliomat || data.lensHeliomat || "",
-        heliomat_od: targetPrescription?.heliomat_od ?? data.heliomat_od,
-        heliomat_os: targetPrescription?.heliomat_os ?? data.heliomat_os,
-        progresiv_od: targetPrescription?.progresiv_od ?? data.progresiv_od,
-        progresiv_os: targetPrescription?.progresiv_os ?? data.progresiv_os,
-        bifocal_od: targetPrescription?.bifocal_od ?? data.bifocal_od,
-        bifocal_os: targetPrescription?.bifocal_os ?? data.bifocal_os,
-        degresiv_od: targetPrescription?.degresiv_od ?? data.degresiv_od,
-        degresiv_os: targetPrescription?.degresiv_os ?? data.degresiv_os,
+        cycloplegia: isBrandNewConsultationForVisit ? { ...defaultCycloplegia } : (targetPrescription?.cycloplegia || data.cycloplegia || { ...defaultCycloplegia }),
+        nonCycloplegic: isBrandNewConsultationForVisit ? { ...defaultCycloplegia } : (targetPrescription?.nonCycloplegic || data.nonCycloplegic || { ...defaultCycloplegia }),
+        lensType: isBrandNewConsultationForVisit ? "" : (targetPrescription?.lensType || data.lensType || ""),
+        lensMaterial: isBrandNewConsultationForVisit ? "" : (targetPrescription?.lensMaterial || data.lensMaterial || ""),
+        lensTreatment: isBrandNewConsultationForVisit ? "" : (targetPrescription?.lensTreatment || data.lensTreatment || ""),
+        lensHeliomat: isBrandNewConsultationForVisit ? "" : (targetPrescription?.lensHeliomat || data.lensHeliomat || ""),
+        heliomat_od: isBrandNewConsultationForVisit ? false : (targetPrescription?.heliomat_od ?? data.heliomat_od),
+        heliomat_os: isBrandNewConsultationForVisit ? false : (targetPrescription?.heliomat_os ?? data.heliomat_os),
+        progresiv_od: isBrandNewConsultationForVisit ? false : (targetPrescription?.progresiv_od ?? data.progresiv_od),
+        progresiv_os: isBrandNewConsultationForVisit ? false : (targetPrescription?.progresiv_os ?? data.progresiv_os),
+        bifocal_od: isBrandNewConsultationForVisit ? false : (targetPrescription?.bifocal_od ?? data.bifocal_od),
+        bifocal_os: isBrandNewConsultationForVisit ? false : (targetPrescription?.bifocal_os ?? data.bifocal_os),
+        degresiv_od: isBrandNewConsultationForVisit ? false : (targetPrescription?.degresiv_od ?? data.degresiv_od),
+        degresiv_os: isBrandNewConsultationForVisit ? false : (targetPrescription?.degresiv_os ?? data.degresiv_os),
         isControl: !!appointment.isControl,
         isGratis: !!appointment.isGratis,
         isConsultComplet: !!appointment.isConsultComplet,
-        specialMentions:
-          targetPrescription?.specialMentions || data.specialMentions || "",
-        od: targetPrescription?.od ||
-          data.od || {
+        specialMentions: isBrandNewConsultationForVisit ? "" : (targetPrescription?.specialMentions || data.specialMentions || ""),
+        od: isBrandNewConsultationForVisit ? {
             sph: "",
             cyl: "",
             axis: "",
@@ -10220,9 +10126,7 @@ export default function App() {
             base: "",
             va_without: "",
             va_with: "",
-          },
-        os: targetPrescription?.os ||
-          data.os || {
+          } : (targetPrescription?.od || data.od || {
             sph: "",
             cyl: "",
             axis: "",
@@ -10232,9 +10136,30 @@ export default function App() {
             base: "",
             va_without: "",
             va_with: "",
-          },
-        cl_od: targetPrescription?.cl_od || data.cl_od,
-        cl_os: targetPrescription?.cl_os || data.cl_os,
+          }),
+        os: isBrandNewConsultationForVisit ? {
+            sph: "",
+            cyl: "",
+            axis: "",
+            add: "",
+            pd: "",
+            prism: "",
+            base: "",
+            va_without: "",
+            va_with: "",
+          } : (targetPrescription?.os || data.os || {
+            sph: "",
+            cyl: "",
+            axis: "",
+            add: "",
+            pd: "",
+            prism: "",
+            base: "",
+            va_without: "",
+            va_with: "",
+          }),
+        cl_od: isBrandNewConsultationForVisit ? undefined : (targetPrescription?.cl_od || data.cl_od),
+        cl_os: isBrandNewConsultationForVisit ? undefined : (targetPrescription?.cl_os || data.cl_os),
       } as MedicalRecord));
 
       setActivePrescriptionIndex(targetIdx);
@@ -10741,7 +10666,28 @@ export default function App() {
   };
 
   const handleNewAppointmentFromSearch = (app: Appointment) => {
-    handleOpenManualBookingFromSearch(app);
+    if (!app) return;
+    const targetAge = (
+      app.patientAge ||
+      (app.patientBirthDate ? calculateAge(app.patientBirthDate) : "") ||
+      ""
+    ).toString();
+
+    setQuickBookingPatient({
+      name: app.patientName,
+      age: targetAge,
+      birthDate: app.patientBirthDate || "",
+      phone: app.patientPhone || "",
+      sex: app.patientSex || "",
+      notes: app.patientNotes || "",
+      cnp: (app as any).patientCnp || "",
+    } as any);
+
+    setIsNewAppointmentConfirmModalOpen(false);
+    setIsSearchModalOpen(false);
+    setIsOmniboxOpen(false);
+    setIsMedicalRecordModalOpen(false);
+    setIsOrdersModalOpen(false);
   };
 
   const confirmNewAppointment = () => {
@@ -14187,9 +14133,7 @@ export default function App() {
       let matchingRecords: MedicalRecord[] = [];
       if (appName && recMap.has(appName)) matchingRecords = recMap.get(appName)!;
 
-      const patientRecordForToday = app.isNewPatientManualEntry
-        ? null
-        : (matchingRecords.find((r) => {
+      const patientRecordForToday = (matchingRecords.find((r) => {
             const matchesName = appName && cleanStr(r.patientName) === appName;
             if (!matchesName) return false;
             const matchesPhone = !appPhone || (r.patientPhone || "").replace(/\D/g, "") === appPhone;
@@ -14202,7 +14146,7 @@ export default function App() {
                 item.date ? isSameDay(parseISO(item.date), appTime) : false
               )
             );
-          }) || (matchingRecords.length > 0 && (app.isConsultComplet || app.isControl || app.isGratis) ? matchingRecords[0] : null));
+          }) || null);
 
       let matchingDocs: any[] = [];
       if (appName && docMap.has(appName)) matchingDocs = docMap.get(appName)!;
@@ -14459,9 +14403,10 @@ export default function App() {
           startTime: time.toISOString(),
           endTime: endTime.toISOString(),
           status: "scheduled",
-          isConsultComplet: true,
-          isControl: false,
-          isGratis: false,
+          isConsultComplet: undefined,
+          isControl: undefined,
+          isGratis: undefined,
+          isNewPatientManualEntry: false,
         }),
       );
       setQuickBookingPatient(null);
@@ -19434,80 +19379,65 @@ export default function App() {
           return (
             diagRaw ||
             (isSamePrescription ? prevForm?.diagnostic : "") ||
-            patientFormGeneral?.diagnostic ||
             ""
           );
         })(),
         scutire:
           currentMedicalRecord.scutire ||
           (isSamePrescription ? prevForm?.scutire : "") ||
-          patientFormGeneral?.scutire ||
           "",
         treatment:
           currentMedicalRecord.treatment ||
           (isSamePrescription ? prevForm?.treatment : "") ||
-          patientFormGeneral?.treatment ||
           "",
         history:
           currentMedicalRecord.history ||
           (isSamePrescription ? prevForm?.history : "") ||
-          patientFormGeneral?.history ||
           "",
         onsetAndEvolution:
           currentMedicalRecord.onsetAndEvolution ||
           (isSamePrescription ? prevForm?.onsetAndEvolution : "") ||
-          patientFormGeneral?.onsetAndEvolution ||
           "",
         recentHospitalizations:
           currentMedicalRecord.recentHospitalizations ||
           (isSamePrescription ? prevForm?.recentHospitalizations : "") ||
-          patientFormGeneral?.recentHospitalizations ||
           "",
         clinicalTreatment:
           currentMedicalRecord.clinicalTreatment ||
           currentMedicalRecord.treatment ||
           (isSamePrescription ? prevForm?.clinicalTreatment : "") ||
-          patientFormGeneral?.clinicalTreatment ||
           "",
         dependencyStatus:
           currentMedicalRecord.dependencyStatus ||
           (isSamePrescription ? prevForm?.dependencyStatus : "") ||
-          patientFormGeneral?.dependencyStatus ||
           "",
         mobilityStatus:
           currentMedicalRecord.mobilityStatus ||
           (isSamePrescription ? prevForm?.mobilityStatus : "") ||
-          patientFormGeneral?.mobilityStatus ||
           "",
         recoveryPlan:
           currentMedicalRecord.recoveryPlan ||
           (isSamePrescription ? prevForm?.recoveryPlan : "") ||
-          patientFormGeneral?.recoveryPlan ||
           "",
         recoveryPrognosis:
           currentMedicalRecord.recoveryPrognosis ||
           (isSamePrescription ? prevForm?.recoveryPrognosis : "") ||
-          patientFormGeneral?.recoveryPrognosis ||
           "",
         symptoms:
           currentMedicalRecord.symptoms ||
           (isSamePrescription ? prevForm?.symptoms : "") ||
-          patientFormGeneral?.symptoms ||
           "",
         medications:
           currentMedicalRecord.medications ||
           (isSamePrescription ? prevForm?.medications : "") ||
-          patientFormGeneral?.medications ||
           "",
         otherEyeDiseases:
           currentMedicalRecord.otherEyeDiseases ||
           (isSamePrescription ? prevForm?.otherEyeDiseases : "") ||
-          patientFormGeneral?.otherEyeDiseases ||
           "",
         examinationInterpretation:
           currentMedicalRecord.examinationInterpretation ||
           (isSamePrescription ? prevForm?.examinationInterpretation : "") ||
-          patientFormGeneral?.examinationInterpretation ||
           "",
         documentNumber: regNumber,
         certificatNumber: regNumber,

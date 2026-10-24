@@ -654,14 +654,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                         </button>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-1.5 group max-w-full">
+                      <div className="flex items-center gap-1.5 group max-w-full flex-wrap">
                         <h2
                           className={cn(
                             "text-2xl sm:text-4xl font-black tracking-tight flex items-center flex-wrap gap-2 max-w-full",
                             darkMode ? "text-slate-50" : "text-slate-900",
                           )}
                         >
-                          <span className="break-words whitespace-normal select-text min-w-0 max-w-full">{currentMedicalRecord.patientName}</span>
+                          <span className="break-words whitespace-nowrap select-text shrink-0">{currentMedicalRecord.patientName}</span>
                           {(() => {
                             const bStatus = getBirthdayStatus(currentMedicalRecord.patientBirthDate);
 
@@ -836,8 +836,8 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                             );
                           })()}
 
-                          {/* Data curentă + Numele Medicului + Data Consultului ridicate pe același rând în linie cu simptomele și notificarea de vârstă */}
-                          <span className="inline-flex items-center gap-3 ml-2 align-middle normal-case font-sans tracking-normal select-none flex-wrap">
+                          {/* Data curentă + Numele Medicului + Data Consultului pe aceeași linie orizontală cu numele pacientului și simptomele */}
+                          <span className="inline-flex items-center gap-2.5 ml-2 align-middle normal-case font-sans tracking-normal select-none shrink-0">
                             {/* Pastila Data Curentă */}
                             <span
                               className={cn(
