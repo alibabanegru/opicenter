@@ -1252,6 +1252,13 @@ const isMedicalRecordMatchForAppointment = (r: any, app: any): boolean => {
   if (!r || !app) return false;
   if (r.id && app.id && r.id === app.id) return true;
 
+  // Daca programarea este pentru un pacient nou, nu prelua fisa sau ochelarii altui pacient vechi
+  if (app.isNewPatientManualEntry) {
+    const appRecordId = (app as any).medicalRecordId;
+    if (appRecordId && r.id === appRecordId) return true;
+    return false;
+  }
+
   const appCnp = (app.patientCnp || "").trim();
   const rCnp = (r.patientCnp || "").trim();
   if (appCnp && rCnp && appCnp === rCnp) return true;
@@ -1261,7 +1268,7 @@ const isMedicalRecordMatchForAppointment = (r: any, app: any): boolean => {
   if (
     rName &&
     appName &&
-    (rName === appName || normalizePatientName(r.patientName) === normalizePatientName(app.patientName))
+    (rName === appName || normalizePatientName(r.patientName) === normalizePatientName(app.patientName) || arePatientNamesMatching(r.patientName, app.patientName))
   ) {
     const rPhone = (r.patientPhone || "").replace(/[^0-9]/g, "");
     const appPhone = (app.patientPhone || "").replace(/[^0-9]/g, "");
@@ -9867,28 +9874,30 @@ export default function App() {
 
     let recordId =
       matchedRecord?.id ||
-      `${appointment.patientName}_${appointment.patientPhone}`
-        .replace(/\s+/g, "_")
-        .toLowerCase();
+      (isManualNew
+        ? `rec_${appointment.id || Date.now()}_${(appointment.patientName || "").replace(/\s+/g, "_").toLowerCase()}`
+        : `${appointment.patientName}_${appointment.patientPhone}`.replace(/\s+/g, "_").toLowerCase());
 
     let data: any = matchedRecord ? { ...matchedRecord } : null;
 
     // 2. Fresh Firestore lookup to guarantee real-time GDPR status and latest data across devices
     try {
       let freshSnap: any = null;
-      const docRef = doc(db, "medicalRecords", recordId);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        freshSnap = docSnap;
-      } else {
-        const altId = `${appointment.patientName}_${(appointment.patientPhone || "").replace(/\D/g, "")}`
-          .replace(/\s+/g, "_")
-          .toLowerCase();
-        if (altId !== recordId) {
-          const altSnap = await getDoc(doc(db, "medicalRecords", altId));
-          if (altSnap.exists()) {
-            freshSnap = altSnap;
-            recordId = altId;
+      if (!isManualNew) {
+        const docRef = doc(db, "medicalRecords", recordId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          freshSnap = docSnap;
+        } else {
+          const altId = `${appointment.patientName}_${(appointment.patientPhone || "").replace(/\D/g, "")}`
+            .replace(/\s+/g, "_")
+            .toLowerCase();
+          if (altId !== recordId) {
+            const altSnap = await getDoc(doc(db, "medicalRecords", altId));
+            if (altSnap.exists()) {
+              freshSnap = altSnap;
+              recordId = altId;
+            }
           }
         }
       }
@@ -9903,7 +9912,7 @@ export default function App() {
         }
       }
 
-      if (!freshSnap && appointment.patientPhone && appointment.patientPhone.trim()) {
+      if (!freshSnap && !isManualNew && appointment.patientPhone && appointment.patientPhone.trim()) {
         const phoneSnap = await getDocs(
           query(collection(db, "medicalRecords"), where("patientPhone", "==", appointment.patientPhone.trim()))
         ).catch(() => null);
@@ -10195,15 +10204,9 @@ export default function App() {
         bifocal_os: targetPrescription?.bifocal_os ?? data.bifocal_os,
         degresiv_od: targetPrescription?.degresiv_od ?? data.degresiv_od,
         degresiv_os: targetPrescription?.degresiv_os ?? data.degresiv_os,
-        isControl: (appointment.isControl || appointment.isGratis || appointment.isConsultComplet)
-          ? !!appointment.isControl
-          : (targetPrescription?.isControl ?? data.isControl),
-        isGratis: (appointment.isControl || appointment.isGratis || appointment.isConsultComplet)
-          ? !!appointment.isGratis
-          : (targetPrescription?.isGratis ?? data.isGratis),
-        isConsultComplet: (appointment.isControl || appointment.isGratis || appointment.isConsultComplet)
-          ? !!appointment.isConsultComplet
-          : (targetPrescription?.isConsultComplet ?? data.isConsultComplet),
+        isControl: !!appointment.isControl,
+        isGratis: !!appointment.isGratis,
+        isConsultComplet: !!appointment.isConsultComplet,
         specialMentions:
           targetPrescription?.specialMentions || data.specialMentions || "",
         od: targetPrescription?.od ||
@@ -14184,21 +14187,22 @@ export default function App() {
       let matchingRecords: MedicalRecord[] = [];
       if (appName && recMap.has(appName)) matchingRecords = recMap.get(appName)!;
 
-      const patientRecordForToday =
-        matchingRecords.find((r) => {
-          const matchesName = appName && cleanStr(r.patientName) === appName;
-          if (!matchesName) return false;
-          const matchesPhone = !appPhone || (r.patientPhone || "").replace(/\D/g, "") === appPhone;
-          if (!matchesPhone) return false;
+      const patientRecordForToday = app.isNewPatientManualEntry
+        ? null
+        : (matchingRecords.find((r) => {
+            const matchesName = appName && cleanStr(r.patientName) === appName;
+            if (!matchesName) return false;
+            const matchesPhone = !appPhone || (r.patientPhone || "").replace(/\D/g, "") === appPhone;
+            if (!matchesPhone) return false;
 
-          return (
-            (r.updatedAt && isSameDay(parseISO(r.updatedAt), appTime)) ||
-            (r.createdAt && isSameDay(parseISO(r.createdAt), appTime)) ||
-            (r.prescriptionHistory || []).some((item) =>
-              item.date ? isSameDay(parseISO(item.date), appTime) : false
-            )
-          );
-        }) || (matchingRecords.length > 0 && (app.isConsultComplet || app.isControl || app.isGratis) ? matchingRecords[0] : null);
+            return (
+              (r.updatedAt && isSameDay(parseISO(r.updatedAt), appTime)) ||
+              (r.createdAt && isSameDay(parseISO(r.createdAt), appTime)) ||
+              (r.prescriptionHistory || []).some((item) =>
+                item.date ? isSameDay(parseISO(item.date), appTime) : false
+              )
+            );
+          }) || (matchingRecords.length > 0 && (app.isConsultComplet || app.isControl || app.isGratis) ? matchingRecords[0] : null));
 
       let matchingDocs: any[] = [];
       if (appName && docMap.has(appName)) matchingDocs = docMap.get(appName)!;
@@ -26339,17 +26343,21 @@ export default function App() {
                             const hasMedicalReportToday = slotMeta?.hasMedicalReportToday || false;
 
                             const matchingRecord = appointment
-                              ? medicalRecords.find((r) => {
-                                  const appRecordId = (appointment as any).medicalRecordId;
-                                  if (appRecordId && r.id === appRecordId) return true;
-                                  const appName = (appointment.patientName || "").trim().toLowerCase();
-                                  const rName = (r.patientName || "").trim().toLowerCase();
-                                  if (!appName || !rName || appName !== rName) return false;
-                                  const appPhone = (appointment.patientPhone || "").replace(/\D/g, "");
-                                  const rPhone = (r.patientPhone || "").replace(/\D/g, "");
-                                  if (appPhone && rPhone && appPhone !== rPhone) return false;
-                                  return true;
-                                })
+                              ? (appointment.isNewPatientManualEntry
+                                  ? ((appointment as any).medicalRecordId
+                                      ? medicalRecords.find((r) => r.id === (appointment as any).medicalRecordId) || null
+                                      : null)
+                                  : medicalRecords.find((r) => {
+                                      const appRecordId = (appointment as any).medicalRecordId;
+                                      if (appRecordId && r.id === appRecordId) return true;
+                                      const appName = (appointment.patientName || "").trim().toLowerCase();
+                                      const rName = (r.patientName || "").trim().toLowerCase();
+                                      if (!appName || !rName || (!arePatientNamesMatching(appName, rName) && appName !== rName)) return false;
+                                      const appPhone = (appointment.patientPhone || "").replace(/\D/g, "");
+                                      const rPhone = (r.patientPhone || "").replace(/\D/g, "");
+                                      if (appPhone && rPhone && appPhone !== rPhone) return false;
+                                      return true;
+                                    }) || null)
                               : null;
 
                             const historyItemForSlot = matchingRecord?.prescriptionHistory?.find((item) =>
@@ -26358,21 +26366,15 @@ export default function App() {
 
                             const isConsultCompletStatus =
                               !!appointment?.isConsultComplet ||
-                              !!historyItemForSlot?.isConsultComplet ||
-                              !!patientRecordForToday?.isConsultComplet ||
-                              !!matchingRecord?.isConsultComplet;
+                              !!historyItemForSlot?.isConsultComplet;
 
                             const isControlStatus =
                               !!appointment?.isControl ||
-                              !!historyItemForSlot?.isControl ||
-                              !!patientRecordForToday?.isControl ||
-                              !!matchingRecord?.isControl;
+                              !!historyItemForSlot?.isControl;
 
                             const isGratisStatus =
                               !!appointment?.isGratis ||
-                              !!historyItemForSlot?.isGratis ||
-                              !!patientRecordForToday?.isGratis ||
-                              !!matchingRecord?.isGratis;
+                              !!historyItemForSlot?.isGratis;
 
                             const isControlToday =
                               patientRecordForToday?.isControl;
