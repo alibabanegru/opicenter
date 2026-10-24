@@ -573,17 +573,63 @@ export const normalizePatientName = (name?: string | null): string => {
     .replace(/\s+/g, " ");
 };
 
+export const normalizePatientWords = (name?: string | null): string[] => {
+  if (!name) return [];
+  return name
+    .toLowerCase()
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort();
+};
+
+export const arePatientNamesMatching = (nameA?: string | null, nameB?: string | null): boolean => {
+  if (!nameA || !nameB) return false;
+  const wA = normalizePatientWords(nameA);
+  const wB = normalizePatientWords(nameB);
+  if (wA.length === 0 || wB.length === 0) return false;
+  return wA.join(" ") === wB.join(" ");
+};
+
+export const normalizeBirthDateStr = (dateStr?: string | null): string => {
+  if (!dateStr) return "";
+  const s = dateStr.trim().replace(/[./]/g, "-");
+  const p = s.split("-");
+  if (p.length === 3) {
+    if (p[0].length === 4) {
+      // YYYY-MM-DD -> DD-MM-YYYY
+      return `${p[2].padStart(2, "0")}-${p[1].padStart(2, "0")}-${p[0]}`;
+    } else if (p[2].length === 4) {
+      // DD-MM-YYYY
+      return `${p[0].padStart(2, "0")}-${p[1].padStart(2, "0")}-${p[2]}`;
+    }
+  }
+  return s;
+};
+
+export const areBirthDatesMatching = (dateA?: string | null, dateB?: string | null): boolean => {
+  const normA = normalizeBirthDateStr(dateA);
+  const normB = normalizeBirthDateStr(dateB);
+  if (!normA || !normB) return false;
+  return normA === normB;
+};
+
 export const findPatientMedicalRecord = (
   patientName: string | undefined | null,
   patientPhone: string | undefined | null,
   patientCnp: string | undefined | null,
   recordsList: MedicalRecord[],
+  patientBirthDate?: string | undefined | null,
 ): MedicalRecord | undefined => {
   if (!recordsList || recordsList.length === 0) return undefined;
 
   const cleanName = normalizePatientName(patientName);
   const cleanPhone = normalizePhone(patientPhone);
   const cleanCnp = (patientCnp || "").trim();
+  const cleanBirthDate = (patientBirthDate || "").trim();
 
   // 1. Match by CNP if present
   if (cleanCnp) {
@@ -611,23 +657,32 @@ export const findPatientMedicalRecord = (
     if (byNorm) return byNorm;
   }
 
-  // 4. Normalized name match if phone matches partially or is empty on one side
-  if (cleanName) {
-    const byNameAndPartialPhone = recordsList.find((r) => {
+  // 4. Normalized name & phone match
+  if (cleanName && cleanPhone) {
+    const byNameAndPhone = recordsList.find((r) => {
       const rName = normalizePatientName(r.patientName);
       if (rName !== cleanName) return false;
       const rPhone = normalizePhone(r.patientPhone);
-      if (!cleanPhone || !rPhone) return true;
+      if (!rPhone) return false;
       return (
         rPhone === cleanPhone ||
         rPhone.endsWith(cleanPhone) ||
         cleanPhone.endsWith(rPhone)
       );
     });
-    if (byNameAndPartialPhone) return byNameAndPartialPhone;
+    if (byNameAndPhone) return byNameAndPhone;
+  }
 
-    // 5. Sole name match
-    const byNameOnly = recordsList.find((r) => normalizePatientName(r.patientName) === cleanName);
+  // 5. Sole name match only when phone/CNP are not provided AND birth dates do not conflict
+  if (cleanName && !cleanPhone && !cleanCnp) {
+    const byNameOnly = recordsList.find((r) => {
+      if (normalizePatientName(r.patientName) !== cleanName) return false;
+      const rBirth = (r.patientBirthDate || "").trim();
+      if (cleanBirthDate && rBirth && cleanBirthDate !== rBirth) {
+        return false;
+      }
+      return true;
+    });
     if (byNameOnly) return byNameOnly;
   }
 
@@ -7262,6 +7317,13 @@ export default function App() {
   const [patientSex, setPatientSex] = useState<"M" | "F" | "">("");
   const [patientNotes, setPatientNotes] = useState("");
   const [bookingConsultType, setBookingConsultType] = useState<"consult" | "control" | "gratis" | null>(null);
+  const [isPatientSelectedFromSearch, setIsPatientSelectedFromSearch] = useState<boolean>(false);
+  const [existingPatientPrompt, setExistingPatientPrompt] = useState<{
+    record: any;
+    lastVisitDateFormatted: string;
+    patientName: string;
+    patientBirthDate: string;
+  } | null>(null);
   const patientNameInputRef = useRef<HTMLInputElement>(null);
   const patientPhoneInputRef = useRef<HTMLInputElement>(null);
   const patientBirthDateInputRef = useRef<HTMLInputElement>(null);
@@ -8108,6 +8170,7 @@ export default function App() {
     setPatientBirthDate(finalBirthDate);
     setPatientSex(finalSex as "M" | "F" | "");
     setPatientCnp(finalCnp || "");
+    setIsPatientSelectedFromSearch(true);
     setModalSearchResults([]);
   };
 
@@ -9755,24 +9818,51 @@ export default function App() {
     };
 
     // 1. Try finding in loaded medicalRecords state first
-    let matchedRecord = findPatientMedicalRecord(
-      appointment.patientName,
-      appointment.patientPhone,
-      appointment.patientCnp,
-      medicalRecords,
-    );
+    const isManualNew = !!appointment.isNewPatientManualEntry;
+    let matchedRecord = isManualNew
+      ? undefined
+      : (
+          findPatientMedicalRecord(
+            appointment.patientName,
+            appointment.patientPhone,
+            appointment.patientCnp,
+            medicalRecords,
+            appointment.patientBirthDate,
+          ) ||
+          medicalRecords.find((r) => {
+            if (!r.patientName) return false;
+            const rBirth = (r.patientBirthDate || "").trim();
+            const appBirth = (appointment.patientBirthDate || "").trim();
+            if (appBirth && rBirth && appBirth === rBirth) {
+              return arePatientNamesMatching(r.patientName, appointment.patientName);
+            }
+            return false;
+          })
+        );
 
-    if (!matchedRecord && medicalRecords && medicalRecords.length > 0) {
-      const appCleanName = normalizePatientName(appointment.patientName);
-      const appCleanPhone = normalizePhone(appointment.patientPhone);
-      matchedRecord = medicalRecords.find((r) => {
-        const rCleanName = normalizePatientName(r.patientName);
-        if (appCleanName && rCleanName && appCleanName === rCleanName) return true;
-        const rCleanPhone = normalizePhone(r.patientPhone);
-        if (appCleanPhone && rCleanPhone && appCleanPhone === rCleanPhone) return true;
-        if (appointment.patientCnp && r.patientCnp && appointment.patientCnp.trim() === r.patientCnp.trim()) return true;
-        return false;
-      });
+    // If manual new patient, only match if exact phone AND birth date match (or matching CNP)
+    if (isManualNew && medicalRecords && medicalRecords.length > 0) {
+      const appCnp = (appointment.patientCnp || "").trim();
+      const appPhone = normalizePhone(appointment.patientPhone);
+      const appBirth = (appointment.patientBirthDate || "").trim();
+      const appName = normalizePatientName(appointment.patientName);
+
+      if (appCnp) {
+        matchedRecord = medicalRecords.find((r) => r.patientCnp && r.patientCnp.trim() === appCnp);
+      } else if (appName && appPhone && appBirth) {
+        matchedRecord = medicalRecords.find((r) =>
+          normalizePatientName(r.patientName) === appName &&
+          normalizePhone(r.patientPhone) === appPhone &&
+          (r.patientBirthDate || "").trim() === appBirth
+        );
+      }
+    }
+
+    // Verify that matchedRecord does not belong to a different person with different birth date!
+    if (matchedRecord && appointment.patientBirthDate && matchedRecord.patientBirthDate) {
+      if (appointment.patientBirthDate.trim() !== matchedRecord.patientBirthDate.trim()) {
+        matchedRecord = undefined;
+      }
     }
 
     let recordId =
@@ -9823,13 +9913,16 @@ export default function App() {
         }
       }
 
-      if (!freshSnap && appointment.patientName) {
+      if (!freshSnap && appointment.patientName && !isManualNew && !appointment.patientBirthDate) {
         const nameSnap = await getDocs(
           query(collection(db, "medicalRecords"), where("patientName", "==", appointment.patientName.trim()))
         ).catch(() => null);
         if (nameSnap && !nameSnap.empty) {
-          freshSnap = nameSnap.docs[0];
-          recordId = freshSnap.id;
+          const candidateData = nameSnap.docs[0].data();
+          if (!appointment.patientBirthDate || !candidateData.patientBirthDate || appointment.patientBirthDate === candidateData.patientBirthDate) {
+            freshSnap = nameSnap.docs[0];
+            recordId = freshSnap.id;
+          }
         }
       }
 
@@ -9850,11 +9943,15 @@ export default function App() {
     // 3. Check if there are medicalDocuments for this patient to retrieve basic info / CNP / etc.
     const patientDocs = (medicalDocuments || []).filter((docItem) => {
       if (!docItem || !docItem.formValues) return false;
+      if (isManualNew) return false;
       const docName = normalizePatientName(docItem.patientName);
       const appName = normalizePatientName(appointment.patientName);
       const docPhone = normalizePhone(docItem.patientPhone);
       const appPhone = normalizePhone(appointment.patientPhone);
+      const docBirth = (docItem.formValues?.birthDate || "").trim();
+      const appBirth = (appointment.patientBirthDate || "").trim();
       if (appName && docName && appName === docName) {
+        if (appBirth && docBirth && appBirth !== docBirth) return false;
         if (!appPhone || !docPhone || appPhone === docPhone) return true;
       }
       return false;
@@ -10707,6 +10804,7 @@ export default function App() {
     setIsOmniboxOpen(false);
     setIsMedicalRecordModalOpen(false);
     setIsOrdersModalOpen(false);
+    setIsPatientSelectedFromSearch(false);
     setIsBookingModalOpen(true);
   };
 
@@ -15311,7 +15409,7 @@ export default function App() {
     }
   };
 
-  const handleBooking = async () => {
+  const handleBooking = async (bypassDuplicateCheck = false, forceTreatAsExisting = false) => {
     if (isBookingSubmitting) return;
 
     if (!selectedSlot) {
@@ -15334,6 +15432,61 @@ export default function App() {
       return;
     }
     if (!canAddAppointments) return;
+
+    // Verificăm dacă există deja un pacient: PRIMA DATĂ se verifică numele (inclusiv inversat, 3+ nume), iar DACĂ numele coincide, se verifică data nașterii
+    if (!editingAppointment && !isPatientSelectedFromSearch && !bypassDuplicateCheck) {
+      const cleanBirth = patientBirthDate.trim();
+      const candidateRecord = medicalRecords.find((rec) => {
+        if (!rec.patientName) return false;
+        // 1. Prima dată verifică dacă numele coincide (inclusiv inversat sau cu 3 nume)
+        const isNameMatch = arePatientNamesMatching(rec.patientName, patientName);
+        if (!isNameMatch) return false;
+
+        // 2. Apoi verifică data nașterii: dacă data nașterii este diferită, este automat alt pacient
+        const recBirth = (rec.patientBirthDate || "").trim();
+        return areBirthDatesMatching(cleanBirth, recBirth);
+      }) || (medicalDocuments || []).find((docItem) => {
+        if (!docItem.patientName || !docItem.formValues) return false;
+        // 1. Prima dată verifică dacă numele coincide
+        const isNameMatch = arePatientNamesMatching(docItem.patientName, patientName);
+        if (!isNameMatch) return false;
+
+        // 2. Apoi verifică data nașterii
+        const docBirth = (docItem.formValues.birthDate || "").trim();
+        return areBirthDatesMatching(cleanBirth, docBirth);
+      });
+
+      if (candidateRecord) {
+        let lastDateStr = "";
+        try {
+          if (candidateRecord.prescriptionHistory && candidateRecord.prescriptionHistory.length > 0) {
+            const lastPresc = candidateRecord.prescriptionHistory[0];
+            if (lastPresc?.date) {
+              lastDateStr = format(new Date(lastPresc.date), "dd.MM.yyyy");
+            }
+          }
+          if (!lastDateStr && candidateRecord.updatedAt) {
+            lastDateStr = format(new Date(candidateRecord.updatedAt), "dd.MM.yyyy");
+          }
+          if (!lastDateStr && candidateRecord.date) {
+            lastDateStr = format(new Date(candidateRecord.date), "dd.MM.yyyy");
+          }
+        } catch {
+          lastDateStr = "";
+        }
+        if (!lastDateStr) {
+          lastDateStr = "o dată anterioară";
+        }
+
+        setExistingPatientPrompt({
+          record: candidateRecord,
+          lastVisitDateFormatted: lastDateStr,
+          patientName: candidateRecord.patientName || patientName,
+          patientBirthDate: candidateRecord.patientBirthDate || patientBirthDate,
+        });
+        return;
+      }
+    }
 
     setIsBookingSubmitting(true);
     setLoading(true);
@@ -15500,6 +15653,7 @@ export default function App() {
           isConsultComplet: bookingConsultType ? bookingConsultType === "consult" : undefined,
           isControl: bookingConsultType ? bookingConsultType === "control" : undefined,
           isGratis: bookingConsultType ? bookingConsultType === "gratis" : undefined,
+          isNewPatientManualEntry: forceTreatAsExisting ? false : !isPatientSelectedFromSearch,
           createdAt: new Date().toISOString(),
         };
         const docRef = await addDoc(
@@ -15511,21 +15665,23 @@ export default function App() {
           if (prev.some((a) => a.id === docRef.id)) return prev;
           return [...prev, createdApp];
         });
-        syncPatientUniversal(
-          {
-            patientName,
-            patientPhone: valPhone,
-            patientCnp: patientCnp.trim() || undefined,
-          },
-          {
-            patientName,
-            patientPhone: valPhone,
-            patientCnp: patientCnp.trim() || undefined,
-            patientBirthDate,
-            patientSex,
-            patientAge: calculatedAge,
-          },
-        ).catch((e) => console.warn("Universal sync notice:", e));
+        if (isPatientSelectedFromSearch || (valPhone && patientCnp.trim())) {
+          syncPatientUniversal(
+            {
+              patientName,
+              patientPhone: valPhone,
+              patientCnp: patientCnp.trim() || undefined,
+            },
+            {
+              patientName,
+              patientPhone: valPhone,
+              patientCnp: patientCnp.trim() || undefined,
+              patientBirthDate,
+              patientSex,
+              patientAge: calculatedAge,
+            },
+          ).catch((e) => console.warn("Universal sync notice:", e));
+        }
       }
       setIsBookingModalOpen(false);
       setEditingAppointment(null);
@@ -15542,6 +15698,7 @@ export default function App() {
       setSymptomSelect("");
       setSymptomText("");
       setBookingConsultType(null);
+      setExistingPatientPrompt(null);
     } catch (error) {
       console.error("Error booking/updating appointment:", error);
       setBookingError("A apărut o problemă la salvare: " + (error instanceof Error ? error.message : String(error)));
@@ -23876,6 +24033,118 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Modal Popup Confirmare Pacient Existent (Nume și Data Nașterii coincid) */}
+      <AnimatePresence>
+        {existingPatientPrompt && (
+          <motion.div
+            key="existing-patient-prompt-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-[9999]"
+          >
+            <motion.div
+              initial={{ scale: 0.92, opacity: 0, y: 15 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.92, opacity: 0, y: 15 }}
+              className={cn(
+                "rounded-3xl p-6 sm:p-8 w-full max-w-lg shadow-2xl border transition-all text-left",
+                darkMode
+                  ? "bg-slate-900 border-slate-700 text-slate-100"
+                  : "bg-white border-slate-200 text-slate-900"
+              )}
+            >
+              <div className="flex items-start gap-4 mb-5">
+                <div className="p-3.5 rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-400 shrink-0 border border-amber-500/30">
+                  <UserCheck className="w-8 h-8" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black uppercase tracking-tight text-amber-600 dark:text-amber-400">
+                    Pacient Existent Identificat
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">
+                    Verificare automată de securitate pe baza numelui și a datei de naștere
+                  </p>
+                </div>
+              </div>
+
+              <div
+                className={cn(
+                  "p-4 rounded-2xl border mb-6 text-sm leading-relaxed",
+                  darkMode
+                    ? "bg-slate-800/60 border-slate-700 text-slate-200"
+                    : "bg-amber-50/80 border-amber-200 text-amber-950"
+                )}
+              >
+                <p className="font-medium">
+                  Pacientul cu numele <strong className="font-black underline">{existingPatientPrompt.patientName}</strong> și data nașterii{" "}
+                  <strong className="font-black underline">
+                    {(() => {
+                      const b = existingPatientPrompt.patientBirthDate;
+                      if (!b) return "-";
+                      const p = b.split("-");
+                      return p.length === 3 && p[0].length === 4 ? `${p[2]}.${p[1]}.${p[0]}` : b;
+                    })()}
+                  </strong>{" "}
+                  a mai fost în data de{" "}
+                  <strong className="font-black text-blue-600 dark:text-blue-400">
+                    {existingPatientPrompt.lastVisitDateFormatted}
+                  </strong>.
+                </p>
+                <p className="mt-3 font-black text-sm">
+                  Este același pacient?
+                </p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const promptData = existingPatientPrompt;
+                    setExistingPatientPrompt(null);
+                    // DA: Continuăm cu același pacient (preia fișa, istoricul și datele vechi)
+                    setIsPatientSelectedFromSearch(true);
+                    if (promptData?.record) {
+                      if (promptData.record.patientPhone && !patientPhone) {
+                        setPatientPhone(promptData.record.patientPhone);
+                        setFaraTelefon(false);
+                      }
+                      if (promptData.record.patientCnp && !patientCnp) {
+                        setPatientCnp(promptData.record.patientCnp);
+                      }
+                    }
+                    await handleBooking(true, true);
+                  }}
+                  className="flex-1 py-4 px-5 rounded-2xl font-black text-sm uppercase tracking-wider bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-900/25 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
+                >
+                  <Check className="w-5 h-5 stroke-[3]" />
+                  <span>DA, este același pacient</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setExistingPatientPrompt(null);
+                    // NU: Generăm un pacient nou complet izolat în programare
+                    setIsPatientSelectedFromSearch(false);
+                    await handleBooking(true, false);
+                  }}
+                  className={cn(
+                    "flex-1 py-4 px-5 rounded-2xl font-black text-sm uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98] border",
+                    darkMode
+                      ? "bg-slate-800 hover:bg-slate-750 text-slate-300 border-slate-700"
+                      : "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300"
+                  )}
+                >
+                  <X className="w-5 h-5 stroke-[2.5]" />
+                  <span>NU, pacient nou</span>
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <nav
         className={cn(
           "border-b sticky top-0 z-30 transition-colors duration-300",
@@ -28234,6 +28503,7 @@ export default function App() {
                       onChange={(e) => {
                         const val = capitalizeWords(e.target.value.replace(/[^a-zA-Z\săâîșțĂÂÎȘȚ]/g, ""));
                         setPatientName(val);
+                        setIsPatientSelectedFromSearch(false);
                       }}
                       className={cn(
                         "w-full p-4 border rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all",
@@ -28593,7 +28863,7 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={handleBooking}
+                  onClick={() => handleBooking(false, false)}
                   disabled={isBookingSubmitting}
                   className={cn(
                     "w-full flex-1 font-bold py-4 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2",

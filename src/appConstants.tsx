@@ -352,6 +352,7 @@ export interface Appointment {
   isConsultComplet?: boolean;
   isGratis?: boolean;
   patientCnp?: string;
+  isNewPatientManualEntry?: boolean;
   createdAt?: string;
   age?: number | null;
   allMentions?: string[];
