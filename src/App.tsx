@@ -1163,10 +1163,37 @@ const ModalSearchNameInput = ({
   );
 };
 
-const hasFinalDioptersOrContactLenses = (r: any): boolean => {
+const hasFinalDioptersOrContactLenses = (r: any, targetDate?: Date): boolean => {
   if (!r) return false;
 
-  // 1. Check final diopters (od and os)
+  // Daca se specifica data programarii (targetDate), verificam daca in acea zi exista dioptrii prescrise sau comanda
+  if (targetDate) {
+    // 1. Verificam prescripția efectuată chiar în ziua respectivă
+    if (Array.isArray(r.prescriptionHistory) && r.prescriptionHistory.length > 0) {
+      const prescForDate = r.prescriptionHistory.find((p: any) =>
+        p.date ? isSameDay(parseISO(p.date), targetDate) : false
+      );
+      if (prescForDate) {
+        const hasD =
+          (prescForDate.od && (String(prescForDate.od.sph || "").trim() !== "" || String(prescForDate.od.cyl || "").trim() !== "")) ||
+          (prescForDate.os && (String(prescForDate.os.sph || "").trim() !== "" || String(prescForDate.os.cyl || "").trim() !== ""));
+        if (hasD) return true;
+      }
+    }
+    // 2. Verificam comanda de ochelari plasata chiar in ziua respectiva
+    if (r.glassesOrder?.createdAt && isSameDay(parseISO(r.glassesOrder.createdAt), targetDate)) {
+      return true;
+    }
+    if (Array.isArray(r.orderHistory)) {
+      const orderForDate = r.orderHistory.find((o: any) =>
+        o.createdAt ? isSameDay(parseISO(o.createdAt), targetDate) : false
+      );
+      if (orderForDate) return true;
+    }
+    return false;
+  }
+
+  // Verificare generala fara data (fallback)
   const hasOD = r.od && (
     String(r.od.sph || "").trim() !== "" ||
     String(r.od.cyl || "").trim() !== "" ||
@@ -1187,63 +1214,7 @@ const hasFinalDioptersOrContactLenses = (r: any): boolean => {
 
   if (hasOD || hasOS) return true;
 
-  // 2. Check contact lenses (cl_od and cl_os)
-  const hasCLOd = r.cl_od && (
-    String(r.cl_od.sph || "").trim() !== "" ||
-    String(r.cl_od.cyl || "").trim() !== "" ||
-    String(r.cl_od.axis || "").trim() !== "" ||
-    String(r.cl_od.base || "").trim() !== "" ||
-    String(r.cl_od.radius || "").trim() !== "" ||
-    String(r.cl_od.brand || "").trim() !== "" ||
-    String(r.cl_od.wearingType || "").trim() !== ""
-  );
-
-  const hasCLOs = r.cl_os && (
-    String(r.cl_os.sph || "").trim() !== "" ||
-    String(r.cl_os.cyl || "").trim() !== "" ||
-    String(r.cl_os.axis || "").trim() !== "" ||
-    String(r.cl_os.base || "").trim() !== "" ||
-    String(r.cl_os.radius || "").trim() !== "" ||
-    String(r.cl_os.brand || "").trim() !== "" ||
-    String(r.cl_os.wearingType || "").trim() !== ""
-  );
-
-  if (hasCLOd || hasCLOs) return true;
-
-  // 3. Check prescription history
-  if (Array.isArray(r.prescriptionHistory) && r.prescriptionHistory.length > 0) {
-    const hasHistoryDiopters = r.prescriptionHistory.some((p: any) =>
-      (p?.od && (String(p.od.sph || "").trim() !== "" || String(p.od.cyl || "").trim() !== "")) ||
-      (p?.os && (String(p.os.sph || "").trim() !== "" || String(p.os.cyl || "").trim() !== ""))
-    );
-    if (hasHistoryDiopters) return true;
-  }
-
-  // 4. Check current glasses order (if glasses order exists or was completed/in-progress)
-  if (r.glassesOrder) {
-    const g = r.glassesOrder;
-    if (
-      (g.od && (String(g.od.sph || "").trim() !== "" || String(g.od.cyl || "").trim() !== "")) ||
-      (g.os && (String(g.os.sph || "").trim() !== "" || String(g.os.cyl || "").trim() !== "")) ||
-      (g.nearOd && (String(g.nearOd.sph || "").trim() !== "" || String(g.nearOd.cyl || "").trim() !== "")) ||
-      (g.nearOs && (String(g.nearOs.sph || "").trim() !== "" || String(g.nearOs.cyl || "").trim() !== "")) ||
-      g.orderNumber
-    ) {
-      return true;
-    }
-  }
-
-  // 5. Check order history
-  if (Array.isArray(r.orderHistory) && r.orderHistory.length > 0) {
-    return true;
-  }
-
-  // 6. Check cycloplegia or nonCycloplegic
-  if (r.cycloplegia?.od?.sph || r.cycloplegia?.od?.cyl || r.cycloplegia?.os?.sph || r.cycloplegia?.os?.cyl) return true;
-  if (r.nonCycloplegic?.od?.sph || r.nonCycloplegic?.od?.cyl || r.nonCycloplegic?.os?.sph || r.nonCycloplegic?.os?.cyl) return true;
-
-  // 7. Check generic diopters property
-  if (r.diopters && (r.diopters.od || r.diopters.os)) return true;
+  if (r.cl_od?.sph || r.cl_os?.sph) return true;
 
   return false;
 };
@@ -10028,7 +9999,7 @@ export default function App() {
 
       originalPatientNameRef.current = finalPatientName;
 
-      setCurrentMedicalRecord(checkAndRestoreDraftForRecord({
+      const recordToSet = {
         ...data,
         id: data.id || recordId,
         patientName: finalPatientName,
@@ -10160,7 +10131,9 @@ export default function App() {
           }),
         cl_od: isBrandNewConsultationForVisit ? undefined : (targetPrescription?.cl_od || data.cl_od),
         cl_os: isBrandNewConsultationForVisit ? undefined : (targetPrescription?.cl_os || data.cl_os),
-      } as MedicalRecord));
+      } as MedicalRecord;
+
+      setCurrentMedicalRecord(isBrandNewConsultationForVisit ? recordToSet : checkAndRestoreDraftForRecord(recordToSet));
 
       setActivePrescriptionIndex(targetIdx);
     } else {
@@ -26503,7 +26476,7 @@ export default function App() {
                                                   r,
                                                   appointment,
                                                 ) &&
-                                                hasFinalDioptersOrContactLenses(r),
+                                                hasFinalDioptersOrContactLenses(r, time),
                                             ) && (
                                               <button
                                                 onClick={(e) => {

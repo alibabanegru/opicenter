@@ -661,7 +661,21 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                             darkMode ? "text-slate-50" : "text-slate-900",
                           )}
                         >
-                          <span className="break-words whitespace-nowrap select-text shrink-0">{currentMedicalRecord.patientName}</span>
+                          <span className="inline-flex items-center gap-1.5 shrink-0">
+                            <span className="break-words whitespace-nowrap select-text">{currentMedicalRecord.patientName}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setTempPatientName(currentMedicalRecord.patientName);
+                                setIsEditingPatientName(true);
+                              }}
+                              className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors opacity-65 hover:opacity-100 cursor-pointer inline-flex items-center justify-center shrink-0"
+                              title="Editează numele pacientului peste tot"
+                            >
+                              <Pencil className="w-4 h-4 text-slate-500" />
+                            </button>
+                          </span>
                           {(() => {
                             const bStatus = getBirthdayStatus(currentMedicalRecord.patientBirthDate);
 
@@ -891,16 +905,6 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                             )}
                           </span>
                         </h2>
-                        <button
-                          onClick={() => {
-                            setTempPatientName(currentMedicalRecord.patientName);
-                            setIsEditingPatientName(true);
-                          }}
-                          className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors opacity-65 hover:opacity-100 cursor-pointer"
-                          title="Editează numele pacientului peste tot"
-                        >
-                          <Pencil className="w-4 h-4 text-slate-500" />
-                        </button>
                       </div>
                     )}
                   </div>
