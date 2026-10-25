@@ -14283,9 +14283,11 @@ export default function App() {
             (item) => (item.date ? isSameDay(parseISO(item.date), targetDay) : false)
           );
 
-          const isC = !!app.isConsultComplet || !!historyItemForDay?.isConsultComplet || (!app.isControl && !app.isGratis && !!matchingRecord?.isConsultComplet);
-          const isR = !!app.isControl || !!historyItemForDay?.isControl || (!app.isConsultComplet && !app.isGratis && !!matchingRecord?.isControl);
-          const isG = !!app.isGratis || !!historyItemForDay?.isGratis || (!app.isConsultComplet && !app.isControl && !!matchingRecord?.isGratis);
+          // Numaram in C, R, G STRICT daca programarea are optiunea bifata sau daca s-a eliberat o prescriptie in ziua respectiva cu acel tip!
+          // Daca programarea este fara tip selectat (nebifat standard), NU o numaram automat in C!
+          const isC = !!app.isConsultComplet || !!historyItemForDay?.isConsultComplet;
+          const isR = !!app.isControl || !!historyItemForDay?.isControl;
+          const isG = !!app.isGratis || !!historyItemForDay?.isGratis;
 
           if (isC) {
             countC++;
@@ -23961,18 +23963,35 @@ export default function App() {
                   : "bg-white border-slate-200 text-slate-900"
               )}
             >
-              <div className="flex items-start gap-4 mb-5">
-                <div className="p-3.5 rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-400 shrink-0 border border-amber-500/30">
-                  <UserCheck className="w-8 h-8" />
+              <div className="flex items-start justify-between gap-4 mb-5">
+                <div className="flex items-start gap-4 min-w-0">
+                  <div className="p-3.5 rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-400 shrink-0 border border-amber-500/30">
+                    <UserCheck className="w-8 h-8" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black uppercase tracking-tight text-amber-600 dark:text-amber-400">
+                      Pacient Existent Identificat
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">
+                      Verificare automată de securitate pe baza numelui și a datei de naștere
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-xl font-black uppercase tracking-tight text-amber-600 dark:text-amber-400">
-                    Pacient Existent Identificat
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">
-                    Verificare automată de securitate pe baza numelui și a datei de naștere
-                  </p>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExistingPatientPrompt(null);
+                    setIsBookingModalOpen(false);
+                    setIsBookingSubmitting(false);
+                    setReschedulingAppointment(null);
+                    setQuickBookingPatient(null);
+                    setBookingError(null);
+                  }}
+                  className="p-2 -mr-1 -mt-1 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
+                  title="Închide și anulează programarea"
+                >
+                  <X className="w-5 h-5 stroke-[2.5]" />
+                </button>
               </div>
 
               <div
@@ -25969,9 +25988,18 @@ export default function App() {
                     </p>
 
                     <div className="flex justify-center items-center h-5 my-0.5">
-                      {appointmentsForDay.length === 0 && (
+                      {appointmentsForDay.length === 0 ? (
                         <div className="text-[9px] opacity-40 font-bold uppercase tracking-wider">
-                          Fără prog.
+                          Fără programări
+                        </div>
+                      ) : (
+                        <div className={cn(
+                          "text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border shadow-2xs",
+                          darkMode
+                            ? "bg-blue-950/60 border-blue-800 text-blue-300"
+                            : "bg-blue-50 border-blue-200 text-blue-700"
+                        )}>
+                          Total: {appointmentsForDay.length} {appointmentsForDay.length === 1 ? "programare" : "programări"}
                         </div>
                       )}
                     </div>
