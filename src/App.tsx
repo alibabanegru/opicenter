@@ -7299,6 +7299,7 @@ export default function App() {
   const [existingPatientPrompt, setExistingPatientPrompt] = useState<{
     record: any;
     lastVisitDateFormatted: string;
+    lastDoctorName?: string;
     patientName: string;
     patientBirthDate: string;
   } | null>(null);
@@ -15382,11 +15383,15 @@ export default function App() {
 
       if (candidateRecord) {
         let lastDateStr = "";
+        let rawDoctor = "";
         try {
           if (candidateRecord.prescriptionHistory && candidateRecord.prescriptionHistory.length > 0) {
             const lastPresc = candidateRecord.prescriptionHistory[0];
             if (lastPresc?.date) {
               lastDateStr = format(new Date(lastPresc.date), "dd.MM.yyyy");
+            }
+            if (lastPresc?.doctorId) {
+              rawDoctor = lastPresc.doctorId;
             }
           }
           if (!lastDateStr && candidateRecord.updatedAt) {
@@ -15395,6 +15400,9 @@ export default function App() {
           if (!lastDateStr && candidateRecord.date) {
             lastDateStr = format(new Date(candidateRecord.date), "dd.MM.yyyy");
           }
+          if (!rawDoctor) {
+            rawDoctor = candidateRecord.doctorId || candidateRecord.formValues?.doctorName || candidateRecord.formValues?.doctorNameBottom || "";
+          }
         } catch {
           lastDateStr = "";
         }
@@ -15402,9 +15410,41 @@ export default function App() {
           lastDateStr = "o dată anterioară";
         }
 
+        // Daca nu am gasit inca medicul, cautam in programarile sau documentele pacientului
+        if (!rawDoctor) {
+          const pastApp = appointments
+            .filter((a) => {
+              if (a.status === "cancelled" || !a.startTime) return false;
+              const aName = (a.patientName || "").trim().toLowerCase();
+              const cName = (candidateRecord.patientName || patientName || "").trim().toLowerCase();
+              return aName && cName && arePatientNamesMatching(aName, cName);
+            })
+            .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())[0];
+
+          if (pastApp?.doctorId) {
+            rawDoctor = pastApp.doctorId;
+          }
+        }
+
+        let formattedDoc = "";
+        if (rawDoctor) {
+          if (rawDoctor.toLowerCase().includes("turcanu") || rawDoctor === "doctor1") {
+            formattedDoc = "Dr. Turcanu Irina";
+          } else if (rawDoctor.toLowerCase().includes("zorila") || rawDoctor.toLowerCase().includes("zorilă") || rawDoctor === "doctor2") {
+            formattedDoc = "Dr. Zorila Cristina";
+          } else if (rawDoctor.toLowerCase().includes("ilie") || rawDoctor === "doctor3") {
+            formattedDoc = "Dr. Ilie Larisa";
+          } else if (rawDoctor.toLowerCase().includes("admin") || rawDoctor.toLowerCase().includes("optometrist") || rawDoctor.toLowerCase().includes("negreanu")) {
+            formattedDoc = "Optometrist Negreanu";
+          } else {
+            formattedDoc = getRoleLabel(rawDoctor) || rawDoctor;
+          }
+        }
+
         setExistingPatientPrompt({
           record: candidateRecord,
           lastVisitDateFormatted: lastDateStr,
+          lastDoctorName: formattedDoc || undefined,
           patientName: candidateRecord.patientName || patientName,
           patientBirthDate: candidateRecord.patientBirthDate || patientBirthDate,
         });
@@ -24015,7 +24055,15 @@ export default function App() {
                   a mai fost în data de{" "}
                   <strong className="font-black text-blue-600 dark:text-blue-400">
                     {existingPatientPrompt.lastVisitDateFormatted}
-                  </strong>.
+                  </strong>
+                  {existingPatientPrompt.lastDoctorName ? (
+                    <>
+                      {" "}la{" "}
+                      <strong className="font-black text-emerald-600 dark:text-emerald-400">
+                        {existingPatientPrompt.lastDoctorName}
+                      </strong>
+                    </>
+                  ) : null}.
                 </p>
                 <p className="mt-3 font-black text-sm">
                   Este același pacient?
