@@ -9797,30 +9797,35 @@ export default function App() {
     };
 
     // 1. Try finding in loaded medicalRecords state first
-    const isManualNew = !!appointment.isNewPatientManualEntry;
-    let matchedRecord = isManualNew
-      ? undefined
-      : (
-          findPatientMedicalRecord(
-            appointment.patientName,
-            appointment.patientPhone,
-            appointment.patientCnp,
-            medicalRecords,
-            appointment.patientBirthDate,
-          ) ||
-          medicalRecords.find((r) => {
-            if (!r.patientName) return false;
-            const rBirth = (r.patientBirthDate || "").trim();
-            const appBirth = (appointment.patientBirthDate || "").trim();
-            if (appBirth && rBirth && appBirth === rBirth) {
-              return arePatientNamesMatching(r.patientName, appointment.patientName);
-            }
-            return false;
-          })
-        );
+    const targetMedId = (appointment as any)?.medicalRecordId;
+    const isManualNew = !!appointment.isNewPatientManualEntry && !targetMedId;
 
-    // If manual new patient, only match if exact phone AND birth date match (or matching CNP)
-    if (isManualNew && medicalRecords && medicalRecords.length > 0) {
+    let matchedRecord = targetMedId
+      ? medicalRecords.find((r) => r.id === targetMedId)
+      : undefined;
+
+    if (!matchedRecord && !isManualNew) {
+      matchedRecord =
+        medicalRecords.find((r) => {
+          if (!r.patientName) return false;
+          const rBirth = (r.patientBirthDate || "").trim();
+          const appBirth = (appointment.patientBirthDate || "").trim();
+          if (appBirth && rBirth && appBirth === rBirth) {
+            return arePatientNamesMatching(r.patientName, appointment.patientName);
+          }
+          return false;
+        }) ||
+        findPatientMedicalRecord(
+          appointment.patientName,
+          appointment.patientPhone,
+          appointment.patientCnp,
+          medicalRecords,
+          appointment.patientBirthDate,
+        );
+    }
+
+    // If manual new patient without targetMedId, match if name + birthDate or phone match
+    if (!matchedRecord && isManualNew && medicalRecords && medicalRecords.length > 0) {
       const appCnp = (appointment.patientCnp || "").trim();
       const appPhone = normalizePhone(appointment.patientPhone);
       const appBirth = (appointment.patientBirthDate || "").trim();
@@ -9828,11 +9833,15 @@ export default function App() {
 
       if (appCnp) {
         matchedRecord = medicalRecords.find((r) => r.patientCnp && r.patientCnp.trim() === appCnp);
-      } else if (appName && appPhone && appBirth) {
+      } else if (appName && appBirth) {
         matchedRecord = medicalRecords.find((r) =>
-          normalizePatientName(r.patientName) === appName &&
-          normalizePhone(r.patientPhone) === appPhone &&
+          arePatientNamesMatching(r.patientName, appointment.patientName) &&
           (r.patientBirthDate || "").trim() === appBirth
+        );
+      } else if (appName && appPhone) {
+        matchedRecord = medicalRecords.find((r) =>
+          arePatientNamesMatching(r.patientName, appointment.patientName) &&
+          normalizePhone(r.patientPhone) === appPhone
         );
       }
     }
@@ -9856,19 +9865,30 @@ export default function App() {
     try {
       let freshSnap: any = null;
       if (!isManualNew) {
-        const docRef = doc(db, "medicalRecords", recordId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          freshSnap = docSnap;
-        } else {
-          const altId = `${appointment.patientName}_${(appointment.patientPhone || "").replace(/\D/g, "")}`
-            .replace(/\s+/g, "_")
-            .toLowerCase();
-          if (altId !== recordId) {
-            const altSnap = await getDoc(doc(db, "medicalRecords", altId));
-            if (altSnap.exists()) {
-              freshSnap = altSnap;
-              recordId = altId;
+        if (targetMedId) {
+          const directRef = doc(db, "medicalRecords", targetMedId);
+          const directSnap = await getDoc(directRef).catch(() => null);
+          if (directSnap && directSnap.exists()) {
+            freshSnap = directSnap;
+            recordId = targetMedId;
+          }
+        }
+
+        if (!freshSnap) {
+          const docRef = doc(db, "medicalRecords", recordId);
+          const docSnap = await getDoc(docRef).catch(() => null);
+          if (docSnap && docSnap.exists()) {
+            freshSnap = docSnap;
+          } else {
+            const altId = `${appointment.patientName}_${(appointment.patientPhone || "").replace(/\D/g, "")}`
+              .replace(/\s+/g, "_")
+              .toLowerCase();
+            if (altId !== recordId) {
+              const altSnap = await getDoc(doc(db, "medicalRecords", altId)).catch(() => null);
+              if (altSnap && altSnap.exists()) {
+                freshSnap = altSnap;
+                recordId = altId;
+              }
             }
           }
         }
@@ -9950,10 +9970,10 @@ export default function App() {
       let targetIdx: number | null = null;
       let isBrandNewConsultationForVisit = false;
 
-      if (initialPrescriptionIndex !== undefined && initialPrescriptionIndex >= 0 && initialPrescriptionIndex < history.length) {
+      if (initialPrescriptionIndex !== undefined && initialPrescriptionIndex !== null && initialPrescriptionIndex >= 0 && initialPrescriptionIndex < history.length) {
         targetIdx = initialPrescriptionIndex;
       } else {
-        // Deschidere din calendar / programare: verificam daca exista deja o consultatie efectuata in ziua programarii
+        // Deschidere din calendar / programare: verificam daca exista deja o consultatie salvata pentru aceasta programare sau in ziua programarii
         let appDate: Date | null = null;
         try {
           if (appointment?.startTime) {
@@ -9963,16 +9983,39 @@ export default function App() {
           appDate = null;
         }
 
+        // Verificam daca exista deja o prescriptie in istoric efectuata in ziua programarii
         const todayPrescriptionIndex = appDate
           ? history.findIndex((item) => (item.date ? isSameDay(parseISO(item.date), appDate!) : false))
           : -1;
 
+        // Verificam daca fisa a fost salvata sau actualizata in aceeasi zi cu programarea
+        const recordUpdatedToday = appDate && (
+          (data.updatedAt && isSameDay(parseISO(data.updatedAt), appDate)) ||
+          (history.length > 0 && history[0]?.date && isSameDay(parseISO(history[0].date), appDate))
+        );
+
+        // Verificam daca programarea curenta a fost deja consultata / salvata
+        const appointmentAlreadyConsulted = !!(appointment.isConsultComplet || appointment.isControl || appointment.isGratis);
+
         if (todayPrescriptionIndex >= 0) {
           targetIdx = todayPrescriptionIndex;
-        } else {
-          // Este o noua programare / zi diferita: deschide consultatie noua cu campurile clinice goale
+        } else if (recordUpdatedToday && hasHistory) {
+          // A fost salvat astazi pentru aceasta vizita
+          targetIdx = 0;
+        } else if (appointmentAlreadyConsulted && hasHistory) {
+          // Programarea este marcata consultata si are istoric: incarca ultima consultatie salvata
+          targetIdx = 0;
+        } else if (!hasHistory) {
+          // Nu are istoric deloc: deschide curat
+          targetIdx = null;
+          isBrandNewConsultationForVisit = false;
+        } else if (appDate && isSameDay(appDate, new Date()) && !appointmentAlreadyConsulted) {
+          // Programare NOUĂ de astăzi dar NEFINALIZATĂ încă (fără consult/salvare): deschide curat
           isBrandNewConsultationForVisit = true;
           targetIdx = null;
+        } else {
+          // Altfel încarcă cel mai recent consult
+          targetIdx = 0;
         }
       }
 
@@ -10741,7 +10784,7 @@ export default function App() {
       date:
         activePrescriptionIndex !== null && newHistory[activePrescriptionIndex]
           ? newHistory[activePrescriptionIndex].date
-          : currentMedicalRecord.updatedAt,
+          : (activeAppointment?.startTime ? new Date(activeAppointment.startTime).toISOString() : now),
       doctorId: activeAppointment?.doctorId || profile?.role || "all",
       od: {
         ...currentMedicalRecord.od,
@@ -11212,6 +11255,7 @@ export default function App() {
                 patientAge: finalAge !== undefined ? finalAge : uniqueAppDocs.get(docId)?.patientAge,
                 patientBirthDate: currentMedicalRecord.patientBirthDate || "",
                 patientSex: currentMedicalRecord.patientSex || "",
+                medicalRecordId: newRecordId,
                 isConsultComplet: isConsultCompletVal,
                 isControl: isControlVal,
                 isGratis: isGratisVal,
@@ -11245,6 +11289,7 @@ export default function App() {
                   patientAge: finalAge !== undefined ? finalAge : app.patientAge,
                   patientBirthDate: currentMedicalRecord.patientBirthDate || app.patientBirthDate,
                   patientSex: (currentMedicalRecord.patientSex as any) || app.patientSex,
+                  medicalRecordId: newRecordId,
                   isConsultComplet: isConsultCompletVal,
                   isControl: isControlVal,
                   isGratis: isGratisVal,
@@ -11263,6 +11308,7 @@ export default function App() {
                     patientAge: finalAge !== undefined ? finalAge : prev.patientAge,
                     patientBirthDate: currentMedicalRecord.patientBirthDate || prev.patientBirthDate,
                     patientSex: (currentMedicalRecord.patientSex as any) || prev.patientSex,
+                    medicalRecordId: newRecordId,
                     isConsultComplet: isConsultCompletVal,
                     isControl: isControlVal,
                     isGratis: isGratisVal,
