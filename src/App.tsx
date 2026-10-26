@@ -9779,10 +9779,18 @@ export default function App() {
     setActiveAppointment(appointment);
     setEqSfericActiveOD(false);
     setEqSfericActiveOS(false);
-    const today = new Date();
-    setFisaEliberatZi(String(today.getDate()));
-    setFisaEliberatLuna(MONTHS_RO[today.getMonth()]);
-    setFisaEliberatAn(String(today.getFullYear()));
+    let defaultVisitDate = new Date();
+    try {
+      if (appointment?.startTime) {
+        const parsedApp = parseISO(appointment.startTime);
+        if (!isNaN(parsedApp.getTime())) {
+          defaultVisitDate = parsedApp;
+        }
+      }
+    } catch {}
+    setFisaEliberatZi(String(defaultVisitDate.getDate()));
+    setFisaEliberatLuna(MONTHS_RO[defaultVisitDate.getMonth()]);
+    setFisaEliberatAn(String(defaultVisitDate.getFullYear()));
     const appSymptoms = [
       (appointment as any).patientSymptomSelect,
       (appointment as any).patientSymptomText,
@@ -15566,7 +15574,12 @@ export default function App() {
           createdAt: new Date().toISOString(),
         };
         await addDoc(collection(db, "appointments"), removeUndefined(appData));
-        await deleteDoc(doc(db, "appointments", oldId));
+        if (!rescheduleAsControl) {
+          // Mutare completa: sterge programarea din ziua veche
+          await deleteDoc(doc(db, "appointments", oldId));
+        } else {
+          // Programare revenire: programarea initiala ramane neatinsa la locul ei in calendar!
+        }
         setReschedulingAppointment(null);
         setRescheduleAsControl(false);
 
@@ -24174,15 +24187,22 @@ export default function App() {
         )}
       >
         {reschedulingAppointment && (
-          <div className="bg-blue-600 text-white px-4 py-2 text-center text-xs font-bold flex items-center justify-center gap-3">
+          <div className={cn(
+            "text-white px-4 py-2 text-center text-xs font-bold flex items-center justify-center gap-3",
+            rescheduleAsControl ? "bg-emerald-600" : "bg-blue-600"
+          )}>
             <CalendarClock className="w-4 h-4" />
             <span>
-              MOD REPROGRAMARE: Selectați un nou interval pentru{" "}
-              {reschedulingAppointment.patientName}
+              {rescheduleAsControl
+                ? `MOD PROGRAMARE REVENIRE: Selectați data și ora pentru revenirea pacientului ${reschedulingAppointment.patientName} (programarea inițială rămâne intactă)`
+                : `MOD REPROGRAMARE (MUTARE): Selectați o nouă dată pentru ${reschedulingAppointment.patientName}`}
             </span>
             <button
-              onClick={() => setReschedulingAppointment(null)}
-              className="bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded transition-colors"
+              onClick={() => {
+                setReschedulingAppointment(null);
+                setRescheduleAsControl(false);
+              }}
+              className="bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded transition-colors cursor-pointer"
             >
               Anulează
             </button>

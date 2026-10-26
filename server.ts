@@ -1,7 +1,7 @@
 import path from "path";
 import app from "./api/index";
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 async function startServer() {
   // Vite middleware for development
