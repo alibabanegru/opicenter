@@ -7356,10 +7356,12 @@ export default function App() {
   const [isPatientSelectedFromSearch, setIsPatientSelectedFromSearch] = useState<boolean>(false);
   const [existingPatientPrompt, setExistingPatientPrompt] = useState<{
     record: any;
-    lastVisitDateFormatted: string;
+    lastVisitDateFormatted?: string;
     lastDoctorName?: string;
     patientName: string;
     patientBirthDate: string;
+    hasNoShow?: boolean;
+    noShowDateFormatted?: string;
   } | null>(null);
   const patientNameInputRef = useRef<HTMLInputElement>(null);
   const patientPhoneInputRef = useRef<HTMLInputElement>(null);
@@ -15523,71 +15525,93 @@ export default function App() {
     }
     if (!canAddAppointments) return;
 
-    // Verificăm dacă există deja un pacient: PRIMA DATĂ se verifică numele (inclusiv inversat, 3+ nume), iar DACĂ numele coincide, se verifică data nașterii
+    // Verificăm dacă există deja un pacient: PRIMA DATĂ se verifică numele (inclusiv inversat, 3+ nume), iar DACĂ numele coincide, se verifică data nașterii (sau lista cu neprezentați)
     if (!editingAppointment && !isPatientSelectedFromSearch && !bypassDuplicateCheck) {
       const cleanBirth = patientBirthDate.trim();
+
+      // 1. Căutare fișă medicală sau document medical existent
       const candidateRecord = medicalRecords.find((rec) => {
         if (!rec.patientName) return false;
-        // 1. Prima dată verifică dacă numele coincide (inclusiv inversat sau cu 3 nume)
         const isNameMatch = arePatientNamesMatching(rec.patientName, patientName);
         if (!isNameMatch) return false;
-
-        // 2. Apoi verifică data nașterii: dacă data nașterii este diferită, este automat alt pacient
         const recBirth = (rec.patientBirthDate || "").trim();
         return areBirthDatesMatching(cleanBirth, recBirth);
       }) || (medicalDocuments || []).find((docItem) => {
         if (!docItem.patientName || !docItem.formValues) return false;
-        // 1. Prima dată verifică dacă numele coincide
         const isNameMatch = arePatientNamesMatching(docItem.patientName, patientName);
         if (!isNameMatch) return false;
-
-        // 2. Apoi verifică data nașterii
         const docBirth = (docItem.formValues.birthDate || "").trim();
         return areBirthDatesMatching(cleanBirth, docBirth);
       });
 
-      if (candidateRecord) {
+      // 2. Căutare dacă pacientul are vreo neprezentare în lista noShowAppointments
+      const matchingNoShow = noShowAppointments.find((ns) => {
+        const isNameMatch = arePatientNamesMatching(ns.patientName, patientName);
+        if (!isNameMatch) return false;
+        const nsBirth = (ns.patientBirthDate || "").trim();
+        if (cleanBirth && nsBirth) {
+          return areBirthDatesMatching(cleanBirth, nsBirth);
+        }
+        const pPhoneClean = (valPhone || "").replace(/\D/g, "");
+        const nsPhoneClean = (ns.patientPhone || "").replace(/\D/g, "");
+        if (pPhoneClean && nsPhoneClean) {
+          return pPhoneClean === nsPhoneClean;
+        }
+        return true;
+      });
+
+      let noShowDateFormatted = "";
+      if (matchingNoShow?.startTime) {
+        try {
+          noShowDateFormatted = format(parseISO(matchingNoShow.startTime), "dd.MM.yyyy (HH:mm)");
+        } catch {
+          noShowDateFormatted = "";
+        }
+      }
+
+      if (candidateRecord || matchingNoShow) {
         let lastDateStr = "";
         let rawDoctor = "";
-        try {
-          if (candidateRecord.prescriptionHistory && candidateRecord.prescriptionHistory.length > 0) {
-            const lastPresc = candidateRecord.prescriptionHistory[0];
-            if (lastPresc?.date) {
-              lastDateStr = format(new Date(lastPresc.date), "dd.MM.yyyy");
+        if (candidateRecord) {
+          try {
+            if (candidateRecord.prescriptionHistory && candidateRecord.prescriptionHistory.length > 0) {
+              const lastPresc = candidateRecord.prescriptionHistory[0];
+              if (lastPresc?.date) {
+                lastDateStr = format(new Date(lastPresc.date), "dd.MM.yyyy");
+              }
+              if (lastPresc?.doctorId) {
+                rawDoctor = lastPresc.doctorId;
+              }
             }
-            if (lastPresc?.doctorId) {
-              rawDoctor = lastPresc.doctorId;
+            if (!lastDateStr && candidateRecord.updatedAt) {
+              lastDateStr = format(new Date(candidateRecord.updatedAt), "dd.MM.yyyy");
             }
+            if (!lastDateStr && candidateRecord.date) {
+              lastDateStr = format(new Date(candidateRecord.date), "dd.MM.yyyy");
+            }
+            if (!rawDoctor) {
+              rawDoctor = candidateRecord.doctorId || candidateRecord.formValues?.doctorName || candidateRecord.formValues?.doctorNameBottom || "";
+            }
+          } catch {
+            lastDateStr = "";
           }
-          if (!lastDateStr && candidateRecord.updatedAt) {
-            lastDateStr = format(new Date(candidateRecord.updatedAt), "dd.MM.yyyy");
+          if (!lastDateStr) {
+            lastDateStr = "o dată anterioară";
           }
-          if (!lastDateStr && candidateRecord.date) {
-            lastDateStr = format(new Date(candidateRecord.date), "dd.MM.yyyy");
-          }
+
           if (!rawDoctor) {
-            rawDoctor = candidateRecord.doctorId || candidateRecord.formValues?.doctorName || candidateRecord.formValues?.doctorNameBottom || "";
-          }
-        } catch {
-          lastDateStr = "";
-        }
-        if (!lastDateStr) {
-          lastDateStr = "o dată anterioară";
-        }
+            const pastApp = appointments
+              .filter((a) => {
+                if (a.status === "cancelled" || !a.startTime) return false;
+                const aName = (a.patientName || "").trim().toLowerCase();
+                const cName = (candidateRecord.patientName || patientName || "").trim().toLowerCase();
+                return aName && cName && arePatientNamesMatching(aName, cName);
+              })
+              .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())[0];
 
-        // Daca nu am gasit inca medicul, cautam in programarile sau documentele pacientului
-        if (!rawDoctor) {
-          const pastApp = appointments
-            .filter((a) => {
-              if (a.status === "cancelled" || !a.startTime) return false;
-              const aName = (a.patientName || "").trim().toLowerCase();
-              const cName = (candidateRecord.patientName || patientName || "").trim().toLowerCase();
-              return aName && cName && arePatientNamesMatching(aName, cName);
-            })
-            .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())[0];
-
-          if (pastApp?.doctorId) {
-            rawDoctor = pastApp.doctorId;
+            if (pastApp?.doctorId) {
+              rawDoctor = pastApp.doctorId;
+            }
           }
         }
 
@@ -15607,11 +15631,13 @@ export default function App() {
         }
 
         setExistingPatientPrompt({
-          record: candidateRecord,
-          lastVisitDateFormatted: lastDateStr,
+          record: candidateRecord || matchingNoShow,
+          lastVisitDateFormatted: lastDateStr || undefined,
           lastDoctorName: formattedDoc || undefined,
-          patientName: candidateRecord.patientName || patientName,
-          patientBirthDate: candidateRecord.patientBirthDate || patientBirthDate,
+          patientName: candidateRecord?.patientName || matchingNoShow?.patientName || patientName,
+          patientBirthDate: candidateRecord?.patientBirthDate || matchingNoShow?.patientBirthDate || patientBirthDate,
+          hasNoShow: !!matchingNoShow,
+          noShowDateFormatted: noShowDateFormatted || undefined,
         });
         return;
       }
@@ -19855,6 +19881,44 @@ export default function App() {
           (isSamePrescription ? prevForm?.refractieOs : "") ||
           ""
         ) : "",
+        refractieCicloOd: hasClinicalData ? (() => {
+          const parts: string[] = [];
+          const nonCyc = currentMedicalRecord.nonCycloplegic?.od;
+          const cyc = currentMedicalRecord.cycloplegia?.od;
+          const fmt = (o: any) => {
+            if (!o) return "";
+            const sub: string[] = [];
+            if (o.sph) sub.push(`SPH ${o.sph}`);
+            if (o.cyl) sub.push(`CYL ${o.cyl}`);
+            if (o.axis && (o.axis !== "0" || o.cyl)) sub.push(`AX ${o.axis}`);
+            if (o.va) sub.push(`VA ${o.va}`);
+            return sub.join(" / ");
+          };
+          const nonStr = fmt(nonCyc);
+          const cycStr = fmt(cyc);
+          if (nonStr) parts.push(`Fara ciclo: ${nonStr}`);
+          if (cycStr) parts.push(`Cu ciclo: ${cycStr}`);
+          return parts.join("\n") || (isSamePrescription ? prevForm?.refractieCicloOd : "") || "";
+        })() : "",
+        refractieCicloOs: hasClinicalData ? (() => {
+          const parts: string[] = [];
+          const nonCyc = currentMedicalRecord.nonCycloplegic?.os;
+          const cyc = currentMedicalRecord.cycloplegia?.os;
+          const fmt = (o: any) => {
+            if (!o) return "";
+            const sub: string[] = [];
+            if (o.sph) sub.push(`SPH ${o.sph}`);
+            if (o.cyl) sub.push(`CYL ${o.cyl}`);
+            if (o.axis && (o.axis !== "0" || o.cyl)) sub.push(`AX ${o.axis}`);
+            if (o.va) sub.push(`VA ${o.va}`);
+            return sub.join(" / ");
+          };
+          const nonStr = fmt(nonCyc);
+          const cycStr = fmt(cyc);
+          if (nonStr) parts.push(`Fara ciclo: ${nonStr}`);
+          if (cycStr) parts.push(`Cu ciclo: ${cycStr}`);
+          return parts.join("\n") || (isSamePrescription ? prevForm?.refractieCicloOs : "") || "";
+        })() : "",
         cvManualOd: hasClinicalData ? ((isSamePrescription ? prevForm?.cvManualOd : "") || "") : "",
         cvManualOs: hasClinicalData ? ((isSamePrescription ? prevForm?.cvManualOs : "") || "") : "",
         cvComputerOd: hasClinicalData ? ((isSamePrescription ? prevForm?.cvComputerOd : "") || "") : "",
@@ -21265,6 +21329,23 @@ export default function App() {
         ]
       },
       {
+        include: !!(documentForm.refractieCicloOd || documentForm.refractieCicloOs),
+        data: [
+          {
+            content: normalizeForPDF("REFRACȚIE OBIECTIVĂ (CICLOPLEGIE)"),
+            styles: { fontSize: 7, fontStyle: "bold" as const, lineHeightFactor: 0.9, cellPadding: 1 } as any,
+          },
+          {
+            content: normalizeForPDF(documentForm.refractieCicloOd || "-"),
+            styles: { fontSize: 6.5, lineHeightFactor: 0.85, cellPadding: 1 } as any,
+          },
+          {
+            content: normalizeForPDF(documentForm.refractieCicloOs || "-"),
+            styles: { fontSize: 6.5, lineHeightFactor: 0.85, cellPadding: 1 } as any,
+          },
+        ]
+      },
+      {
         include: !!(documentForm.anteriorSegmentOd || documentForm.anteriorSegmentOs),
         data: documentForm.anteriorSegmentAo ? [
           { content: "POL ANTERIOR", styles: { fontSize: 10, fontStyle: "bold" as const, lineHeightFactor: 0.2 } as any },
@@ -22215,6 +22296,7 @@ export default function App() {
         osKey: "avCuCorectieOs",
       },
       { label: "5  REFRACȚIE", odKey: "refractieOd", osKey: "refractieOs" },
+      { label: "5b REFRACȚIE OBIECTIVĂ (CICLOPLEGIE)", odKey: "refractieCicloOd", osKey: "refractieCicloOs" },
       { label: "6  CV MANUAL *", odKey: "cvManualOd", osKey: "cvManualOs" },
       {
         label: "7  CV COMPUTER *",
@@ -24206,36 +24288,64 @@ export default function App() {
 
               <div
                 className={cn(
-                  "p-4 rounded-2xl border mb-6 text-sm leading-relaxed",
+                  "p-4 rounded-2xl border mb-6 text-sm leading-relaxed space-y-3",
                   darkMode
                     ? "bg-slate-800/60 border-slate-700 text-slate-200"
                     : "bg-amber-50/80 border-amber-200 text-amber-950"
                 )}
               >
                 <p className="font-medium">
-                  Pacientul cu numele <strong className="font-black underline">{existingPatientPrompt.patientName}</strong> și data nașterii{" "}
-                  <strong className="font-black underline">
-                    {(() => {
-                      const b = existingPatientPrompt.patientBirthDate;
-                      if (!b) return "-";
-                      const p = b.split("-");
-                      return p.length === 3 && p[0].length === 4 ? `${p[2]}.${p[1]}.${p[0]}` : b;
-                    })()}
-                  </strong>{" "}
-                  a mai fost în data de{" "}
-                  <strong className="font-black text-blue-600 dark:text-blue-400">
-                    {existingPatientPrompt.lastVisitDateFormatted}
-                  </strong>
-                  {existingPatientPrompt.lastDoctorName ? (
+                  Pacientul cu numele <strong className="font-black underline">{existingPatientPrompt.patientName}</strong>
+                  {existingPatientPrompt.patientBirthDate ? (
                     <>
-                      {" "}la{" "}
-                      <strong className="font-black text-emerald-600 dark:text-emerald-400">
-                        {existingPatientPrompt.lastDoctorName}
+                      {" "}și data nașterii{" "}
+                      <strong className="font-black underline">
+                        {(() => {
+                          const b = existingPatientPrompt.patientBirthDate;
+                          if (!b) return "-";
+                          const p = b.split("-");
+                          return p.length === 3 && p[0].length === 4 ? `${p[2]}.${p[1]}.${p[0]}` : b;
+                        })()}
                       </strong>
                     </>
-                  ) : null}.
+                  ) : null}
+                  {existingPatientPrompt.lastVisitDateFormatted ? (
+                    <>
+                      {" "}a mai fost în data de{" "}
+                      <strong className="font-black text-blue-600 dark:text-blue-400">
+                        {existingPatientPrompt.lastVisitDateFormatted}
+                      </strong>
+                      {existingPatientPrompt.lastDoctorName ? (
+                        <>
+                          {" "}la{" "}
+                          <strong className="font-black text-emerald-600 dark:text-emerald-400">
+                            {existingPatientPrompt.lastDoctorName}
+                          </strong>
+                        </>
+                      ) : null}.
+                    </>
+                  ) : (
+                    <span> figurează deja în evidența clinicii.</span>
+                  )}
                 </p>
-                <p className="mt-3 font-black text-sm">
+
+                {/* Avertisment NEPREZENTARE în data de... */}
+                {existingPatientPrompt.hasNoShow && (
+                  <div className="p-3 rounded-xl bg-rose-500/15 border-2 border-rose-500/30 text-rose-600 dark:text-rose-400 flex items-start gap-2.5">
+                    <UserX className="w-5 h-5 shrink-0 mt-0.5" />
+                    <div className="text-xs leading-relaxed font-bold">
+                      <span className="uppercase tracking-wider font-black block text-[11px] text-rose-700 dark:text-rose-300">
+                        Atenție: Pacient cu Neprezentare!
+                      </span>
+                      Acest pacient a avut o <strong>neprezentare</strong> la consultație în data de{" "}
+                      <strong className="font-black underline font-mono text-sm">
+                        {existingPatientPrompt.noShowDateFormatted || "o dată anterioară"}
+                      </strong>.
+                    </div>
+                  </div>
+                )}
+
+                <p className="font-black text-sm pt-1">
                   Este același pacient?
                 </p>
               </div>

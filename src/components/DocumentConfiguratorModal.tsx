@@ -1870,6 +1870,24 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                   }
                                 />
                               </div>
+
+                              <div className="space-y-1 bg-cyan-50/50 dark:bg-cyan-950/20 p-2 rounded-xl border border-cyan-200 dark:border-cyan-900/40">
+                                <p className="text-[8px] font-bold text-cyan-800 dark:text-cyan-300 uppercase">
+                                  Refracție Fără / Cu Cicloplegie OD
+                                </p>
+                                <input
+                                  type="text"
+                                  className="w-full p-2 text-xs border rounded-lg font-bold outline-none bg-white dark:bg-slate-800 text-cyan-950 dark:text-cyan-100 border-cyan-200 dark:border-cyan-800"
+                                  placeholder="Fara ciclo: ... | Cu ciclo: ..."
+                                  value={documentForm.refractieCicloOd || ""}
+                                  onChange={(e) =>
+                                    setDocumentForm({
+                                      ...documentForm,
+                                      refractieCicloOd: e.target.value,
+                                    })
+                                  }
+                                />
+                              </div>
     
                               <div>
                                 <div className="flex justify-between items-center mb-0.5">
@@ -2086,6 +2104,24 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     setDocumentForm({
                                       ...documentForm,
                                       refractieOs: e.target.value,
+                                    })
+                                  }
+                                />
+                              </div>
+
+                              <div className="space-y-1 bg-indigo-50/50 dark:bg-indigo-950/20 p-2 rounded-xl border border-indigo-200 dark:border-indigo-900/40">
+                                <p className="text-[8px] font-bold text-indigo-800 dark:text-indigo-300 uppercase">
+                                  Refracție Fără / Cu Cicloplegie OS
+                                </p>
+                                <input
+                                  type="text"
+                                  className="w-full p-2 text-xs border rounded-lg font-bold outline-none bg-white dark:bg-slate-800 text-indigo-950 dark:text-indigo-100 border-indigo-200 dark:border-indigo-800"
+                                  placeholder="Fara ciclo: ... | Cu ciclo: ..."
+                                  value={documentForm.refractieCicloOs || ""}
+                                  onChange={(e) =>
+                                    setDocumentForm({
+                                      ...documentForm,
+                                      refractieCicloOs: e.target.value,
                                     })
                                   }
                                 />
@@ -3195,6 +3231,37 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     setDocumentForm({
                                       ...documentForm,
                                       refractieOs: e.target.value,
+                                    })
+                                  }
+                                />
+                              </div>
+
+                              {/* Row 5b: Refracție Fără / Cu Cicloplegie */}
+                              <div className="grid grid-cols-3 p-2.5 gap-3 items-center hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
+                                <span className="font-extrabold text-[11px] text-slate-700 dark:text-slate-300 pl-1">
+                                  Refracție (Cicloplegie)
+                                </span>
+                                <input
+                                  type="text"
+                                  placeholder="Fără / Cu ciclo OD"
+                                  className="w-full p-2 text-xs border rounded-xl bg-cyan-500/5 dark:bg-cyan-500/2 border-cyan-200 dark:border-cyan-900/35 font-bold text-center transition-all focus:ring-2 focus:ring-cyan-500/25 focus:border-cyan-500 dark:focus:border-cyan-400 outline-none text-cyan-900 dark:text-cyan-100"
+                                  value={documentForm.refractieCicloOd || ""}
+                                  onChange={(e) =>
+                                    setDocumentForm({
+                                      ...documentForm,
+                                      refractieCicloOd: e.target.value,
+                                    })
+                                  }
+                                />
+                                <input
+                                  type="text"
+                                  placeholder="Fără / Cu ciclo OS"
+                                  className="w-full p-2 text-xs border rounded-xl bg-indigo-500/5 dark:bg-indigo-500/2 border-indigo-200 dark:border-indigo-900/35 font-bold text-center transition-all focus:ring-2 focus:ring-indigo-500/25 focus:border-indigo-500 dark:focus:border-indigo-400 outline-none text-indigo-900 dark:text-indigo-100"
+                                  value={documentForm.refractieCicloOs || ""}
+                                  onChange={(e) =>
+                                    setDocumentForm({
+                                      ...documentForm,
+                                      refractieCicloOs: e.target.value,
                                     })
                                   }
                                 />

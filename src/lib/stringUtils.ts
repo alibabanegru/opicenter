@@ -50,26 +50,16 @@ export const cleanStrExceptTAndS = (str: any): string => {
 export const normalizeForPDF = (text: string | undefined | null): string => {
   if (!text) return "";
   return String(text)
-    .replace(/ă/g, "a")
-    .replace(/Ă/g, "A")
-    .replace(/â/g, "a")
-    .replace(/Â/g, "A")
-    .replace(/î/g, "i")
-    .replace(/Î/g, "I")
-    .replace(/ș/g, "s")
-    .replace(/Ș/g, "S")
-    .replace(/ş/g, "s")
-    .replace(/Ş/g, "S")
-    .replace(/ț/g, "t")
-    .replace(/Ț/g, "T")
-    .replace(/ţ/g, "t")
-    .replace(/Ţ/g, "T")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ă|â/gi, "a")
+    .replace(/î/gi, "i")
+    .replace(/ș|ş/gi, "s")
+    .replace(/ț|ţ/gi, "t")
     .replace(/♂/g, "(M)")
     .replace(/♀/g, "(F)")
-    .replace(/🎂/g, "")
-    .replace(/🎈/g, "")
-    .replace(/🎉/g, "")
-    .replace(/✨/g, "");
+    .replace(/°/g, "")
+    .replace(/🎂|🎈|🎉|✨/g, "");
 };
 
 /**

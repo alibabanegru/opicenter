@@ -3803,7 +3803,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                   }}
                                   onBlur={(e) => {
                                     let val = e.target.value;
-                                    if (val !== "") {
+                                    if (val === "") {
+                                      setCurrentMedicalRecord({
+                                        ...currentMedicalRecord,
+                                        dp: "",
+                                        dp_od: "",
+                                        dp_os: "",
+                                      });
+                                    } else if (val !== "") {
                                       let num =
                                         Math.round(parseFloat(val) * 2) / 2;
                                       let osNum =
@@ -3878,6 +3885,15 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       /[^0-9.]/g,
                                       "",
                                     );
+                                    if (val === "") {
+                                      setCurrentMedicalRecord({
+                                        ...currentMedicalRecord,
+                                        dp: "",
+                                        dp_od: "",
+                                        dp_os: "",
+                                      });
+                                      return;
+                                    }
                                     const numVal = parseFloat(val);
                                     const updates: any = { dp: val };
 
@@ -3901,7 +3917,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                   }}
                                   onBlur={(e) => {
                                     let val = e.target.value;
-                                    if (val !== "") {
+                                    if (val === "") {
+                                      setCurrentMedicalRecord({
+                                        ...currentMedicalRecord,
+                                        dp_aproape: "",
+                                        dp_aproape_od: "",
+                                        dp_aproape_os: "",
+                                      });
+                                    } else if (val !== "") {
                                       let num =
                                         Math.round(parseFloat(val) * 2) / 2;
                                       if (num < 40 || num > 84) {
@@ -4183,6 +4206,15 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       /[^0-9.]/g,
                                       "",
                                     );
+                                    if (val === "") {
+                                      setCurrentMedicalRecord({
+                                        ...currentMedicalRecord,
+                                        dp_aproape: "",
+                                        dp_aproape_od: "",
+                                        dp_aproape_os: "",
+                                      });
+                                      return;
+                                    }
                                     const numVal = parseFloat(val);
                                     const updates: any = { dp_aproape: val };
 
