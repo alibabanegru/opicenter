@@ -2550,7 +2550,65 @@ export default function App() {
   const [calendarMonthView, setCalendarMonthView] = useState<Date>(() => startOfDay(new Date()));
   const [isBookingModalOpen, setIsBookingModalOpen] = useState(false);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
-  const [configActiveTab, setConfigActiveTab] = useState<"settings" | "frames" | "audit" | "backup">("settings");
+  const [elderlySearchQuery, setElderlySearchQuery] = useState<string>("");
+  const [elderlyMinAgeFilter, setElderlyMinAgeFilter] = useState<number>(75);
+
+  // Lista pacienților celor mai în vârstă (sortați descrescător după vârstă)
+  const elderlyPatientsList = useMemo(() => {
+    // Luăm fișele medicale unice
+    const seenMap = new Map<string, {
+      id: string;
+      patientName: string;
+      patientAge: number;
+      patientBirthDate: string;
+      patientPhone: string;
+      patientCnp?: string;
+      lastVisitDate?: string;
+    }>();
+
+    medicalRecords.forEach((r) => {
+      if (!r.patientName) return;
+      const cleanName = r.patientName.trim().toLowerCase();
+      const phone = (r.patientPhone || "").trim();
+      const birth = (r.patientBirthDate || "").trim();
+      const key = `${cleanName}_${phone}_${birth}`;
+
+      let calculatedAge = 0;
+      if (birth) {
+        try {
+          calculatedAge = calculateAge(birth);
+        } catch {
+          calculatedAge = r.patientAge || 0;
+        }
+      } else {
+        calculatedAge = r.patientAge || 0;
+      }
+
+      if (calculatedAge > 120 || calculatedAge < 0) return; // ignoră erori evidente de tastare
+
+      const lastVisit = r.updatedAt || (r.prescriptionHistory && r.prescriptionHistory[0]?.date) || "";
+
+      if (!seenMap.has(key) || (seenMap.get(key)!.patientAge < calculatedAge)) {
+        seenMap.set(key, {
+          id: r.id,
+          patientName: r.patientName,
+          patientAge: calculatedAge,
+          patientBirthDate: birth,
+          patientPhone: phone,
+          patientCnp: r.patientCnp,
+          lastVisitDate: lastVisit,
+        });
+      }
+    });
+
+    return Array.from(seenMap.values())
+      .filter((p) => p.patientAge >= 60)
+      .sort((a, b) => b.patientAge - a.patientAge);
+  }, [medicalRecords]);
+
+  const [noShowMonthFilter, setNoShowMonthFilter] = useState<string>("all");
+  const [noShowSearchQuery, setNoShowSearchQuery] = useState<string>("");
+  const [configActiveTab, setConfigActiveTab] = useState<"settings" | "frames" | "audit" | "noshow" | "elderly" | "backup">("settings");
   // Online / Offline state & auto-sync indicator
   const [isAppOnline, setIsAppOnline] = useState<boolean>(() => typeof navigator !== "undefined" ? navigator.onLine : true);
   const [showReconnectedBanner, setShowReconnectedBanner] = useState<boolean>(false);
@@ -14364,6 +14422,59 @@ export default function App() {
 
     return map;
   }, [appointments, medicalRecords, weekDays, activeDoctorRoles]);
+
+  // Calcul pacienți neprezentați (isNoShow: programare programată în trecut, la cel puțin 1h după oră, fără nicio consultație sau document salvat)
+  const noShowAppointments = useMemo(() => {
+    const now = new Date();
+    return appointments
+      .filter((app) => {
+        if (app.status === "cancelled" || !app.startTime) return false;
+        try {
+          const appTime = parseISO(app.startTime);
+          // Trebuie să fi trecut cel puțin 1 oră de la ora programării
+          if (!isAfter(now, addHours(appTime, 1))) return false;
+
+          // Verificăm dacă există vreun act medical sau bifă de consult pentru această programare/zi
+          const slotMeta = slotMetadataMap.get(app.id);
+          const hasRecordToday = !!slotMeta?.patientRecordForToday;
+          const hasReportToday = !!slotMeta?.hasMedicalReportToday;
+
+          // Căutare în fișe medicale
+          const targetMedId = (app as any).medicalRecordId;
+          const matchingRec = targetMedId
+            ? medicalRecords.find((r) => r.id === targetMedId)
+            : medicalRecords.find((r) => {
+                const appName = (app.patientName || "").trim().toLowerCase();
+                const rName = (r.patientName || "").trim().toLowerCase();
+                if (!appName || !rName) return false;
+                if (!arePatientNamesMatching(appName, rName) && appName !== rName) return false;
+                const appPhone = (app.patientPhone || "").replace(/\D/g, "");
+                const rPhone = (r.patientPhone || "").replace(/\D/g, "");
+                if (appPhone && rPhone && appPhone !== rPhone) return false;
+                return true;
+              });
+
+          const hasHistoryForSlot = matchingRec?.prescriptionHistory?.some((item) =>
+            item.date ? isSameDay(parseISO(item.date), appTime) : false
+          );
+
+          const isConsulted =
+            hasRecordToday ||
+            hasReportToday ||
+            hasHistoryForSlot ||
+            !!app.isConsultComplet ||
+            !!app.isControl ||
+            !!app.isGratis ||
+            !!app.forceSeen;
+
+          return !isConsulted;
+        } catch {
+          return false;
+        }
+      })
+      .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+  }, [appointments, slotMetadataMap, medicalRecords]);
+
 
   const performQuickBooking = async (doctorId: string, time: Date) => {
     if (!quickBookingPatient || !canAddAppointments) return;
@@ -27379,6 +27490,25 @@ export default function App() {
                                   </button>
                                 )}
 
+                                {/* Buton cu ROȘU: ȘTERGE DEFINITIV (Lângă butonul de comenzi) */}
+                                {(profile?.role === "admin" ||
+                                  profile?.role === "frontdesk" ||
+                                  profile?.role.startsWith("doctor")) && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setPatientToDeleteDefinitively(app);
+                                      setIsDeletePatientDefinitivelyModalOpen(true);
+                                    }}
+                                    className="flex items-center gap-1.5 px-3 py-3 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider bg-rose-600 hover:bg-rose-700 active:scale-95 text-white shadow-md shadow-rose-900/20 transition-all cursor-pointer shrink-0"
+                                    title="Ștergere Definitivă Pacient (Elimină definitiv toate fișele, rețetele, programările și comenzile acestui pacient)"
+                                  >
+                                    <Trash2 className="w-4 h-4 shrink-0" />
+                                    <span>Șterge Definitiv</span>
+                                  </button>
+                                )}
+
                                 <button
                                   onClick={() => {
                                     setIsSearchModalOpen(false);
@@ -29393,65 +29523,105 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Tab Selector Buttons */}
-              <div className="flex border-b border-slate-200 dark:border-slate-800 mb-6 gap-2 overflow-x-auto">
+              {/* Tab Selector Buttons - Condensed on a single line */}
+              <div className="flex items-center border-b border-slate-200 dark:border-slate-800 mb-6 gap-1 w-full justify-between">
                 <button
                   onClick={() => setConfigActiveTab("settings")}
                   className={cn(
-                    "px-4 py-2.5 text-xs md:text-sm font-black border-b-2 transition-all cursor-pointer flex items-center gap-2 uppercase tracking-wider whitespace-nowrap",
+                    "flex-1 px-2 py-2 text-[10px] xl:text-[11px] font-black border-b-2 transition-all cursor-pointer flex items-center justify-center gap-1 uppercase tracking-tight text-center",
                     configActiveTab === "settings"
                       ? "border-blue-500 text-blue-600 dark:text-blue-400"
                       : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                   )}
                 >
-                  <Settings className="w-4 h-4" />
-                  Setări Clinici & Medici
+                  <Settings className="w-3.5 h-3.5 shrink-0" />
+                  <span>Clinică & Medici</span>
                 </button>
                 {profile?.role === "admin" && (
                 <button
                   onClick={() => setConfigActiveTab("frames")}
                   className={cn(
-                    "px-4 py-2.5 text-xs md:text-sm font-black border-b-2 transition-all cursor-pointer flex items-center gap-2 uppercase tracking-wider whitespace-nowrap",
+                    "flex-1 px-2 py-2 text-[10px] xl:text-[11px] font-black border-b-2 transition-all cursor-pointer flex items-center justify-center gap-1 uppercase tracking-tight text-center",
                     configActiveTab === "frames"
                       ? "border-blue-500 text-blue-600 dark:text-blue-400"
                       : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                   )}
                 >
-                  <Glasses className="w-4 h-4" />
-                  Gestiune Stoc Rame
+                  <Glasses className="w-3.5 h-3.5 shrink-0" />
+                  <span>Stoc Rame</span>
                   {frameStockList.filter((i) => (Number(i.quantity) || 0) <= 2).length > 0 && (
-                    <span className="px-1.5 py-0.5 text-[10px] bg-amber-500 text-white rounded-full font-bold ml-1">
+                    <span className="px-1 py-0.2 text-[9px] bg-amber-500 text-white rounded-full font-bold">
                       {frameStockList.filter((i) => (Number(i.quantity) || 0) <= 2).length}
                     </span>
                   )}
                 </button>
                 )}
-                {profile?.role === "admin" && (
+                {(profile?.role === "admin" || profile?.role === "frontdesk") && (
                   <>
+                    {profile?.role === "admin" && (
                     <button
                       onClick={() => setConfigActiveTab("audit")}
                       className={cn(
-                        "px-4 py-2.5 text-xs md:text-sm font-black border-b-2 transition-all cursor-pointer flex items-center gap-2 uppercase tracking-wider whitespace-nowrap",
+                        "flex-1 px-2 py-2 text-[10px] xl:text-[11px] font-black border-b-2 transition-all cursor-pointer flex items-center justify-center gap-1 uppercase tracking-tight text-center",
                         configActiveTab === "audit"
                           ? "border-blue-500 text-blue-600 dark:text-blue-400"
                           : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                       )}
                     >
-                      <Activity className="w-4 h-4" />
-                      Jurnal Activitate
+                      <Activity className="w-3.5 h-3.5 shrink-0" />
+                      <span>Jurnal Activitate</span>
                     </button>
+                    )}
+                    <button
+                      onClick={() => setConfigActiveTab("noshow")}
+                      className={cn(
+                        "flex-1 px-2 py-2 text-[10px] xl:text-[11px] font-black border-b-2 transition-all cursor-pointer flex items-center justify-center gap-1 uppercase tracking-tight text-center",
+                        configActiveTab === "noshow"
+                          ? "border-rose-500 text-rose-600 dark:text-rose-400"
+                          : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                      )}
+                    >
+                      <UserX className="w-3.5 h-3.5 shrink-0" />
+                      <span>Neprezentați</span>
+                      {noShowAppointments.length > 0 && (
+                        <span className="px-1 py-0.2 text-[9px] bg-rose-500 text-white rounded-full font-bold">
+                          {noShowAppointments.length}
+                        </span>
+                      )}
+                    </button>
+                    {(profile?.role === "admin" || profile?.role === "frontdesk") && (
+                    <button
+                      onClick={() => setConfigActiveTab("elderly")}
+                      className={cn(
+                        "flex-1 px-2 py-2 text-[10px] xl:text-[11px] font-black border-b-2 transition-all cursor-pointer flex items-center justify-center gap-1 uppercase tracking-tight text-center",
+                        configActiveTab === "elderly"
+                          ? "border-amber-500 text-amber-600 dark:text-amber-400"
+                          : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                      )}
+                    >
+                      <Users className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+                      <span>Pacienți În Vârstă</span>
+                      {elderlyPatientsList.length > 0 && (
+                        <span className="px-1 py-0.2 text-[9px] bg-amber-500 text-white rounded-full font-bold">
+                          {elderlyPatientsList.length}
+                        </span>
+                      )}
+                    </button>
+                    )}
+                    {profile?.role === "admin" && (
                     <button
                       onClick={() => setConfigActiveTab("backup")}
                       className={cn(
-                        "px-4 py-2.5 text-xs md:text-sm font-black border-b-2 transition-all cursor-pointer flex items-center gap-2 uppercase tracking-wider whitespace-nowrap",
+                        "flex-1 px-2 py-2 text-[10px] xl:text-[11px] font-black border-b-2 transition-all cursor-pointer flex items-center justify-center gap-1 uppercase tracking-tight text-center",
                         configActiveTab === "backup"
                           ? "border-emerald-500 text-emerald-600 dark:text-emerald-400"
                           : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                       )}
                     >
-                      <HardDrive className="w-4 h-4" />
-                      Securitate & Backup Date
+                      <HardDrive className="w-3.5 h-3.5 shrink-0" />
+                      <span>Securitate & Backup</span>
                     </button>
+                    )}
                   </>
                 )}
               </div>
@@ -33542,6 +33712,502 @@ export default function App() {
                 className="w-full mt-4 bg-slate-900 text-white dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 font-bold py-4 rounded-xl transition-all shadow-md cursor-pointer"
               >
                 Închide Jurnal
+              </button>
+            </div>
+          ) : configActiveTab === "noshow" ? (
+            /* TAB: PACIENTI NEPREZENTATI (Grupare pe Luni și Zile) */
+            <div className="space-y-6">
+              <div className="p-5 rounded-3xl bg-rose-500/10 dark:bg-rose-950/20 border border-rose-500/20 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <h4 className="text-base font-black text-rose-600 dark:text-rose-400 uppercase tracking-widest flex items-center gap-2">
+                    <UserX className="w-5 h-5" />
+                    Evidență Pacienți Neprezentați
+                  </h4>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                    Listă cu programările trecute unde pacienții nu s-au prezentat (fără consultație sau acte medicale completate), ordonată cronologic pe luni și zile.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 bg-white/80 dark:bg-slate-900/80 px-4 py-2 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+                  <span className="text-xs font-black text-rose-600 dark:text-rose-400">
+                    Total: {noShowAppointments.length} {noShowAppointments.length === 1 ? "pacient" : "pacienți"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Search and Month Filter */}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={noShowSearchQuery}
+                    onChange={(e) => setNoShowSearchQuery(e.target.value)}
+                    placeholder="Caută după nume, telefon sau CNP..."
+                    className={cn(
+                      "w-full pl-9 pr-4 py-2.5 rounded-xl border text-sm font-medium outline-none transition-all",
+                      darkMode
+                        ? "bg-slate-800 border-slate-700 text-slate-100 focus:border-rose-500"
+                        : "bg-white border-slate-200 text-slate-900 focus:border-rose-500"
+                    )}
+                  />
+                  {noShowSearchQuery && (
+                    <button
+                      onClick={() => setNoShowSearchQuery("")}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Filtru Lună */}
+                {(() => {
+                  const monthsAvailable = Array.from(
+                    new Set(
+                      noShowAppointments.map((a) => {
+                        try {
+                          return format(parseISO(a.startTime), "yyyy-MM");
+                        } catch {
+                          return "";
+                        }
+                      }).filter(Boolean)
+                    )
+                  ).sort().reverse();
+
+                  return (
+                    <select
+                      value={noShowMonthFilter}
+                      onChange={(e) => setNoShowMonthFilter(e.target.value)}
+                      className={cn(
+                        "px-4 py-2.5 rounded-xl border text-sm font-bold outline-none cursor-pointer",
+                        darkMode
+                          ? "bg-slate-800 border-slate-700 text-slate-200"
+                          : "bg-white border-slate-200 text-slate-700"
+                      )}
+                    >
+                      <option value="all">Toate Lunile ({noShowAppointments.length})</option>
+                      {monthsAvailable.map((m) => {
+                        const [y, mStr] = m.split("-");
+                        const dateObj = new Date(parseInt(y), parseInt(mStr) - 1, 1);
+                        const label = format(dateObj, "MMMM yyyy", { locale: ro });
+                        const count = noShowAppointments.filter((a) => {
+                          try {
+                            return format(parseISO(a.startTime), "yyyy-MM") === m;
+                          } catch {
+                            return false;
+                          }
+                        }).length;
+                        return (
+                          <option key={m} value={m}>
+                            {label.charAt(0).toUpperCase() + label.slice(1)} ({count})
+                          </option>
+                        );
+                      })}
+                    </select>
+                  );
+                })()}
+              </div>
+
+              {/* Grupate pe Luni și Zile */}
+              {(() => {
+                const queryClean = noShowSearchQuery.trim().toLowerCase();
+                const filtered = noShowAppointments.filter((app) => {
+                  if (noShowMonthFilter !== "all") {
+                    try {
+                      if (format(parseISO(app.startTime), "yyyy-MM") !== noShowMonthFilter) return false;
+                    } catch {
+                      return false;
+                    }
+                  }
+                  if (queryClean) {
+                    const n = (app.patientName || "").toLowerCase();
+                    const p = (app.patientPhone || "").toLowerCase();
+                    const c = (app.patientCnp || "").toLowerCase();
+                    if (!n.includes(queryClean) && !p.includes(queryClean) && !c.includes(queryClean)) return false;
+                  }
+                  return true;
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="p-12 text-center rounded-2xl border border-dashed border-slate-300 dark:border-slate-800">
+                      <UserCheck className="w-12 h-12 mx-auto text-emerald-500/60 mb-3" />
+                      <p className="text-base font-bold text-slate-600 dark:text-slate-300">
+                        {noShowSearchQuery || noShowMonthFilter !== "all"
+                          ? "Niciun pacient neprezentat nu corespunde filtrelor selectate."
+                          : "Felicitări! Nu există niciun pacient neprezentat în evidență."}
+                      </p>
+                    </div>
+                  );
+                }
+
+                // Grupăm pe Luna -> Zi
+                const groupedByMonth: { [monthKey: string]: { [dayKey: string]: Appointment[] } } = {};
+                filtered.forEach((app) => {
+                  try {
+                    const d = parseISO(app.startTime);
+                    const monthKey = format(d, "yyyy-MM");
+                    const dayKey = format(d, "yyyy-MM-dd");
+                    if (!groupedByMonth[monthKey]) groupedByMonth[monthKey] = {};
+                    if (!groupedByMonth[monthKey][dayKey]) groupedByMonth[monthKey][dayKey] = [];
+                    groupedByMonth[monthKey][dayKey].push(app);
+                  } catch {}
+                });
+
+                const monthKeys = Object.keys(groupedByMonth).sort().reverse();
+
+                return (
+                  <div className="space-y-8 max-h-[600px] overflow-y-auto pr-1">
+                    {monthKeys.map((mKey) => {
+                      const [y, mStr] = mKey.split("-");
+                      const monthDate = new Date(parseInt(y), parseInt(mStr) - 1, 1);
+                      const monthName = format(monthDate, "MMMM yyyy", { locale: ro });
+                      const dayKeys = Object.keys(groupedByMonth[mKey]).sort().reverse();
+                      const totalInMonth = dayKeys.reduce((acc, dk) => acc + groupedByMonth[mKey][dk].length, 0);
+
+                      return (
+                        <div key={mKey} className="space-y-4">
+                          {/* Antet Lună */}
+                          <div className="sticky top-0 z-10 py-2 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm border-b-2 border-rose-500/30 flex items-center justify-between">
+                            <h3 className="text-sm font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 flex items-center gap-2">
+                              <Calendar className="w-4 h-4" />
+                              {monthName.charAt(0).toUpperCase() + monthName.slice(1)}
+                            </h3>
+                            <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                              {totalInMonth} {totalInMonth === 1 ? "neprezentare" : "neprezentări"}
+                            </span>
+                          </div>
+
+                          {/* Zile din lună */}
+                          <div className="space-y-4 pl-2 sm:pl-4 border-l-2 border-slate-200 dark:border-slate-800">
+                            {dayKeys.map((dKey) => {
+                              const dayApps = groupedByMonth[mKey][dKey];
+                              const dayDate = parseISO(dKey);
+                              const dayFormatted = format(dayDate, "EEEE, d MMMM yyyy", { locale: ro });
+
+                              return (
+                                <div key={dKey} className="space-y-2">
+                                  <div className="flex items-center gap-2 text-xs font-black text-slate-700 dark:text-slate-300">
+                                    <CalendarClock className="w-3.5 h-3.5 text-slate-400" />
+                                    <span>{dayFormatted.charAt(0).toUpperCase() + dayFormatted.slice(1)}</span>
+                                    <span className="text-slate-400 font-semibold">({dayApps.length})</span>
+                                  </div>
+
+                                  <div className="space-y-1.5">
+                                    {dayApps.map((app) => {
+                                      const appHour = format(parseISO(app.startTime), "HH:mm");
+                                      const birthFmt = (() => {
+                                        const b = app.patientBirthDate;
+                                        if (!b) return "-";
+                                        const p = b.split("-");
+                                        return p.length === 3 && p[0].length === 4 ? `${p[2]}.${p[1]}.${p[0]}` : b;
+                                      })();
+
+                                      const doctorName = getRoleLabel(app.doctorId as Role).split(" ")[1] || app.doctorId;
+
+                                      return (
+                                        <div
+                                          key={app.id}
+                                          className={cn(
+                                            "px-4 py-2.5 rounded-xl border transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs shadow-2xs hover:shadow-sm",
+                                            darkMode
+                                              ? "bg-slate-800/80 border-slate-700/80 hover:border-rose-500/50"
+                                              : "bg-white border-slate-200/90 hover:border-rose-300"
+                                          )}
+                                        >
+                                          {/* Col 1: Oră & Medic */}
+                                          <div className="flex items-center gap-2 shrink-0">
+                                            <span className="font-black font-mono px-2 py-0.5 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                                              {appHour}
+                                            </span>
+                                            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 rounded-md uppercase">
+                                              {doctorName}
+                                            </span>
+                                          </div>
+
+                                          {/* Col 2: Nume Pacient */}
+                                          <div className="min-w-0 flex-1">
+                                            <span className="font-black text-sm text-slate-900 dark:text-slate-100 block truncate">
+                                              {app.patientName}
+                                            </span>
+                                          </div>
+
+                                          {/* Col 3: Data Nașterii & Vârstă */}
+                                          <div className="flex items-center gap-1.5 shrink-0 text-slate-600 dark:text-slate-300">
+                                            <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                            <span>
+                                              {birthFmt} <span className="text-slate-400">({app.patientAge} ani)</span>
+                                            </span>
+                                          </div>
+
+                                          {/* Col 4: Număr Telefon */}
+                                          <div className="flex items-center gap-1.5 shrink-0 min-w-[130px] font-mono">
+                                            <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                            <span>
+                                              {app.patientPhone ? (
+                                                <strong className="text-blue-600 dark:text-blue-400">{app.patientPhone}</strong>
+                                              ) : (
+                                                <span className="italic text-slate-400 text-[11px]">Fără telefon</span>
+                                              )}
+                                            </span>
+                                          </div>
+
+                                          {/* Col 5: Butoane Acțiune */}
+                                          <div className="flex items-center gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-slate-100 dark:border-slate-700 w-full md:w-auto justify-end">
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setIsConfigModalOpen(false);
+                                                openMedicalRecord(app);
+                                              }}
+                                              className="px-2.5 py-1 text-[11px] font-black rounded-lg bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors flex items-center gap-1 cursor-pointer"
+                                            >
+                                              <FileText className="w-3 h-3" />
+                                              Fișă
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setIsConfigModalOpen(false);
+                                                startRescheduling(app);
+                                              }}
+                                              className="px-2.5 py-1 text-[11px] font-black rounded-lg bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors flex items-center gap-1 cursor-pointer"
+                                            >
+                                              <CalendarClock className="w-3 h-3" />
+                                              Reprogramează
+                                            </button>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
+              <button
+                type="button"
+                onClick={() => setIsConfigModalOpen(false)}
+                className="w-full mt-4 bg-slate-900 text-white dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 font-bold py-4 rounded-xl transition-all shadow-md cursor-pointer"
+              >
+                Închide Lista
+              </button>
+            </div>
+          ) : configActiveTab === "elderly" ? (
+            /* TAB: PACIENTI CEI MAI IN VARSTA (Sortare descrescatoare dupa varsta + posibilitate stergere definitiva) */
+            <div className="space-y-6">
+              <div className="p-5 rounded-3xl bg-amber-500/10 dark:bg-amber-950/20 border border-amber-500/20 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <h4 className="text-base font-black text-amber-600 dark:text-amber-400 uppercase tracking-widest flex items-center gap-2">
+                    <Users className="w-5 h-5 text-amber-500" />
+                    Evidență Pacienți În Vârstă (Seniori)
+                  </h4>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                    Listă ordonată descrescător după vârstă (cei mai în vârstă pacienți primii). Puteți vizualiza fișa, reprograma sau <strong>șterge definitiv</strong> orice pacient din baza de date.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 bg-white/80 dark:bg-slate-900/80 px-4 py-2 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+                  <span className="text-xs font-black text-amber-600 dark:text-amber-400">
+                    Total: {elderlyPatientsList.length} seniori (≥ 60 ani)
+                  </span>
+                </div>
+              </div>
+
+              {/* Search and Age Filter */}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={elderlySearchQuery}
+                    onChange={(e) => setElderlySearchQuery(e.target.value)}
+                    placeholder="Caută senior după nume, telefon sau CNP..."
+                    className={cn(
+                      "w-full pl-9 pr-4 py-2.5 rounded-xl border text-sm font-medium outline-none transition-all",
+                      darkMode
+                        ? "bg-slate-800 border-slate-700 text-slate-100 focus:border-amber-500"
+                        : "bg-white border-slate-200 text-slate-900 focus:border-amber-500"
+                    )}
+                  />
+                  {elderlySearchQuery && (
+                    <button
+                      onClick={() => setElderlySearchQuery("")}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-500 whitespace-nowrap">Vârstă minimă:</span>
+                  <select
+                    value={elderlyMinAgeFilter}
+                    onChange={(e) => setElderlyMinAgeFilter(Number(e.target.value))}
+                    className={cn(
+                      "px-3 py-2.5 rounded-xl border text-sm font-bold outline-none cursor-pointer",
+                      darkMode
+                        ? "bg-slate-800 border-slate-700 text-slate-200"
+                        : "bg-white border-slate-200 text-slate-700"
+                    )}
+                  >
+                    <option value={60}>Toți (≥ 60 ani)</option>
+                    <option value={70}>Peste 70 ani</option>
+                    <option value={75}>Peste 75 ani</option>
+                    <option value={80}>Peste 80 ani</option>
+                    <option value={85}>Peste 85 ani</option>
+                    <option value={90}>Peste 90 ani</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* List of elderly patients */}
+              {(() => {
+                const queryClean = elderlySearchQuery.trim().toLowerCase();
+                const filtered = elderlyPatientsList.filter((p) => {
+                  if (p.patientAge < elderlyMinAgeFilter) return false;
+                  if (queryClean) {
+                    const n = (p.patientName || "").toLowerCase();
+                    const ph = (p.patientPhone || "").toLowerCase();
+                    const c = (p.patientCnp || "").toLowerCase();
+                    if (!n.includes(queryClean) && !ph.includes(queryClean) && !c.includes(queryClean)) return false;
+                  }
+                  return true;
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="p-12 text-center rounded-2xl border border-dashed border-slate-300 dark:border-slate-800">
+                      <Users className="w-12 h-12 mx-auto text-amber-500/60 mb-3" />
+                      <p className="text-base font-bold text-slate-600 dark:text-slate-300">
+                        Niciun pacient nu corespunde criteriilor de căutare selectate.
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-2 max-h-[550px] overflow-y-auto pr-1">
+                    {filtered.map((patient, pIdx) => {
+                      const birthFmt = (() => {
+                        const b = patient.patientBirthDate;
+                        if (!b) return "-";
+                        const p = b.split("-");
+                        return p.length === 3 && p[0].length === 4 ? `${p[2]}.${p[1]}.${p[0]}` : b;
+                      })();
+
+                      return (
+                        <div
+                          key={patient.id || pIdx}
+                          className={cn(
+                            "px-4 py-3 rounded-xl border transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs shadow-2xs hover:shadow-sm",
+                            darkMode
+                              ? "bg-slate-800/80 border-slate-700/80 hover:border-amber-500/50"
+                              : "bg-white border-slate-200/90 hover:border-amber-300"
+                          )}
+                        >
+                          {/* Col 1: Vârstă prominentă */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="font-black text-sm font-mono px-2.5 py-1 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 flex items-center gap-1">
+                              {patient.patientAge} <span className="text-[10px] uppercase font-bold">ani</span>
+                            </span>
+                          </div>
+
+                          {/* Col 2: Nume Pacient */}
+                          <div className="min-w-0 flex-1">
+                            <span className="font-black text-sm text-slate-900 dark:text-slate-100 block truncate">
+                              {patient.patientName}
+                            </span>
+                            {patient.patientCnp && (
+                              <span className="text-[11px] text-slate-400 font-mono">
+                                CNP: {patient.patientCnp}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Col 3: Data Nașterii */}
+                          <div className="flex items-center gap-1.5 shrink-0 text-slate-600 dark:text-slate-300">
+                            <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span>
+                              Născut(ă): <strong className="text-slate-700 dark:text-slate-200">{birthFmt}</strong>
+                            </span>
+                          </div>
+
+                          {/* Col 4: Număr Telefon */}
+                          <div className="flex items-center gap-1.5 shrink-0 min-w-[130px] font-mono">
+                            <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span>
+                              {patient.patientPhone ? (
+                                <strong className="text-blue-600 dark:text-blue-400">{patient.patientPhone}</strong>
+                              ) : (
+                                <span className="italic text-slate-400 text-[11px]">Fără telefon</span>
+                              )}
+                            </span>
+                          </div>
+
+                          {/* Col 5: Butoane Acțiune (Fișă + ȘTERGE DEFINITIV) */}
+                          <div className="flex items-center gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-slate-100 dark:border-slate-700 w-full md:w-auto justify-end">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsConfigModalOpen(false);
+                                const foundRec = medicalRecords.find((r) => r.id === patient.id);
+                                if (foundRec) {
+                                  openMedicalRecord(foundRec as any);
+                                }
+                              }}
+                              className="px-2.5 py-1.5 text-[11px] font-black rounded-lg bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors flex items-center gap-1 cursor-pointer"
+                            >
+                              <FileText className="w-3 h-3" />
+                              Fișă
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPatientToDeleteDefinitively({
+                                  id: patient.id,
+                                  patientName: patient.patientName,
+                                  patientPhone: patient.patientPhone,
+                                  patientAge: patient.patientAge,
+                                  patientBirthDate: patient.patientBirthDate,
+                                  patientCnp: patient.patientCnp,
+                                  patientSex: "M",
+                                  doctorId: "all",
+                                  startTime: new Date().toISOString(),
+                                  endTime: new Date().toISOString(),
+                                  status: "scheduled",
+                                });
+                                setIsDeletePatientDefinitivelyModalOpen(true);
+                              }}
+                              className="px-3 py-1.5 text-[11px] font-black rounded-lg bg-rose-600 hover:bg-rose-700 text-white transition-all shadow-sm hover:shadow-rose-900/20 flex items-center gap-1 cursor-pointer uppercase tracking-wider"
+                              title="Șterge definitiv acest pacient din toată baza de date"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Șterge Definitiv
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
+              <button
+                type="button"
+                onClick={() => setIsConfigModalOpen(false)}
+                className="w-full mt-4 bg-slate-900 text-white dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 font-bold py-4 rounded-xl transition-all shadow-md cursor-pointer"
+              >
+                Închide Lista
               </button>
             </div>
           ) : (

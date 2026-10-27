@@ -506,8 +506,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                       <span className="text-xs sm:text-sm font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 leading-none">
                         Fișă Pacient
                       </span>
-                      {currentPatientAppointment && (() => {
-                        const appDate = parseISO(currentPatientAppointment.startTime);
+                      {currentPatientAppointment && currentPatientAppointment.startTime && (() => {
+                        let appDate: Date;
+                        try {
+                          appDate = parseISO(currentPatientAppointment.startTime);
+                          if (isNaN(appDate.getTime())) return null;
+                        } catch {
+                          return null;
+                        }
                         
                         const hasRecordForToday = medicalRecords.some((r) => {
                           const rName = cleanString(r.patientName || "");
@@ -517,7 +523,13 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           const nameMatch = rName && cName && rName === cName;
                           const phoneMatch = rPhone && cPhone && rPhone === cPhone;
                           if (!nameMatch && !phoneMatch) return false;
-                          return r.updatedAt && isSameDay(parseISO(r.updatedAt), appDate);
+                          if (!r.updatedAt) return false;
+                          try {
+                            const parsedUpdated = parseISO(r.updatedAt);
+                            return !isNaN(parsedUpdated.getTime()) && isSameDay(parsedUpdated, appDate);
+                          } catch {
+                            return false;
+                          }
                         });
 
                         const isConsultedInCalendar =
