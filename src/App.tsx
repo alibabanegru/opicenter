@@ -19480,6 +19480,12 @@ export default function App() {
           }
         });
 
+      if (docForCurrentPrescription) {
+        setEditingMedicalDocId(docForCurrentPrescription.id);
+      } else {
+        setEditingMedicalDocId(null);
+      }
+
       const lastDocOfSamePatientAndType = [...(medicalDocuments || [])]
         .filter((d) => {
           if (d.type !== type || d.isDeleted || !d.formValues) return false;
@@ -19504,6 +19510,15 @@ export default function App() {
       const patientFormGeneral = lastDocOfSamePatientAndType ? lastDocOfSamePatientAndType.formValues : null;
       const isSamePatient = !!patientFormGeneral;
       const isSamePrescription = !!docForCurrentPrescription;
+
+      // Helper to pick value when editing an existing document for this prescription:
+      // If a document was already saved, prioritize its exact form value (even if cleared to "")!
+      const pickVal = (formVal: any, fallbackVal: any) => {
+        if (docForCurrentPrescription && formVal !== undefined) {
+          return formVal;
+        }
+        return fallbackVal || "";
+      };
 
       const getOdVal = (prop: string) => {
         return activePresc ? (activePresc.od as any)?.[prop] : (currentMedicalRecord.od as any)?.[prop];
@@ -19587,69 +19602,22 @@ export default function App() {
           diagRaw = diagRaw
             .replace(/Recomandare tip lentila:[^\r\n]*/gi, "")
             .trim();
-          return (
-            diagRaw ||
-            (isSamePrescription ? prevForm?.diagnostic : "") ||
-            ""
-          );
+          return pickVal(prevForm?.diagnostic, diagRaw);
         })(),
-        scutire:
-          currentMedicalRecord.scutire ||
-          (isSamePrescription ? prevForm?.scutire : "") ||
-          "",
-        treatment:
-          currentMedicalRecord.treatment ||
-          (isSamePrescription ? prevForm?.treatment : "") ||
-          "",
-        history:
-          currentMedicalRecord.history ||
-          (isSamePrescription ? prevForm?.history : "") ||
-          "",
-        onsetAndEvolution:
-          currentMedicalRecord.onsetAndEvolution ||
-          (isSamePrescription ? prevForm?.onsetAndEvolution : "") ||
-          "",
-        recentHospitalizations:
-          currentMedicalRecord.recentHospitalizations ||
-          (isSamePrescription ? prevForm?.recentHospitalizations : "") ||
-          "",
-        clinicalTreatment:
-          currentMedicalRecord.clinicalTreatment ||
-          currentMedicalRecord.treatment ||
-          (isSamePrescription ? prevForm?.clinicalTreatment : "") ||
-          "",
-        dependencyStatus:
-          currentMedicalRecord.dependencyStatus ||
-          (isSamePrescription ? prevForm?.dependencyStatus : "") ||
-          "",
-        mobilityStatus:
-          currentMedicalRecord.mobilityStatus ||
-          (isSamePrescription ? prevForm?.mobilityStatus : "") ||
-          "",
-        recoveryPlan:
-          currentMedicalRecord.recoveryPlan ||
-          (isSamePrescription ? prevForm?.recoveryPlan : "") ||
-          "",
-        recoveryPrognosis:
-          currentMedicalRecord.recoveryPrognosis ||
-          (isSamePrescription ? prevForm?.recoveryPrognosis : "") ||
-          "",
-        symptoms:
-          currentMedicalRecord.symptoms ||
-          (isSamePrescription ? prevForm?.symptoms : "") ||
-          "",
-        medications:
-          currentMedicalRecord.medications ||
-          (isSamePrescription ? prevForm?.medications : "") ||
-          "",
-        otherEyeDiseases:
-          currentMedicalRecord.otherEyeDiseases ||
-          (isSamePrescription ? prevForm?.otherEyeDiseases : "") ||
-          "",
-        examinationInterpretation:
-          currentMedicalRecord.examinationInterpretation ||
-          (isSamePrescription ? prevForm?.examinationInterpretation : "") ||
-          "",
+        scutire: pickVal(prevForm?.scutire, currentMedicalRecord.scutire),
+        treatment: pickVal(prevForm?.treatment, currentMedicalRecord.treatment),
+        history: pickVal(prevForm?.history, currentMedicalRecord.history),
+        onsetAndEvolution: pickVal(prevForm?.onsetAndEvolution, currentMedicalRecord.onsetAndEvolution),
+        recentHospitalizations: pickVal(prevForm?.recentHospitalizations, currentMedicalRecord.recentHospitalizations),
+        clinicalTreatment: pickVal(prevForm?.clinicalTreatment, currentMedicalRecord.clinicalTreatment || currentMedicalRecord.treatment),
+        dependencyStatus: pickVal(prevForm?.dependencyStatus, currentMedicalRecord.dependencyStatus),
+        mobilityStatus: pickVal(prevForm?.mobilityStatus, currentMedicalRecord.mobilityStatus),
+        recoveryPlan: pickVal(prevForm?.recoveryPlan, currentMedicalRecord.recoveryPlan),
+        recoveryPrognosis: pickVal(prevForm?.recoveryPrognosis, currentMedicalRecord.recoveryPrognosis),
+        symptoms: pickVal(prevForm?.symptoms, currentMedicalRecord.symptoms),
+        medications: pickVal(prevForm?.medications, currentMedicalRecord.medications),
+        otherEyeDiseases: pickVal(prevForm?.otherEyeDiseases, currentMedicalRecord.otherEyeDiseases),
+        examinationInterpretation: pickVal(prevForm?.examinationInterpretation, currentMedicalRecord.examinationInterpretation),
         documentNumber: regNumber,
         certificatNumber: regNumber,
         servesTo:
@@ -19961,8 +19929,15 @@ export default function App() {
 
   const openDoctorDocumentEdit = (docRecord: any) => {
     setEditingMedicalDocId(docRecord.id);
+    // Asigură că la deschiderea documentului din istoric/sumar/registru se încarcă
+    // fidel și exact starea salvată a formularului:
+    const savedValues = docRecord.formValues || {};
     setDocumentForm({
-      ...docRecord.formValues,
+      ...savedValues,
+      documentNumber: docRecord.documentNumber || savedValues.documentNumber || "",
+      certificatNumber: docRecord.documentNumber || savedValues.certificatNumber || "",
+      patientName: docRecord.patientName || savedValues.patientName || "",
+      patientPhone: docRecord.patientPhone || savedValues.patientPhone || "",
     });
     const docName = (docRecord.patientName || "").toLowerCase().trim();
     const docPhone = (docRecord.patientPhone || "").trim();
@@ -20078,18 +20053,10 @@ export default function App() {
       return [docWithId, ...filtered];
     });
 
-    // 2. Cloud persistence for medicalDocuments (non-blocking)
+    // 2. Cloud persistence for medicalDocuments (non-blocking, full overwrite so deleted/cleared fields are accurately saved)
     (async () => {
       try {
-        if (editingMedicalDocId) {
-          await setDoc(
-            doc(db, "medicalDocuments", editingMedicalDocId),
-            documentRecord,
-            { merge: true },
-          );
-        } else {
-          await setDoc(doc(db, "medicalDocuments", savedDocId), documentRecord);
-        }
+        await setDoc(doc(db, "medicalDocuments", savedDocId), documentRecord);
       } catch (err) {
         console.warn("Cloud save error for medicalDocuments:", err);
       }
@@ -20116,42 +20083,42 @@ export default function App() {
     }
 
     if (activeRec) {
-      const axOd = finalFormValues.axialLengthOd || "";
-      const axOs = finalFormValues.axialLengthOs || "";
-      const diagVal = finalFormValues.diagnostic || activeRec.diagnostic || "";
-      const treatVal = finalFormValues.treatment || activeRec.treatment || "";
-      const sympVal = finalFormValues.symptoms || activeRec.symptoms || "";
-      const histVal = finalFormValues.history || activeRec.history || "";
-      const medVal = finalFormValues.medications || activeRec.medications || "";
-      const otherDiseasesVal = finalFormValues.otherEyeDiseases || activeRec.otherEyeDiseases || "";
-      const interpVal = finalFormValues.examinationInterpretation || activeRec.examinationInterpretation || "";
-      const planVal = finalFormValues.recoveryPlan || activeRec.recoveryPlan || "";
-      const progVal = finalFormValues.recoveryPrognosis || activeRec.recoveryPrognosis || "";
-      const clinTreatVal = finalFormValues.clinicalTreatment || activeRec.clinicalTreatment || treatVal;
+      const axOd = finalFormValues.axialLengthOd ?? (activeRec.axialLength?.od || "");
+      const axOs = finalFormValues.axialLengthOs ?? (activeRec.axialLength?.os || "");
+      const diagVal = finalFormValues.diagnostic !== undefined ? finalFormValues.diagnostic : (activeRec.diagnostic || "");
+      const treatVal = finalFormValues.treatment !== undefined ? finalFormValues.treatment : (activeRec.treatment || "");
+      const sympVal = finalFormValues.symptoms !== undefined ? finalFormValues.symptoms : (activeRec.symptoms || "");
+      const histVal = finalFormValues.history !== undefined ? finalFormValues.history : (activeRec.history || "");
+      const medVal = finalFormValues.medications !== undefined ? finalFormValues.medications : (activeRec.medications || "");
+      const otherDiseasesVal = finalFormValues.otherEyeDiseases !== undefined ? finalFormValues.otherEyeDiseases : (activeRec.otherEyeDiseases || "");
+      const interpVal = finalFormValues.examinationInterpretation !== undefined ? finalFormValues.examinationInterpretation : (activeRec.examinationInterpretation || "");
+      const planVal = finalFormValues.recoveryPlan !== undefined ? finalFormValues.recoveryPlan : (activeRec.recoveryPlan || "");
+      const progVal = finalFormValues.recoveryPrognosis !== undefined ? finalFormValues.recoveryPrognosis : (activeRec.recoveryPrognosis || "");
+      const clinTreatVal = finalFormValues.clinicalTreatment !== undefined ? finalFormValues.clinicalTreatment : treatVal;
 
       const iopVal = {
-        od: finalFormValues.iopOd || activeRec.iop?.od || "",
-        os: finalFormValues.iopOs || activeRec.iop?.os || "",
+        od: finalFormValues.iopOd !== undefined ? finalFormValues.iopOd : (activeRec.iop?.od || ""),
+        os: finalFormValues.iopOs !== undefined ? finalFormValues.iopOs : (activeRec.iop?.os || ""),
       };
       const corrIopVal = {
-        od: finalFormValues.correctedIopOd || activeRec.correctedIop?.od || "",
-        os: finalFormValues.correctedIopOs || activeRec.correctedIop?.os || "",
+        od: finalFormValues.correctedIopOd !== undefined ? finalFormValues.correctedIopOd : (activeRec.correctedIop?.od || ""),
+        os: finalFormValues.correctedIopOs !== undefined ? finalFormValues.correctedIopOs : (activeRec.correctedIop?.os || ""),
       };
       const pachyVal = {
-        od: finalFormValues.pachymetryOd || activeRec.pachymetry?.od || "",
-        os: finalFormValues.pachymetryOs || activeRec.pachymetry?.os || "",
+        od: finalFormValues.pachymetryOd !== undefined ? finalFormValues.pachymetryOd : (activeRec.pachymetry?.od || ""),
+        os: finalFormValues.pachymetryOs !== undefined ? finalFormValues.pachymetryOs : (activeRec.pachymetry?.os || ""),
       };
       const axialVal = {
-        od: axOd || activeRec.axialLength?.od || "",
-        os: axOs || activeRec.axialLength?.os || "",
+        od: axOd,
+        os: axOs,
       };
       const antSegVal = {
-        od: finalFormValues.anteriorSegmentOd || (activeRec as any).anteriorSegment?.od || "",
-        os: finalFormValues.anteriorSegmentOs || (activeRec as any).anteriorSegment?.os || "",
+        od: finalFormValues.anteriorSegmentOd !== undefined ? finalFormValues.anteriorSegmentOd : ((activeRec as any).anteriorSegment?.od || ""),
+        os: finalFormValues.anteriorSegmentOs !== undefined ? finalFormValues.anteriorSegmentOs : ((activeRec as any).anteriorSegment?.os || ""),
       };
       const postSegVal = {
-        od: finalFormValues.posteriorSegmentOd || (activeRec as any).posteriorSegment?.od || "",
-        os: finalFormValues.posteriorSegmentOs || (activeRec as any).posteriorSegment?.os || "",
+        od: finalFormValues.posteriorSegmentOd !== undefined ? finalFormValues.posteriorSegmentOd : ((activeRec as any).posteriorSegment?.od || ""),
+        os: finalFormValues.posteriorSegmentOs !== undefined ? finalFormValues.posteriorSegmentOs : ((activeRec as any).posteriorSegment?.os || ""),
       };
 
       const docDate = documentRecord.date;
@@ -21141,105 +21108,88 @@ export default function App() {
     let y = 44;
     const lineSpacing = 6.5;
 
+    // Rând 1: Nume, Prenume, Vârstă, CNP (Fără puncte '....', doar eticheta + valoarea completată)
     doc.text(`Nume:`, 14, y);
-    drawDottedLine(26, 68, y);
-    doc.setFont("helvetica", "bold");
-    doc.text(
-      truncateToWidth(cleanStr(documentForm.lastName || ""), 68 - 26),
-      26,
-      y - 1,
-    );
-    doc.setFont("helvetica", "normal");
+    if (documentForm.lastName) {
+      doc.setFont("helvetica", "bold");
+      doc.text(cleanStr(documentForm.lastName), 26, y);
+      doc.setFont("helvetica", "normal");
+    }
 
     doc.text(`Prenume:`, 70, y);
-    drawDottedLine(86, 128, y);
-    doc.setFont("helvetica", "bold");
-    doc.text(
-      truncateToWidth(cleanStr(documentForm.firstName || ""), 128 - 86),
-      86,
-      y - 1,
-    );
-    doc.setFont("helvetica", "normal");
+    if (documentForm.firstName) {
+      doc.setFont("helvetica", "bold");
+      doc.text(cleanStr(documentForm.firstName), 87, y);
+      doc.setFont("helvetica", "normal");
+    }
 
     doc.text(`Varsta:`, 130, y);
-    drawDottedLine(143, 157, y);
-    doc.setFont("helvetica", "bold");
-    doc.text(
-      truncateToWidth(documentForm.ageSimple || "", 157 - 143),
-      143,
-      y - 1,
-    );
-    doc.setFont("helvetica", "normal");
+    if (documentForm.ageSimple) {
+      doc.setFont("helvetica", "bold");
+      doc.text(String(documentForm.ageSimple), 143, y);
+      doc.setFont("helvetica", "normal");
+    }
 
     doc.text(`CNP:`, 159, y);
-    drawDottedLine(169, pageWidth - 14, y);
     if (documentForm.patientCnp) {
       doc.setFont("helvetica", "bold");
       doc.setFontSize(8.5);
-      doc.text(
-        truncateToWidth(cleanStr(documentForm.patientCnp), pageWidth - 14 - 169),
-        169,
-        y - 1,
-      );
+      doc.text(cleanStr(documentForm.patientCnp), 169, y);
       doc.setFontSize(9.5);
       doc.setFont("helvetica", "normal");
     }
 
+    // Rând 2: Simptome
     y += lineSpacing;
     doc.text(`Simptome:`, 14, y);
-    drawDottedLine(35, pageWidth - 14, y);
-    doc.setFont("helvetica", "bold");
-    doc.text(
-      truncateToWidth(
-        cleanStr(documentForm.symptoms) || "",
-        pageWidth - 14 - 35,
-      ),
-      35,
-      y - 1,
-    );
-    doc.setFont("helvetica", "normal");
+    if (documentForm.symptoms && documentForm.symptoms.trim()) {
+      doc.setFont("helvetica", "bold");
+      doc.text(
+        truncateToWidth(cleanStr(documentForm.symptoms.trim()), pageWidth - 14 - 35),
+        35,
+        y,
+      );
+      doc.setFont("helvetica", "normal");
+    }
 
+    // Rând 3: Alte boli oculare
     y += lineSpacing;
     doc.text(`Alte boli oculare:`, 14, y);
-    drawDottedLine(45, pageWidth - 14, y);
-    doc.setFont("helvetica", "bold");
-    doc.text(
-      truncateToWidth(
-        cleanStr(documentForm.otherEyeDiseases) || "",
-        pageWidth - 14 - 45,
-      ),
-      45,
-      y - 1,
-    );
-    doc.setFont("helvetica", "normal");
+    if (documentForm.otherEyeDiseases && documentForm.otherEyeDiseases.trim()) {
+      doc.setFont("helvetica", "bold");
+      doc.text(
+        truncateToWidth(cleanStr(documentForm.otherEyeDiseases.trim()), pageWidth - 14 - 45),
+        45,
+        y,
+      );
+      doc.setFont("helvetica", "normal");
+    }
 
+    // Rând 4: Antecedente personale
     y += lineSpacing;
     doc.text(`Antecedente personale:`, 14, y);
-    drawDottedLine(58, pageWidth - 14, y);
-    doc.setFont("helvetica", "bold");
-    doc.text(
-      truncateToWidth(
-        cleanStr(documentForm.history) || "",
-        pageWidth - 14 - 58,
-      ),
-      58,
-      y - 1,
-    );
-    doc.setFont("helvetica", "normal");
+    if (documentForm.history && documentForm.history.trim()) {
+      doc.setFont("helvetica", "bold");
+      doc.text(
+        truncateToWidth(cleanStr(documentForm.history.trim()), pageWidth - 14 - 58),
+        58,
+        y,
+      );
+      doc.setFont("helvetica", "normal");
+    }
 
+    // Rând 5: Medicamente folosite
     y += lineSpacing;
     doc.text(`Medicamente folosite:`, 14, y);
-    drawDottedLine(55, pageWidth - 14, y);
-    doc.setFont("helvetica", "bold");
-    doc.text(
-      truncateToWidth(
-        cleanStr(documentForm.medications) || "",
-        pageWidth - 14 - 55,
-      ),
-      55,
-      y - 1,
-    );
-    doc.setFont("helvetica", "normal");
+    if (documentForm.medications && documentForm.medications.trim()) {
+      doc.setFont("helvetica", "bold");
+      doc.text(
+        truncateToWidth(cleanStr(documentForm.medications.trim()), pageWidth - 14 - 55),
+        55,
+        y,
+      );
+      doc.setFont("helvetica", "normal");
+    }
 
     y += 10;
     doc.setFont("helvetica", "bold");
@@ -34793,6 +34743,14 @@ export default function App() {
         setRegistrySearchQuery={setRegistrySearchQuery}
         openDoctorDocumentEdit={openDoctorDocumentEdit}
         setSuccessMessage={setSuccessMessage}
+        onDeleteDocument={async (docId) => {
+          try {
+            setMedicalDocuments((prev) => prev.filter((d) => d.id !== docId));
+            await deleteDoc(doc(db, "medicalDocuments", docId));
+          } catch (err) {
+            console.error("Eroare la ștergerea documentului din registru:", err);
+          }
+        }}
       />
 
       {/* Export Modal */}
@@ -34943,6 +34901,21 @@ export default function App() {
             setFisaEliberatZi(d.zi);
             setFisaEliberatLuna(d.luna);
             setFisaEliberatAn(d.an);
+          }}
+          onViewDocument={(docRecord) => {
+            openDoctorDocumentEdit(docRecord);
+          }}
+          onDeleteDocument={async (docId) => {
+            try {
+              // 1. Local state update
+              setMedicalDocuments((prev) => prev.filter((d) => d.id !== docId));
+              // 2. Cloud Firestore deletion
+              await deleteDoc(doc(db, "medicalDocuments", docId));
+              setSuccessMessage("Documentul a fost șters definitiv!");
+            } catch (err) {
+              console.error("Eroare la ștergerea documentului:", err);
+              setErrorMessage("Eroare la ștergerea documentului din baza de date.");
+            }
           }}
         />
       )}

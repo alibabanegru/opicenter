@@ -109,7 +109,7 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 z-[75]"
+                className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 z-[200]"
               >
                 <motion.div
                   initial={{ scale: 0.98, opacity: 0 }}

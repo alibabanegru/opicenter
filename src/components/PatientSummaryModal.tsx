@@ -17,7 +17,10 @@ import {
   CheckCircle2,
   Download,
   Loader2,
+  Trash2,
 } from "lucide-react";
+import { doc, deleteDoc } from "firebase/firestore";
+import { db } from "../firebase";
 import {
   MedicalRecord,
   PrescriptionHistoryItem,
@@ -44,6 +47,8 @@ interface PatientSummaryModalProps {
     an?: string;
   };
   onReleaseDateChange?: (date: { zi: string; luna: string; an: string }) => void;
+  onViewDocument?: (docRecord: any) => void;
+  onDeleteDocument?: (docId: string) => Promise<void> | void;
 }
 
 // Helper to parse any date string into a formatted RO string and numeric timestamp
@@ -123,8 +128,12 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
   roleLabels,
   initialReleaseDate,
   onReleaseDateChange,
+  onViewDocument,
+  onDeleteDocument,
 }) => {
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
+  const [docToDelete, setDocToDelete] = useState<{ id: string; docType: string; docNumber: string; rawDoc?: any } | null>(null);
+  const [isDeletingDoc, setIsDeletingDoc] = useState(false);
   const [showA4Modal, setShowA4Modal] = useState<boolean>(false);
   const [selectedEntryIndex, setSelectedEntryIndex] = useState<number>(0);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState<boolean>(false);
@@ -228,13 +237,16 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
       anteriorSegment?: { od?: string; os?: string };
       posteriorSegment?: { od?: string; os?: string };
       documents?: Array<{
+        id?: string;
         docType: string;
+        rawType?: string;
         docNumber: string;
         diagnostic?: string;
         concluzii?: string;
         treatment?: string;
         recomandari?: string;
         details?: any;
+        rawDoc?: any;
       }>;
     }> = [];
 
@@ -394,6 +406,8 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
         },
         documents: [
           {
+            id: docItem.id,
+            rawType: docItem.type,
             docType: docItem.type || "Document Medical",
             docNumber: docItem.documentNumber || docItem.docNumber || "N/A",
             diagnostic: docDiagnostic,
@@ -401,6 +415,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
             treatment: docTreatment,
             recomandari: docRecomandari,
             details: fv,
+            rawDoc: docItem,
           },
         ],
       });
@@ -444,13 +459,16 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
       const doctorName = group.find((g) => g.doctorName)?.doctorName;
 
       const docsList: Array<{
+        id?: string;
         docType: string;
+        rawType?: string;
         docNumber: string;
         diagnostic?: string;
         concluzii?: string;
         treatment?: string;
         recomandari?: string;
         details?: any;
+        rawDoc?: any;
       }> = [];
       group.forEach((g) => {
         if (g.documents) docsList.push(...g.documents);
@@ -1273,45 +1291,78 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                     {/* Documents / Reports details */}
                     {entry.documents && entry.documents.length > 0 && (
                       <div className="space-y-2 mb-3">
-                        {entry.documents.map((doc, docIdx) => (
+                                                {entry.documents.map((docItem, docIdx) => (
                           <div
                             key={docIdx}
                             className="p-3.5 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-900/50 text-xs space-y-1.5"
                           >
-                            <div className="flex items-center justify-between border-b border-indigo-200/60 dark:border-indigo-900/40 pb-1.5">
-                              <span className="font-black text-indigo-900 dark:text-indigo-200 flex items-center gap-1.5 text-xs uppercase tracking-wider">
-                                <FileCheck2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                                {doc.docType} (Nr. {doc.docNumber})
+                            <div className="flex items-center justify-between border-b border-indigo-200/60 dark:border-indigo-900/40 pb-1.5 gap-2">
+                              <span className="font-black text-indigo-900 dark:text-indigo-200 flex items-center gap-1.5 text-xs uppercase tracking-wider min-w-0 truncate">
+                                <FileCheck2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                                <span className="truncate">{docItem.docType} (Nr. {docItem.docNumber})</span>
                               </span>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {docItem.rawDoc && onViewDocument && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onViewDocument(docItem.rawDoc)}
+                                    className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] tracking-wider uppercase flex items-center gap-1 transition-all cursor-pointer shadow-sm active:scale-95"
+                                    title="Vizualizează / Editează / Printează documentul"
+                                  >
+                                    <Eye className="w-3.5 h-3.5 stroke-[2.5]" />
+                                    <span>Vizualizare</span>
+                                  </button>
+                                )}
+                                {(docItem.id || docItem.rawDoc?.id) && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const targetId = docItem.id || docItem.rawDoc?.id || "";
+                                      setDocToDelete({
+                                        id: targetId,
+                                        docType: docItem.docType,
+                                        docNumber: docItem.docNumber,
+                                        rawDoc: docItem.rawDoc,
+                                      });
+                                    }}
+                                    className="px-2 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold text-[10px] tracking-wider uppercase flex items-center gap-1 transition-all cursor-pointer border border-rose-500/20 active:scale-95"
+                                    title="Șterge documentul definitiv"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5 stroke-[2.5]" />
+                                    <span>Șterge</span>
+                                  </button>
+                                )}
+                              </div>
                             </div>
-                            {doc.diagnostic && (
+                            {docItem.diagnostic && (
                               <p className="text-slate-800 dark:text-slate-200 text-xs">
-                                <strong>Diagnostic:</strong> {doc.diagnostic}
+                                <strong>Diagnostic:</strong> {docItem.diagnostic}
                               </p>
                             )}
-                            {doc.treatment && (
+                            {docItem.treatment && (
                               <p className="text-slate-800 dark:text-slate-200 text-xs">
-                                <strong>Tratament:</strong> {doc.treatment}
+                                <strong>Tratament:</strong> {docItem.treatment}
                               </p>
                             )}
-                            {doc.recomandari && (
+                            {docItem.recomandari && (
                               <p className="text-slate-800 dark:text-slate-200 text-xs">
-                                <strong>Recomandări:</strong> {doc.recomandari}
+                                <strong>Recomandări:</strong> {docItem.recomandari}
                               </p>
                             )}
-                            {doc.concluzii && (
+                            {docItem.concluzii && (
                               <p className="text-slate-800 dark:text-slate-200 text-xs">
-                                <strong>Concluzii / Detalii:</strong> {doc.concluzii}
+                                <strong>Concluzii / Detalii:</strong> {docItem.concluzii}
                               </p>
                             )}
-                            {doc.details?.exOftalmologic && (
+                            {docItem.details?.exOftalmologic && (
                               <p className="text-slate-800 dark:text-slate-200 text-xs">
-                                <strong>Examen Oftalmologic:</strong> {doc.details.exOftalmologic}
+                                <strong>Examen Oftalmologic:</strong> {docItem.details.exOftalmologic}
                               </p>
                             )}
-                            {doc.details?.motivTrimitere && (
+                            {docItem.details?.motivTrimitere && (
                               <p className="text-slate-800 dark:text-slate-200 text-xs">
-                                <strong>Motiv trimitere / examinare:</strong> {doc.details.motivTrimitere}
+                                <strong>Motiv trimitere / examinare:</strong> {docItem.details.motivTrimitere}
                               </p>
                             )}
                           </div>
@@ -2119,6 +2170,78 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                   );
                 })}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Document Confirmation Dialog */}
+      {docToDelete && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-md p-6 rounded-3xl border shadow-2xl bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                <Trash2 className="w-6 h-6 stroke-[2.5]" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  Ștergere Definitivă Document
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                  {docToDelete.docType} (Nr. {docToDelete.docNumber})
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed bg-rose-50/50 dark:bg-rose-950/20 p-3 rounded-xl border border-rose-200/60 dark:border-rose-900/40">
+              Sunteți sigur că doriți să ștergeți acest document? Va fi eliminat definitiv din registrul medical, din istoricul pacientului și din baza de date. <strong>Doar documentul selectat va fi șters</strong>, fără a afecta fișa sau alte consultații.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingDoc}
+                onClick={() => setDocToDelete(null)}
+                className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold text-xs transition-colors cursor-pointer"
+              >
+                Anulează
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingDoc}
+                onClick={async () => {
+                  if (!docToDelete?.id) {
+                    setDocToDelete(null);
+                    return;
+                  }
+                  setIsDeletingDoc(true);
+                  try {
+                    if (onDeleteDocument) {
+                      await onDeleteDocument(docToDelete.id);
+                    } else {
+                      await deleteDoc(doc(db, "medicalDocuments", docToDelete.id));
+                    }
+                  } catch (err) {
+                    console.error("Eroare la ștergerea documentului:", err);
+                  } finally {
+                    setIsDeletingDoc(false);
+                    setDocToDelete(null);
+                  }
+                }}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs tracking-wider uppercase flex items-center gap-1.5 transition-all shadow-md shadow-rose-600/20 cursor-pointer disabled:opacity-50"
+              >
+                {isDeletingDoc ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Se șterge...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Confirmă Ștergerea</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>
