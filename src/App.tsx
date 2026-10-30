@@ -6368,10 +6368,22 @@ export default function App() {
       return false;
     });
 
+    const isSigned = record?.gdprSigned ||
+      (editingAppointment &&
+        normalizePatientName(editingAppointment.patientName) === cleanName &&
+        (editingAppointment as any).gdprSigned) ||
+      false;
+
+    const signature = record?.gdprSignature ||
+      (editingAppointment &&
+        normalizePatientName(editingAppointment.patientName) === cleanName &&
+        (editingAppointment as any).gdprSignature) ||
+      "";
+
     return {
-      signed: record?.gdprSigned || false,
-      signature: record?.gdprSignature || "",
-      cnp: record?.patientCnp || "",
+      signed: isSigned,
+      signature: signature,
+      cnp: record?.patientCnp || (editingAppointment?.patientCnp) || "",
     };
   };
 
@@ -6495,42 +6507,104 @@ export default function App() {
           });
 
       const finalBirthDate = extractedBirthDate || baseRecord.patientBirthDate || patientBirthDate || "";
+      const isSigned = !!signature;
+      const cleanName = normalizePatientName(name);
+      const cleanPhone = normalizePhone(phone);
+
+      const targetExistingRecord = medicalRecords.find((r) => {
+        if (cnpClean && r.patientCnp && r.patientCnp.trim() === cnpClean) return true;
+        const rName = normalizePatientName(r.patientName);
+        const rPhone = normalizePhone(r.patientPhone);
+        if (cleanName && rName && cleanName === rName) {
+          if (!cleanPhone || !rPhone || cleanPhone === rPhone) return true;
+        }
+        if (cleanPhone && rPhone && cleanPhone === rPhone) return true;
+        return false;
+      });
+
+      const effectiveRecordId = (
+        (isMedicalRecordModalOpen && currentMedicalRecord?.id) ||
+        targetExistingRecord?.id ||
+        recordId
+      );
 
       const updatedRecord = {
         ...baseRecord,
-        id: recordId, // Ensure ID is standardized
+        id: effectiveRecordId, // Ensure ID is standardized
         patientPhone: phone || baseRecord.patientPhone || "",
         patientCnp: cnpClean,
         patientBirthDate: finalBirthDate,
-        gdprSigned: !!signature,
-        gdprSignature: signature,
-        gdprSignedAt: signature ? new Date().toISOString() : null,
+        gdprSigned: isSigned,
+        gdprSignature: signature || "",
+        gdprSignedAt: isSigned ? new Date().toISOString() : null,
         updatedAt: new Date().toISOString(),
       };
 
       try {
-        await updateDoc(doc(db, "medicalRecords", recordId), removeUndefined({
+        await updateDoc(doc(db, "medicalRecords", effectiveRecordId), removeUndefined({
           patientPhone: phone || undefined,
           patientCnp: cnpClean || undefined,
           patientBirthDate: finalBirthDate || undefined,
-          gdprSigned: !!signature,
+          gdprSigned: isSigned,
           gdprSignature: signature || "",
-          gdprSignedAt: signature ? new Date().toISOString() : null,
+          gdprSignedAt: isSigned ? new Date().toISOString() : null,
           updatedAt: new Date().toISOString(),
         }));
       } catch (upErr: any) {
         // If document does not exist yet in Firestore, create it safely without overwriting other records
-        await setDoc(doc(db, "medicalRecords", recordId), removeUndefined(updatedRecord), { merge: true });
+        await setDoc(doc(db, "medicalRecords", effectiveRecordId), removeUndefined(updatedRecord), { merge: true });
       }
 
-      // Update medicalRecords in local state so all components immediately reflect the change
+      if (targetExistingRecord && targetExistingRecord.id !== effectiveRecordId) {
+        try {
+          await updateDoc(doc(db, "medicalRecords", targetExistingRecord.id), {
+            gdprSigned: isSigned,
+            gdprSignature: signature || "",
+            gdprSignedAt: isSigned ? new Date().toISOString() : null,
+            updatedAt: new Date().toISOString(),
+          });
+        } catch (e) {}
+      }
+
+      // Update medicalRecords in local state so all components immediately reflect the change (signed or revoked)
       setMedicalRecords((prev) => {
-        const existing = prev.find((r) => r.id === recordId);
-        if (existing) {
-          return prev.map((r) => (r.id === recordId ? { ...r, ...updatedRecord } : r));
-        }
-        return [updatedRecord as MedicalRecord, ...prev];
+        return prev.map((r) => {
+          const isTarget =
+            r.id === effectiveRecordId ||
+            (targetExistingRecord && r.id === targetExistingRecord.id) ||
+            (cleanName && normalizePatientName(r.patientName) === cleanName);
+          if (isTarget) {
+            return {
+              ...r,
+              ...updatedRecord,
+              id: r.id,
+              gdprSigned: isSigned,
+              gdprSignature: signature || "",
+              gdprSignedAt: isSigned ? new Date().toISOString() : undefined,
+            };
+          }
+          return r;
+        });
       });
+
+      // Update booking modal state immediately so the GDPR button updates right away
+      if (cnpClean) {
+        setPatientCnp(cnpClean);
+      }
+      if (finalBirthDate) {
+        setPatientBirthDate(finalBirthDate);
+      }
+      if (editingAppointment) {
+        setEditingAppointment((prev) => prev ? {
+          ...prev,
+          patientPhone: phone || prev.patientPhone || "",
+          patientCnp: cnpClean || prev.patientCnp || "",
+          patientBirthDate: finalBirthDate || prev.patientBirthDate || "",
+          gdprSigned: isSigned,
+          gdprSignature: signature || "",
+          gdprSignedAt: isSigned ? new Date().toISOString() : null,
+        } : null);
+      }
 
       if (currentMedicalRecord) {
         setCurrentMedicalRecord((prev) => prev ? {
@@ -6538,45 +6612,56 @@ export default function App() {
           patientPhone: phone || prev.patientPhone || "",
           patientCnp: cnpClean,
           patientBirthDate: finalBirthDate,
-          gdprSigned: !!signature,
-          gdprSignature: signature,
-          gdprSignedAt: signature ? new Date().toISOString() : null,
+          gdprSigned: isSigned,
+          gdprSignature: signature || "",
+          gdprSignedAt: isSigned ? new Date().toISOString() : undefined,
           updatedAt: new Date().toISOString(),
         } : null);
       }
 
-      // Sync phone, CNP, and birth date to any matching appointments for this patient
+      // Sync GDPR state and patient details to local appointments state
+      setAppointments((prev) =>
+        prev.map((app) => {
+          if (app.patientName && normalizePatientName(app.patientName) === cleanName) {
+            return {
+              ...app,
+              gdprSigned: isSigned,
+              gdprSignature: signature || "",
+              gdprSignedAt: isSigned ? new Date().toISOString() : null,
+            };
+          }
+          return app;
+        })
+      );
+
+      // Sync phone, CNP, birth date, and GDPR status to any matching appointments in Firestore
       const matchingApps = appointments.filter(
         (app) => app.patientName && app.patientName.toLowerCase().trim() === name.toLowerCase().trim()
       );
 
       for (const app of matchingApps) {
-        const needsUpdate =
-          (phone && app.patientPhone !== phone) ||
-          app.patientCnp !== cnpClean ||
-          (finalBirthDate && app.patientBirthDate !== finalBirthDate);
-
-        if (needsUpdate) {
-          try {
-            await setDoc(
-              doc(db, "appointments", app.id),
-              {
-                ...app,
-                ...(phone ? { patientPhone: phone } : {}),
-                patientCnp: cnpClean,
-                ...(finalBirthDate ? { patientBirthDate: finalBirthDate } : {}),
-                updatedAt: new Date().toISOString(),
-              },
-              { merge: true }
-            );
-          } catch (e) {
-            console.error("Error updating appointment with phone/cnp/birthDate:", e);
-          }
+        try {
+          await setDoc(
+            doc(db, "appointments", app.id),
+            {
+              ...app,
+              ...(phone ? { patientPhone: phone } : {}),
+              patientCnp: cnpClean,
+              ...(finalBirthDate ? { patientBirthDate: finalBirthDate } : {}),
+              gdprSigned: isSigned,
+              gdprSignature: signature || "",
+              gdprSignedAt: isSigned ? new Date().toISOString() : null,
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        } catch (e) {
+          console.error("Error updating appointment with gdpr status:", e);
         }
       }
 
       await logActivity(
-        "Semnare GDPR",
+        isSigned ? "Semnare GDPR" : "Revocare GDPR",
         `Pacient: ${name}, Telefon: ${phone || 'fără tel'}, CNP: ${cnpClean || 'fără CNP'}`
       );
 
@@ -9721,9 +9806,14 @@ export default function App() {
       const deletedItem = history[indexToDelete];
       history.splice(indexToDelete, 1);
 
+      // Salvează prescripția ștearsă în lista deletedPrescriptions pentru posibilitatea de Undo
+      const prevDeleted = [...(currentMedicalRecord.deletedPrescriptions || [])];
+      prevDeleted.push(deletedItem);
+
       const updatedRecord: MedicalRecord = {
         ...currentMedicalRecord,
         prescriptionHistory: history,
+        deletedPrescriptions: prevDeleted,
         updatedAt: new Date().toISOString(),
       };
 
@@ -14146,6 +14236,23 @@ export default function App() {
     return map;
   }, [appointments]);
 
+  const slotConflictMap = useMemo(() => {
+    const map = new Map<string, Appointment[]>();
+    if (!appointments || appointments.length === 0) return map;
+    appointments.forEach((app) => {
+      if (!app.startTime || !app.doctorId || app.status === "cancelled") return;
+      try {
+        const timeObj = parseISO(app.startTime);
+        if (isNaN(timeObj.getTime())) return;
+        const key = `${app.doctorId}_${format(timeObj, "yyyy-MM-dd_HH:mm")}`;
+        const list = map.get(key) || [];
+        list.push(app);
+        map.set(key, list);
+      } catch (e) {}
+    });
+    return map;
+  }, [appointments]);
+
   const getAppointmentAtSlot = useCallback(
     (doctorId: string, time: Date) => {
       if (!time || isNaN(time.getTime())) return null;
@@ -15689,6 +15796,22 @@ export default function App() {
     const valPhone = faraTelefon ? "" : patientPhone;
 
     setBookingError(null);
+
+    // Prevenire strictă a programărilor suprapuse: nu se permite salvarea a două persoane în același interval orar la același medic
+    const slotConflict = getSlotOverlappingAppointment(
+      selectedSlot.doctorId,
+      selectedSlot.time,
+      editingAppointment?.id || reschedulingAppointment?.id,
+    );
+    if (slotConflict) {
+      setBookingError(
+        `Intervalul orar ${format(selectedSlot.time, "HH:mm")} este deja ocupat de pacientul "${slotConflict.patientName}" (${slotConflict.patientPhone || "fără tel"}). Nu se pot programa două persoane la același medic în același interval orar! Vă rugăm să alegeți un alt interval orar liber.`
+      );
+      setLoading(false);
+      setIsBookingSubmitting(false);
+      return;
+    }
+
     try {
       if (reschedulingAppointment) {
         const oldId = reschedulingAppointment.id;
@@ -24657,6 +24780,31 @@ export default function App() {
                                             <span className="hidden sm:inline text-[10px]">Comenzi</span>
                                           </button>
                                         )}
+
+                                        {/* [🗑️ Șterge Definitiv] */}
+                                        {(profile?.role === "admin" ||
+                                          profile?.role === "frontdesk" ||
+                                          profile?.role?.startsWith("doctor")) && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setIsOmniboxOpen(false);
+                                              setPatientToDeleteDefinitively(syntheticApp);
+                                              setIsDeletePatientDefinitivelyModalOpen(true);
+                                            }}
+                                            className={cn(
+                                              "flex items-center gap-1 p-1.5 sm:px-2 sm:py-1 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all border shadow-xs hover:scale-102 active:scale-98 cursor-pointer",
+                                              darkMode
+                                                ? "bg-rose-950/50 border-rose-800/80 text-rose-300 hover:bg-rose-900/60"
+                                                : "bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100"
+                                            )}
+                                            title="Ștergere Definitivă Pacient (Elimină definitiv toate fișele, rețetele, programările și comenzile acestui pacient)"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                                            <span className="hidden sm:inline text-[10px]">Șterge</span>
+                                          </button>
+                                        )}
                                       </div>
                                     </div>
 
@@ -26553,6 +26701,9 @@ export default function App() {
                               role,
                               time,
                             );
+                            const slotConflictKey = `${role}_${format(time, "yyyy-MM-dd_HH:mm")}`;
+                            const allSlotAppointments = slotConflictMap.get(slotConflictKey) || [];
+                            const hasSlotOverlap = allSlotAppointments.length > 1;
 
                             const slotMeta = appointment ? slotMetadataMap.get(appointment.id) : null;
                             const patientRecordForToday = slotMeta?.patientRecordForToday || null;
@@ -26907,6 +27058,15 @@ export default function App() {
                                          }
                                          return null;
                                        })()}
+                                       {hasSlotOverlap && (
+                                         <span
+                                           className="mt-0.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/25 border border-amber-500/50 text-amber-800 dark:text-amber-200 text-[9.5px] font-extrabold w-full"
+                                           title={`Atenție: ${allSlotAppointments.length} pacienți programați simultan în acest interval: ${allSlotAppointments.map(a => a.patientName).join(", ")}. Reprogramați unul dintre ei pentru a evita aglomerația.`}
+                                         >
+                                           <AlertTriangle className="w-3 h-3 text-amber-600 dark:text-amber-400 shrink-0 animate-pulse" />
+                                           <span className="truncate">Suprapunere: {allSlotAppointments.map(a => a.patientName).join(" + ")}</span>
+                                         </span>
+                                       )}
                                      </p>
                                      {!isDoctor && appointment.patientPhone && (
                                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
@@ -27361,25 +27521,6 @@ export default function App() {
                               profile?.role === "frontdesk" ||
                               profile?.role.startsWith("doctor")) && (
                               <div className="flex items-center gap-2 relative">
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setPatientToDeleteDefinitively(app);
-                                    setIsDeletePatientDefinitivelyModalOpen(true);
-                                  }}
-                                  className={cn(
-                                    "flex items-center gap-2 px-4 py-3 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition-all border shadow-sm shrink-0",
-                                    darkMode
-                                      ? "bg-rose-500/15 hover:bg-rose-500/25 border-rose-500/20 text-rose-400 hover:border-rose-500/40"
-                                      : "bg-rose-50 hover:bg-rose-100 border-rose-200 text-rose-600 hover:text-rose-700 hover:border-rose-300",
-                                  )}
-                                  title="Ștergere Definitivă Pacient (Toate fisele, retetele, programarile, comenzile se vor sterge permanent)"
-                                >
-                                  <Trash2 className="w-5 h-5 shrink-0" />
-                                  <span>Ștergere Definitiv</span>
-                                </button>
-
                                 {/* Referate index dropdown */}
                                 <div className="relative">
                                   <button
@@ -34036,6 +34177,19 @@ export default function App() {
                                               <CalendarClock className="w-3 h-3" />
                                               Reprogramează
                                             </button>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setPatientToDeleteDefinitively(app);
+                                                setIsDeletePatientDefinitivelyModalOpen(true);
+                                              }}
+                                              className="px-2.5 py-1 text-[11px] font-black rounded-lg bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 border border-rose-200/60 dark:border-rose-900/50 transition-colors flex items-center gap-1 cursor-pointer"
+                                              title="Șterge definitiv pacientul (se consideră decedat - elimină toate programările, fișele și evidențele)"
+                                            >
+                                              <Trash2 className="w-3 h-3" />
+                                              Șterge
+                                            </button>
                                           </div>
                                         </div>
                                       );
@@ -35562,11 +35716,41 @@ export default function App() {
       <GDPRModal
         isOpen={isGdprModalOpen}
         onClose={() => setIsGdprModalOpen(false)}
-        patientName={currentMedicalRecord?.patientName || activeAppointment?.patientName || "Pacient"}
-        patientCnp={currentMedicalRecord?.patientCnp || activeAppointment?.patientCnp || ""}
-        patientPhone={currentMedicalRecord?.patientPhone || activeAppointment?.patientPhone || ""}
-        patientBirthDate={currentMedicalRecord?.patientBirthDate || activeAppointment?.patientBirthDate || ""}
-        initialSignature={currentMedicalRecord?.gdprSignature || ""}
+        patientName={
+          isMedicalRecordModalOpen
+            ? (currentMedicalRecord?.patientName || activeAppointment?.patientName || patientName || "Pacient")
+            : (patientName || editingAppointment?.patientName || currentMedicalRecord?.patientName || activeAppointment?.patientName || "Pacient")
+        }
+        patientCnp={
+          isMedicalRecordModalOpen
+            ? (currentMedicalRecord?.patientCnp || activeAppointment?.patientCnp || patientCnp || "")
+            : (patientCnp || editingAppointment?.patientCnp || currentMedicalRecord?.patientCnp || activeAppointment?.patientCnp || "")
+        }
+        patientPhone={
+          isMedicalRecordModalOpen
+            ? (currentMedicalRecord?.patientPhone || activeAppointment?.patientPhone || patientPhone || "")
+            : (patientPhone || editingAppointment?.patientPhone || currentMedicalRecord?.patientPhone || activeAppointment?.patientPhone || "")
+        }
+        patientBirthDate={
+          isMedicalRecordModalOpen
+            ? (currentMedicalRecord?.patientBirthDate || activeAppointment?.patientBirthDate || patientBirthDate || "")
+            : (patientBirthDate || editingAppointment?.patientBirthDate || currentMedicalRecord?.patientBirthDate || activeAppointment?.patientBirthDate || "")
+        }
+        initialSignature={
+          isMedicalRecordModalOpen
+            ? (currentMedicalRecord?.gdprSignature || "")
+            : (
+                currentMedicalRecord?.gdprSignature ||
+                (editingAppointment as any)?.gdprSignature ||
+                (activeAppointment as any)?.gdprSignature ||
+                getGdprStatus(
+                  patientName || editingAppointment?.patientName || "",
+                  patientPhone || editingAppointment?.patientPhone || "",
+                  patientCnp || editingAppointment?.patientCnp || ""
+                ).signature ||
+                ""
+              )
+        }
         onSave={handleSaveGdpr}
       />
 

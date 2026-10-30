@@ -273,10 +273,14 @@ export const DeleteConfirmationModals: React.FC<DeleteConfirmationModalsProps> =
                         await handleConfirmDeletePrescription(prescriptionToDeleteIndex);
                       } else if (currentMedicalRecord) {
                         const history = [...(currentMedicalRecord.prescriptionHistory || currentMedicalRecord.prescriptions || [])];
+                        const deletedItem = history[prescriptionToDeleteIndex];
                         history.splice(prescriptionToDeleteIndex, 1);
+                        const prevDeleted = [...(currentMedicalRecord.deletedPrescriptions || [])];
+                        if (deletedItem) prevDeleted.push(deletedItem);
                         setCurrentMedicalRecord({
                           ...currentMedicalRecord,
                           prescriptionHistory: history,
+                          deletedPrescriptions: prevDeleted,
                         });
                       }
                     }

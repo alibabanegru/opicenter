@@ -6,6 +6,7 @@ import { Trash2, CheckCircle2, Shield, PenTool, Monitor } from "lucide-react";
 export function WacomSignaturePad() {
   const [patientName, setPatientName] = useState<string>("");
   const [patientCnp, setPatientCnp] = useState<string>("");
+  const [patientPhone, setPatientPhone] = useState<string>("");
   const [status, setStatus] = useState<"standby" | "signing" | "success">("standby");
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -22,11 +23,13 @@ export function WacomSignaturePad() {
       if (type === "init") {
         setPatientName(data.patientName || "");
         setPatientCnp(data.patientCnp || "");
+        setPatientPhone(data.patientPhone || "");
         setStatus("signing");
       } else if (type === "reset") {
         setStatus("standby");
         setPatientName("");
         setPatientCnp("");
+        setPatientPhone("");
       }
     };
 
@@ -182,6 +185,16 @@ export function WacomSignaturePad() {
                 </span>
               </div>
             )}
+            {patientPhone && (
+              <div className="border-l border-slate-700 pl-6">
+                <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                  Telefon
+                </span>
+                <span className="font-bold text-indigo-300 font-mono text-base">
+                  {patientPhone}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </header>
@@ -191,8 +204,8 @@ export function WacomSignaturePad() {
         {/* Left Pane - Terms Text */}
         <div className="w-1/2 p-8 overflow-y-auto border-r border-slate-200 dark:border-slate-800 flex flex-col space-y-6">
           <div className="bg-white dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/30 p-6 rounded-2xl shadow-sm text-sm text-slate-700 dark:text-slate-300 space-y-4 leading-relaxed overflow-y-auto max-h-[60vh] custom-scrollbar">
-            <p className="font-medium text-base text-slate-900 dark:text-white">
-              Subsemnatul(a) <strong className="text-indigo-600 dark:text-indigo-400">{patientName}</strong>, având CNP <strong className="font-mono tracking-widest text-indigo-600 dark:text-indigo-400">{patientCnp || "_________"}</strong>, declar că am fost informat(ă) în mod clar, complet și inteligibil cu privire la prelucrarea datelor mele cu caracter personal de către cabinetul oftalmologic.
+            <p className="font-medium text-base text-slate-900 dark:text-white leading-relaxed">
+              Subsemnatul(a) <strong className="text-indigo-600 dark:text-indigo-400">{patientName}</strong>, având CNP <strong className="font-mono tracking-widest text-indigo-600 dark:text-indigo-400">{patientCnp || "_________"}</strong>{patientPhone ? <>, număr de telefon <strong className="font-mono text-indigo-600 dark:text-indigo-400">{patientPhone}</strong></> : null}, declar că am fost informat(ă) în mod clar, complet și inteligibil cu privire la prelucrarea datelor mele cu caracter personal de către cabinetul oftalmologic.
             </p>
             <p>
               Înțeleg că datele mele personale (inclusiv date de identificare, date de contact și date medicale) vor fi colectate și prelucrate în scopul furnizării serviciilor medicale, stabilirii diagnosticului, efectuării tratamentului și îndeplinirii obligațiilor legale ale cabinetului.

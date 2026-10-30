@@ -106,6 +106,7 @@ export const GDPRModal = React.memo(function GDPRModal({ isOpen, onClose, patien
   const [localCnp, setLocalCnp] = useState(patientCnp);
   const [localPhone, setLocalPhone] = useState(patientPhone || "");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isConfirmingRevoke, setIsConfirmingRevoke] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const signaturePadRef = useRef<SignaturePad | null>(null);
   const channelRef = useRef<BroadcastChannel | null>(null);
@@ -174,9 +175,12 @@ export const GDPRModal = React.memo(function GDPRModal({ isOpen, onClose, patien
   };
 
   useEffect(() => {
-    setLocalCnp(patientCnp);
-    setLocalPhone(patientPhone || "");
-  }, [patientCnp, patientPhone]);
+    if (isOpen) {
+      setLocalCnp(patientCnp || "");
+      setLocalPhone(patientPhone || "");
+      setErrorMsg(null);
+    }
+  }, [isOpen, patientCnp, patientPhone]);
 
   useEffect(() => {
     setErrorMsg(null);
@@ -199,7 +203,39 @@ export const GDPRModal = React.memo(function GDPRModal({ isOpen, onClose, patien
 
           // Pre-load initial signature if exists
           if (initialSignature) {
-            signaturePadRef.current.fromDataURL(initialSignature);
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.onload = () => {
+              if (!canvasRef.current || !signaturePadRef.current) return;
+              const canvasW = canvas.offsetWidth;
+              const canvasH = canvas.offsetHeight;
+              const imgW = img.width || 1;
+              const imgH = img.height || 1;
+
+              // Check if image is already a cropped signature (much smaller than canvas aspect or dimension)
+              // Calculate fitting dimensions centered with padding so it preserves exact original size and shape without stretching
+              let drawW = imgW;
+              let drawH = imgH;
+              const maxAllowedW = canvasW * 0.85;
+              const maxAllowedH = canvasH * 0.85;
+
+              if (drawW > maxAllowedW || drawH > maxAllowedH) {
+                const fitScale = Math.min(maxAllowedW / drawW, maxAllowedH / drawH);
+                drawW = Math.round(drawW * fitScale);
+                drawH = Math.round(drawH * fitScale);
+              }
+
+              const xOffset = Math.round((canvasW - drawW) / 2);
+              const yOffset = Math.round((canvasH - drawH) / 2);
+
+              signaturePadRef.current.fromDataURL(initialSignature, {
+                width: drawW,
+                height: drawH,
+                xOffset: xOffset,
+                yOffset: yOffset,
+              });
+            };
+            img.src = initialSignature;
           }
         }
       }, 100);
@@ -231,12 +267,7 @@ export const GDPRModal = React.memo(function GDPRModal({ isOpen, onClose, patien
     }
   };
 
-  const handleRevoke = async () => {
-    const confirmRevoke = window.confirm(
-      `Sunteți sigur că doriți să anulați (revocați) acordul GDPR semnat anterior de pacientul ${patientName}?\n\nConsimțământul GDPR va fi anulat și eliminat din baza de date.`
-    );
-    if (!confirmRevoke) return;
-
+  const executeRevoke = async () => {
     setErrorMsg(null);
     try {
       const res = await onSave(localCnp, "", localPhone);
@@ -244,6 +275,7 @@ export const GDPRModal = React.memo(function GDPRModal({ isOpen, onClose, patien
         setErrorMsg(res);
       } else {
         clearSignature();
+        setIsConfirmingRevoke(false);
         onClose();
       }
     } catch (e: any) {
@@ -261,7 +293,10 @@ export const GDPRModal = React.memo(function GDPRModal({ isOpen, onClose, patien
     doc.setFont("helvetica", "normal");
     doc.setFontSize(12);
 
-    const introText = `Subsemnatul(a) ${patientName || "_________________________"}, CNP ${localCnp || "_________________________"}, declar că am fost informat(ă) în mod clar, complet și inteligibil cu privire la prelucrarea datelor mele cu caracter personal de către cabinetul oftalmologic.`;
+    const cnpStr = localCnp ? `CNP ${localCnp}` : "CNP _________________________";
+    const birthStr = birthDateDetails ? `, data nașterii: ${birthDateDetails.formatted}` : "";
+    const phoneStr = localPhone ? `, număr de telefon: ${localPhone}` : `, număr de telefon: _________________________`;
+    const introText = `Subsemnatul(a) ${patientName || "_________________________"}, ${cnpStr}${birthStr}${phoneStr}, declar că am fost informat(ă) în mod clar, complet și inteligibil cu privire la prelucrarea datelor mele cu caracter personal de către cabinetul oftalmologic.`;
     const lines1 = doc.splitTextToSize(normalizeForPDF(introText), 170);
     doc.text(lines1, 20, 40);
 
@@ -379,11 +414,11 @@ export const GDPRModal = React.memo(function GDPRModal({ isOpen, onClose, patien
           </div>
 
           <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl text-sm text-slate-700 dark:text-slate-300 space-y-4">
-            <p>
-              <strong>Subsemnatul(a)</strong> {patientName}, 
-              {localCnp ? <> <strong>CNP</strong> {localCnp}, </> : <> <strong>CNP</strong> _____________, </>}
-              {birthDateDetails ? <> <strong>Data Nașterii</strong> ({birthDateDetails.formatted}), </> : null}
-              {localPhone ? <> <strong>Tel</strong> {localPhone}, </> : <> <strong>Tel</strong> _____________, </>}
+            <p className="leading-relaxed">
+              <strong>Subsemnatul(a)</strong> {patientName || "_________________________"}, 
+              {localCnp ? <> <strong>CNP:</strong> {localCnp}, </> : <> <strong>CNP:</strong> _____________, </>}
+              {birthDateDetails ? <> <strong>Data nașterii:</strong> {birthDateDetails.formatted}, </> : null}
+              {localPhone ? <> <strong>Număr de telefon:</strong> {localPhone}, </> : <> <strong>Număr de telefon:</strong> _____________, </>}
               declar că am fost informat(ă) în mod clar, complet și inteligibil cu privire la prelucrarea datelor mele cu caracter personal de către cabinetul oftalmologic.
             </p>
             <p>Înțeleg că datele mele personale vor fi colectate și prelucrate în scopul furnizării serviciilor medicale, stabilirii diagnosticului, efectuării tratamentului și îndeplinirii obligațiilor legale ale cabinetului.</p>
@@ -441,16 +476,36 @@ export const GDPRModal = React.memo(function GDPRModal({ isOpen, onClose, patien
               Descarcă PDF
             </button>
 
-            {!!initialSignature && (
+            {!!initialSignature && !isConfirmingRevoke && (
               <button
                 type="button"
-                onClick={handleRevoke}
-                className="px-4 py-2.5 rounded-xl font-bold bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 flex items-center justify-center gap-2 transition-all text-sm shadow-sm hover:scale-105 active:scale-95"
+                onClick={() => setIsConfirmingRevoke(true)}
+                className="px-4 py-2.5 rounded-xl font-bold bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 flex items-center justify-center gap-2 transition-all text-sm shadow-sm hover:scale-105 active:scale-95 cursor-pointer"
                 title="Anulează / revocă acordul GDPR semnat în trecut de acest pacient"
               >
                 <ShieldOff className="w-4 h-4 text-rose-500" />
                 Anulează Acord GDPR (Revocare)
               </button>
+            )}
+
+            {isConfirmingRevoke && (
+              <div className="flex flex-wrap items-center gap-2 p-2 bg-rose-500/15 border border-rose-500/40 rounded-xl text-xs font-bold text-rose-700 dark:text-rose-300 animate-fade-in">
+                <span>Revocați acordul GDPR?</span>
+                <button
+                  type="button"
+                  onClick={executeRevoke}
+                  className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-black uppercase text-[10px] tracking-wider transition-all cursor-pointer shadow-sm active:scale-95"
+                >
+                  Da, Revocă
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsConfirmingRevoke(false)}
+                  className="px-2.5 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer"
+                >
+                  Renunță
+                </button>
+              </div>
             )}
           </div>
           

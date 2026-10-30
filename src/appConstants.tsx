@@ -736,6 +736,7 @@ export interface MedicalRecord {
   glassesOrder?: GlassesOrder;
   orderHistory?: GlassesOrder[];
   prescriptionHistory?: PrescriptionHistoryItem[];
+  deletedPrescriptions?: PrescriptionHistoryItem[];
   axialLengthHistory?: { date: string; od?: string; os?: string; age?: number; note?: string }[];
   gdprSigned?: boolean;
   gdprSignature?: string; // base64

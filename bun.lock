@@ -1,5 +1,5 @@
 {
-  "lockfileVersion": 1,
+  "lockfileVersion": 3,
   "configVersion": 0,
   "workspaces": {
     "": {
@@ -12,6 +12,7 @@
         "clsx": "^2.1.1",
         "date-fns": "^4.1.0",
         "dotenv": "^17.2.3",
+        "esbuild": "^0.25.0",
         "express": "^4.21.2",
         "firebase": "^12.11.0",
         "framer-motion": "^13.1.0",
@@ -41,12 +42,17 @@
         "@types/react-dom": "^18.3.7",
         "@types/react-signature-canvas": "^1.0.7",
         "autoprefixer": "^10.4.21",
-        "esbuild": "^0.25.0",
         "tailwindcss": "^4.1.14",
         "tsx": "^4.21.0",
         "typescript": "~5.8.2",
         "vite": "^6.2.0",
       },
+    },
+  },
+  "overrides": {
+    "react-signature-canvas": {
+      "react": "^18.3.1",
+      "react-dom": "^18.3.1",
     },
   },
   "packages": {

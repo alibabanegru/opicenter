@@ -25,6 +25,7 @@ import {
   Stethoscope,
   Trash2,
   Triangle,
+  Undo2,
   User,
   X,
 } from "lucide-react";
@@ -1184,11 +1185,11 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                       </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                  <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto flex-wrap">
                     <button
                       type="button"
                       onClick={() => setDraftRestoredNotice(null)}
-                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-[10px] uppercase tracking-wider transition-all shadow-xs cursor-pointer"
+                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-[10px] uppercase tracking-wider transition-all shadow-xs cursor-pointer whitespace-nowrap"
                       title="Păstrează datele recuperate din ciornă"
                     >
                       ✓ Păstrează ciorna
@@ -1196,10 +1197,27 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                     <button
                       type="button"
                       onClick={handleDiscardDraft}
-                      className="px-3 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 active:scale-95 text-slate-800 dark:text-slate-200 font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer border border-slate-300 dark:border-slate-700"
+                      className="px-3 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 active:scale-95 text-slate-800 dark:text-slate-200 font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer border border-slate-300 dark:border-slate-700 whitespace-nowrap"
                       title="Revino la versiunea salvată pe server"
                     >
                       Încarcă de pe server
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (currentMedicalRecord) {
+                          try {
+                            const targetId = currentMedicalRecord.id || `${currentMedicalRecord.patientName}_${currentMedicalRecord.patientPhone}`.replace(/\s+/g, "_").toLowerCase();
+                            localStorage.removeItem(`opticenter_draft_mr_${targetId || "new"}`);
+                          } catch (e) {}
+                        }
+                        handleDiscardDraft();
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black text-[10px] uppercase tracking-wider transition-all shadow-sm border border-amber-400 cursor-pointer flex items-center gap-1 whitespace-nowrap"
+                      title="Șterge definitiv ciorna locală și anulează recuperarea"
+                    >
+                      <Trash2 className="w-3 h-3 text-slate-950" />
+                      <span>Șterge ciorna</span>
                     </button>
                   </div>
                 </div>
@@ -1271,11 +1289,55 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
 
                     <button
                       onClick={startNewPrescription}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-blue-900/20 whitespace-nowrap"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-blue-900/20 whitespace-nowrap cursor-pointer"
                     >
                       <Plus className="w-3 h-3" />
                       Prescripție Nouă
                     </button>
+
+                    {/* Buton Undo: apare doar dacă pacientul are cel puțin o prescripție/fișă ștearsă vreodată */}
+                    {currentMedicalRecord.deletedPrescriptions &&
+                      currentMedicalRecord.deletedPrescriptions.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!currentMedicalRecord) return;
+                            const deletedList = [...(currentMedicalRecord.deletedPrescriptions || [])];
+                            if (deletedList.length === 0) return;
+                            // Preia ultima fișă ștearsă
+                            const restoredItem = deletedList.pop();
+                            if (!restoredItem) return;
+
+                            const updatedHistory = [...(currentMedicalRecord.prescriptionHistory || [])];
+                            // Adaugă fișa restaurată în istoric
+                            updatedHistory.push(restoredItem);
+                            // Sortează cronologic după dată
+                            updatedHistory.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+                            const updatedRecord: MedicalRecord = {
+                              ...currentMedicalRecord,
+                              prescriptionHistory: updatedHistory,
+                              deletedPrescriptions: deletedList,
+                              updatedAt: new Date().toISOString(),
+                            };
+
+                            // Actualizează starea locală
+                            setCurrentMedicalRecord(updatedRecord);
+
+                            // Sincronizează în Firestore
+                            try {
+                              await setDoc(doc(db, "medicalRecords", updatedRecord.id), removeUndefined(updatedRecord));
+                            } catch (err) {
+                              console.error("Eroare la restaurarea fișei:", err);
+                            }
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[10px] uppercase tracking-widest rounded-xl transition-all shadow-md shadow-amber-900/20 border border-amber-400 whitespace-nowrap cursor-pointer active:scale-95"
+                          title={`Restaurează ultima prescripție ștearsă din greșeală (${currentMedicalRecord.deletedPrescriptions.length} în coș)`}
+                        >
+                          <Undo2 className="w-3.5 h-3.5 stroke-[2.5]" />
+                          <span>Undo ({currentMedicalRecord.deletedPrescriptions.length})</span>
+                        </button>
+                      )}
 
                     {profile?.role !== "tv" && profile?.uid !== "tv" && (
                       <button
