@@ -5763,6 +5763,14 @@ export default function App() {
       });
 
       for (const [role, newName] of Object.entries(newLabels)) {
+        if (
+          role === "frontdesk" ||
+          role === "seller" ||
+          role === "patient" ||
+          role === "tv"
+        ) {
+          continue;
+        }
         const userToUpdate = availableUsers.find((u) => u.role === role);
         if (userToUpdate && userToUpdate.name !== newName) {
           await setDoc(
@@ -8602,7 +8610,7 @@ export default function App() {
       const isValidPassword =
         (correctPassword && password === correctPassword) ||
         (builtinPass && password === builtinPass) ||
-        (isAdminAccount && (password === "123612" || password === "123"));
+        (isAdminAccount && password === "popescu123");
 
       if (isValidPassword) {
         if (user.pass !== password) {
@@ -11116,7 +11124,10 @@ export default function App() {
       odDistCylNum !== 0 &&
       !currentMedicalRecord.od?.axis
     ) {
-      setErrorMessage("Atenție: Ochiul drept (Distanță) are cilindru fără ax completat.");
+      const msg = "Atenție: Ochiul drept (Distanță) are cilindru fără ax completat. Completați axul pentru a putea salva fișa.";
+      setBookingError(msg);
+      setErrorMessage(msg);
+      return false;
     }
 
     const osDistCylNum =
@@ -11127,7 +11138,10 @@ export default function App() {
       osDistCylNum !== 0 &&
       !currentMedicalRecord.os?.axis
     ) {
-      setErrorMessage("Atenție: Ochiul stâng (Distanță) are cilindru fără ax completat.");
+      const msg = "Atenție: Ochiul stâng (Distanță) are cilindru fără ax completat. Completați axul pentru a putea salva fișa.";
+      setBookingError(msg);
+      setErrorMessage(msg);
+      return false;
     }
 
     if (currentMedicalRecord.od?.add) {
@@ -11142,7 +11156,10 @@ export default function App() {
           : currentMedicalRecord.od?.axis || "";
 
       if (nearCylNumOD !== 0 && !nearAxisOD) {
-        setErrorMessage("Atenție: Ochiul drept (Aproape) are cilindru fără ax completat.");
+        const msg = "Atenție: Ochiul drept (Aproape) are cilindru fără ax completat. Completați axul pentru a putea salva fișa.";
+        setBookingError(msg);
+        setErrorMessage(msg);
+        return false;
       }
     }
 
@@ -11158,7 +11175,38 @@ export default function App() {
           : currentMedicalRecord.os?.axis || "";
 
       if (nearCylNumOS !== 0 && !nearAxisOS) {
-        setErrorMessage("Atenție: Ochiul stâng (Aproape) are cilindru fără ax completat.");
+        const msg = "Atenție: Ochiul stâng (Aproape) are cilindru fără ax completat. Completați axul pentru a putea salva fișa.";
+        setBookingError(msg);
+        setErrorMessage(msg);
+        return false;
+      }
+    }
+
+    if (isInterEnabledForSave) {
+      const interOdCylNum =
+        parseFloat(String(currentMedicalRecord.od?.intermediate_cyl || "").replace(",", ".")) || 0;
+      if (
+        currentMedicalRecord.od?.intermediate_cyl &&
+        interOdCylNum !== 0 &&
+        !currentMedicalRecord.od?.intermediate_axis
+      ) {
+        const msg = "Atenție: Ochiul drept (Intermediar) are cilindru fără ax completat. Completați axul pentru a putea salva fișa.";
+        setBookingError(msg);
+        setErrorMessage(msg);
+        return false;
+      }
+
+      const interOsCylNum =
+        parseFloat(String(currentMedicalRecord.os?.intermediate_cyl || "").replace(",", ".")) || 0;
+      if (
+        currentMedicalRecord.os?.intermediate_cyl &&
+        interOsCylNum !== 0 &&
+        !currentMedicalRecord.os?.intermediate_axis
+      ) {
+        const msg = "Atenție: Ochiul stâng (Intermediar) are cilindru fără ax completat. Completați axul pentru a putea salva fișa.";
+        setBookingError(msg);
+        setErrorMessage(msg);
+        return false;
       }
     }
 
@@ -26439,19 +26487,19 @@ export default function App() {
 
                     <div
                       className={cn(
-                        "w-20 h-20 flex flex-col items-center justify-center mx-auto rounded-2xl border transition-all",
-                        workingDoctors.length > 1 ? "mb-0.5" : "mb-2",
+                        "inline-flex items-baseline justify-center gap-1.5 px-3.5 py-1 mx-auto rounded-xl border transition-all shadow-2xs",
+                        workingDoctors.length > 1 ? "mb-1" : "mb-1.5",
                         isToday
                           ? "bg-blue-600 border-blue-400 text-white shadow-md shadow-blue-900/30"
                           : darkMode
                             ? "bg-slate-900 border-slate-700 text-slate-300"
-                            : "bg-white border-slate-200 text-slate-600",
+                            : "bg-white border-slate-200 text-slate-700",
                       )}
                     >
-                      <span className="text-3xl font-black leading-none">
+                      <span className="text-2xl font-black leading-none">
                         {format(day, "d", { locale: ro })}
                       </span>
-                      <span className="text-[13px] font-bold uppercase mt-0.5 opacity-80">
+                      <span className="text-[13px] font-bold uppercase tracking-wider opacity-90">
                         {format(day, "MMM", { locale: ro })}
                       </span>
                     </div>
@@ -26460,7 +26508,7 @@ export default function App() {
                     {workingDoctors.length > 0 && (
                       <div
                         className={cn(
-                          "flex flex-col items-center mt-2 w-full px-1.5",
+                          "flex flex-col items-center mt-1 w-full px-1.5",
                           workingDoctors.length > 1
                             ? "mb-0 gap-1.5"
                             : "mb-1 gap-1",
@@ -26496,23 +26544,23 @@ export default function App() {
                                 isTv && "bg-slate-50/70 dark:bg-slate-950/40 py-1.5 px-2 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm"
                               )}
                             >
-                              <div className="flex flex-row items-center justify-center gap-1.5 flex-nowrap w-full">
+                              <div className="flex flex-col items-center justify-center gap-1 w-full">
                                 <span
                                   className={cn(
-                                    "font-black uppercase tracking-tighter leading-none transition-all text-center shrink-0",
+                                    "font-black uppercase tracking-tight leading-tight transition-all text-center shrink-0",
                                     isTv
-                                      ? "text-[11px] font-black tracking-tight"
+                                      ? "text-[16px] font-black tracking-tight"
                                       : workingDoctors.length > 1
-                                        ? "text-[11px] py-px"
-                                        : "text-[12px]",
+                                        ? "text-[16px]"
+                                        : "text-[18px]",
                                     ROLE_TEXT_COLORS[role],
                                   )}
                                 >
-                                  {isTv ? docLabel : getRoleLabel(role).split(" ")[1]}
+                                  {isTv ? docLabel : (workingDoctors.length > 1 ? getRoleLabel(role).split(" ")[1] : docLabel)}
                                 </span>
 
-                                {/* Badges C, R, G pătrate, 1.3x font, pe un singur rând cu numele medicului */}
-                                <div className="flex items-center gap-1 flex-nowrap shrink-0">
+                                {/* Badges C, R, G pătrate, sub numele medicului */}
+                                <div className="flex items-center justify-center gap-1 flex-nowrap shrink-0">
                                   {/* C - Consult complet (Albastru) */}
                                   <div
                                     className={cn(
@@ -34472,8 +34520,8 @@ export default function App() {
                       }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
-                          const adminPass = USERS_DATA["admin"]?.pass || "123612";
-                          if (backupAuthPassword === adminPass || backupAuthPassword === "123612" || backupAuthPassword === "123") {
+                          const adminPass = USERS_DATA["admin"]?.pass || "popescu123";
+                          if (backupAuthPassword === adminPass || backupAuthPassword === "popescu123") {
                             setIsBackupUnlocked(true);
                             setBackupAuthError("");
                           } else {
@@ -34496,8 +34544,8 @@ export default function App() {
 
                     <button
                       onClick={() => {
-                        const adminPass = USERS_DATA["admin"]?.pass || "123612";
-                        if (backupAuthPassword === adminPass || backupAuthPassword === "123612" || backupAuthPassword === "123") {
+                        const adminPass = USERS_DATA["admin"]?.pass || "popescu123";
+                        if (backupAuthPassword === adminPass || backupAuthPassword === "popescu123") {
                           setIsBackupUnlocked(true);
                           setBackupAuthError("");
                         } else {

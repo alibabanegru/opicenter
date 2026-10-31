@@ -8449,6 +8449,9 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
 
                       // 1. Salvează fișa și sincronizează instantaneu cu baza de date
                       const success = await saveMedicalRecord(true);
+                      if (!success) {
+                        return;
+                      }
 
                       // 2. Trimite comanda de printare a prescripției/fișei
                       try {
@@ -8457,9 +8460,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                         console.error("Print prescription error:", pErr);
                       }
 
-                      if (success) {
-                        setSuccessMessage("Fișa a fost salvată, trimisă la tipărire și închisă cu succes!");
-                      }
+                      setSuccessMessage("Fișa a fost salvată, trimisă la tipărire și închisă cu succes!");
                     }}
                     disabled={loading}
                     className="flex-1 px-6 py-4 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold rounded-xl transition-all shadow-lg shadow-emerald-900/20 disabled:opacity-50 flex items-center justify-center gap-2 text-center cursor-pointer"
