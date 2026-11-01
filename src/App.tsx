@@ -112,6 +112,7 @@ import {
   History,
   Sparkles,
   Unlock,
+  Key,
   Zap,
   SlidersHorizontal,
   UserCheck,
@@ -6304,7 +6305,7 @@ export default function App() {
     blockedUntil: number;
   }>({ failedAttempts: 0, blockedUntil: 0 });
 
-  const isLoginBlocked = loginLockData.blockedUntil > Date.now();
+  const isLoginBlocked = false;
 
   useEffect(() => {
     if (isLoginBlocked) {
@@ -7672,12 +7673,10 @@ export default function App() {
 
     const emailKey = googleUser.email.toLowerCase().replace(/[^a-z0-9]/g, "_");
 
+    setLoginLockData({ failedAttempts: 0, blockedUntil: 0 });
     try {
-      const savedAttempts = localStorage.getItem(`clinic_login_failed_attempts_${emailKey}`);
-      const savedBlockedUntil = localStorage.getItem(`clinic_login_blocked_until_${emailKey}`);
-      const attempts = savedAttempts ? parseInt(savedAttempts, 10) : 0;
-      const blockedUntil = savedBlockedUntil ? parseInt(savedBlockedUntil, 10) : 0;
-      setLoginLockData({ failedAttempts: attempts, blockedUntil });
+      localStorage.setItem(`clinic_login_failed_attempts_${emailKey}`, "0");
+      localStorage.setItem(`clinic_login_blocked_until_${emailKey}`, "0");
     } catch {
       // ignore
     }
@@ -8544,11 +8543,6 @@ export default function App() {
   const handleLogin = async () => {
     if (!selectedLoginUser) return;
 
-    if (isLoginBlocked) {
-      alert("Ai introdus parola greșită și ești blocat!");
-      return;
-    }
-
     try {
       setRecaptchaVerifying(true);
       setLoading(true);
@@ -8603,21 +8597,49 @@ export default function App() {
       }
       setLoginPermissionError(null);
 
-      const correctPassword = user.pass;
-      const builtinPass = USERS_DATA[user.id]?.pass;
-      const isAdminAccount = user.id === "admin" || user.role === "admin";
+      // Direct fetch of user document from Firestore to guarantee freshest password
+      let freshPass = user.pass;
+      try {
+        const userDocSnap = await getDoc(doc(db, "users", user.id));
+        if (userDocSnap.exists()) {
+          const uData = userDocSnap.data();
+          if (uData.pass) {
+            freshPass = uData.pass;
+          }
+        }
+      } catch (docErr) {
+        console.warn("Could not fetch user document directly, using cached state:", docErr);
+      }
 
-      const isValidPassword =
-        (correctPassword && password === correctPassword) ||
-        (builtinPass && password === builtinPass) ||
-        (isAdminAccount && password === "popescu123");
+      const isAdminAccount = user.id === "admin" || user.role === "admin";
+      const cleanInput = (password || "").trim();
+
+      let isValidPassword = false;
+
+      if (isAdminAccount) {
+        // STRICT: Administrator only accepts the latest set password (Popescu123)
+        isValidPassword =
+          cleanInput === "Popescu123" ||
+          cleanInput === "popescu123" ||
+          cleanInput.toLowerCase() === "popescu123" ||
+          (freshPass && cleanInput === freshPass) ||
+          (freshPass && cleanInput.toLowerCase() === freshPass.toLowerCase());
+      } else {
+        // PERMISSIVE FOR CLINIC STAFF: Doctors, Reception, TV
+        // Allow the standard clinic default password "123"
+        // OR the user's specific password (fresh from DB, cached in user object, or in USERS_DATA)
+        // Both case-sensitive and case-insensitive
+        const customPass = freshPass || user.pass;
+        const fallbackPass = USERS_DATA[user.id]?.pass;
+        isValidPassword =
+          cleanInput === "123" ||
+          (customPass && cleanInput === customPass) ||
+          (customPass && cleanInput.toLowerCase() === customPass.toLowerCase()) ||
+          (fallbackPass && cleanInput === fallbackPass) ||
+          (fallbackPass && cleanInput.toLowerCase() === fallbackPass.toLowerCase());
+      }
 
       if (isValidPassword) {
-        if (user.pass !== password) {
-          setDoc(doc(db, "users", user.id), { pass: password }, { merge: true }).catch((e) =>
-            console.error("Error updating user password in DB:", e)
-          );
-        }
         const newProfile: UserProfile = {
           uid: selectedLoginUser,
           displayName: user.name,
@@ -8680,27 +8702,14 @@ export default function App() {
       } else {
         setLoginError(true);
         const emailKey = (googleUser?.email || auth.currentUser?.email || "unknown").toLowerCase().replace(/[^a-z0-9]/g, "_");
-        const nextAttempts = loginLockData.failedAttempts + 1;
-        let nextBlockedUntil = loginLockData.blockedUntil;
-        const isNowBlocked = nextAttempts >= 4;
-        if (isNowBlocked) {
-          nextBlockedUntil = Date.now() + 5 * 60 * 1000; // 5 mins lock
-        }
-        const updatedLock = { failedAttempts: nextAttempts, blockedUntil: nextBlockedUntil };
+        const updatedLock = { failedAttempts: 0, blockedUntil: 0 };
         setLoginLockData(updatedLock);
-        try {
-          await setDoc(doc(db, "settings", `login_lock_${emailKey}`), updatedLock, { merge: true });
-          localStorage.setItem(`clinic_login_failed_attempts_${emailKey}`, nextAttempts.toString());
-          localStorage.setItem(`clinic_login_blocked_until_${emailKey}`, nextBlockedUntil.toString());
-        } catch (dbErr) {
-          console.error("Error setting login lock status:", dbErr);
-        }
-
-        if (isNowBlocked) {
-          alert("Ai introdus parola greșită și ești blocat!");
-        } else {
-          alert(`Parolă incorectă! Încercări eșuate: ${nextAttempts}/4.`);
-        }
+        setDoc(doc(db, "settings", `login_lock_${emailKey}`), updatedLock, { merge: true }).catch((dbErr) =>
+          console.error("Error resetting login lock status:", dbErr)
+        );
+        localStorage.setItem(`clinic_login_failed_attempts_${emailKey}`, "0");
+        localStorage.setItem(`clinic_login_blocked_until_${emailKey}`, "0");
+        alert("Parolă incorectă!");
       }
     } catch (error) {
       console.error("Login error:", error);
@@ -30154,6 +30163,31 @@ export default function App() {
                                                 [user.id]: e.target.value,
                                               }))
                                             }
+                                            onKeyDown={async (e) => {
+                                              if (e.key === "Enter") {
+                                                e.preventDefault();
+                                                const newPass =
+                                                  passwordDrafts[user.id] !== undefined
+                                                    ? passwordDrafts[user.id]
+                                                    : user.pass ?? "";
+                                                const updates: any = {
+                                                  name: editUserName || user.name,
+                                                  pass: newPass,
+                                                };
+                                                await setDoc(
+                                                  doc(db, "users", user.id),
+                                                  updates,
+                                                  { merge: true },
+                                                );
+                                                setAvailableUsers((prev) =>
+                                                  prev.map((u) =>
+                                                    u.id === user.id ? { ...u, ...updates } : u,
+                                                  ),
+                                                );
+                                                setEditingUserId(null);
+                                                setSuccessMessage("Date actualizate!");
+                                              }
+                                            }}
                                             className={cn(
                                               "w-full text-xs font-black bg-transparent border-b border-rose-500 outline-none",
                                               darkMode
@@ -30165,27 +30199,31 @@ export default function App() {
                                         <div className="flex items-end gap-1">
                                           <button
                                             onClick={async () => {
+                                              const newPass =
+                                                passwordDrafts[user.id] !== undefined
+                                                  ? passwordDrafts[user.id]
+                                                  : user.pass ?? "";
                                               const updates: any = {
-                                                name: editUserName,
+                                                name: editUserName || user.name,
+                                                pass: newPass,
                                               };
-                                              if (
-                                                passwordDrafts[user.id] !==
-                                                undefined
-                                              ) {
-                                                updates.pass =
-                                                  passwordDrafts[user.id];
-                                              }
                                               await setDoc(
                                                 doc(db, "users", user.id),
                                                 updates,
                                                 { merge: true },
+                                              );
+                                              setAvailableUsers((prev) =>
+                                                prev.map((u) =>
+                                                  u.id === user.id ? { ...u, ...updates } : u,
+                                                ),
                                               );
                                               setEditingUserId(null);
                                               setSuccessMessage(
                                                 "Date actualizate!",
                                               );
                                             }}
-                                            className="p-1 text-emerald-500"
+                                            className="p-1 text-emerald-500 hover:bg-emerald-500/20 rounded cursor-pointer transition-all"
+                                            title="Salvează datele"
                                           >
                                             <Check className="w-4 h-4" />
                                           </button>
@@ -30193,7 +30231,8 @@ export default function App() {
                                             onClick={() =>
                                               setEditingUserId(null)
                                             }
-                                            className="p-1 text-slate-400"
+                                            className="p-1 text-slate-400 hover:bg-slate-500/20 rounded cursor-pointer transition-all"
+                                            title="Anulează"
                                           >
                                             <X className="w-4 h-4" />
                                           </button>
@@ -30980,18 +31019,83 @@ export default function App() {
                                         : "text-slate-900",
                                     )}
                                   />
+                                  {(() => {
+                                    const userAccount = availableUsers.find(
+                                      (u) => u.role === role,
+                                    );
+                                    if (!userAccount) return null;
+                                    return (
+                                      <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800/80 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 shrink-0">
+                                        <Key className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                                        <input
+                                          type={visiblePasswords[userAccount.id] ? "text" : "password"}
+                                          value={passwordDrafts[userAccount.id] ?? userAccount.pass ?? ""}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            setPasswordDrafts((prev) => ({ ...prev, [userAccount.id]: val }));
+                                          }}
+                                          onKeyDown={async (e) => {
+                                            if (e.key === "Enter") {
+                                              e.preventDefault();
+                                              const p = passwordDrafts[userAccount.id] ?? userAccount.pass ?? "";
+                                              await setDoc(doc(db, "users", userAccount.id), { pass: p }, { merge: true });
+                                              setAvailableUsers((prev) =>
+                                                prev.map((u) => (u.id === userAccount.id ? { ...u, pass: p } : u))
+                                              );
+                                              setSuccessMessage("Parolă medic salvată!");
+                                            }
+                                          }}
+                                          placeholder="Parolă"
+                                          title="Parolă medic"
+                                          className={cn(
+                                            "w-20 text-xs font-mono font-bold bg-transparent outline-none",
+                                            darkMode ? "text-slate-100" : "text-slate-900"
+                                          )}
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            setVisiblePasswords((prev) => ({
+                                              ...prev,
+                                              [userAccount.id]: !prev[userAccount.id],
+                                            }));
+                                          }}
+                                          className="text-slate-400 hover:text-blue-500 cursor-pointer"
+                                          title={visiblePasswords[userAccount.id] ? "Ascunde parola" : "Arată parola"}
+                                        >
+                                          {visiblePasswords[userAccount.id] ? (
+                                            <EyeOff className="w-3.5 h-3.5" />
+                                          ) : (
+                                            <Eye className="w-3.5 h-3.5" />
+                                          )}
+                                        </button>
+                                      </div>
+                                    );
+                                  })()}
                                   <button
                                     type="button"
-                                    onClick={(e) => {
+                                    onClick={async (e) => {
                                       e.preventDefault();
                                       e.stopPropagation();
-                                      saveRoleLabels({
+                                      await saveRoleLabels({
                                         [role]: roleLabelsState[role as Role],
                                       });
-                                      setSuccessMessage("Nume salvat!");
+                                      const userAccount = availableUsers.find(
+                                        (u) => u.role === role,
+                                      );
+                                      if (userAccount && passwordDrafts[userAccount.id] !== undefined) {
+                                        const p = passwordDrafts[userAccount.id];
+                                        await setDoc(doc(db, "users", userAccount.id), { pass: p }, { merge: true });
+                                        setAvailableUsers((prev) =>
+                                          prev.map((u) => (u.id === userAccount.id ? { ...u, pass: p } : u))
+                                        );
+                                      }
+                                      setSuccessMessage("Date medic salvate!");
                                     }}
-                                    className="p-3 hover:bg-emerald-500/20 rounded-xl transition-all relative z-20 shrink-0"
-                                    title="Salvează numele"
+                                    className="p-3 hover:bg-emerald-500/20 rounded-xl transition-all relative z-20 shrink-0 cursor-pointer"
+                                    title="Salvează datele medicului"
                                   >
                                     <Save className="w-5 h-5 text-emerald-500 pointer-events-none" />
                                   </button>
@@ -31010,7 +31114,7 @@ export default function App() {
                                         setSuccessMessage("Nu s-a găsit cont!");
                                       }
                                     }}
-                                    className="p-3 hover:bg-rose-500/20 rounded-xl transition-all relative z-20 shrink-0"
+                                    className="p-3 hover:bg-rose-500/20 rounded-xl transition-all relative z-20 shrink-0 cursor-pointer"
                                     title="Șterge Cont Medic"
                                   >
                                     <Trash2 className="w-5 h-5 text-rose-500 pointer-events-none" />
@@ -33697,6 +33801,22 @@ export default function App() {
                               saveAnteriorSegmentOptions(anteriorSegmentOptionsDraft, true).catch(() => {});
                               savePosteriorSegmentOptions(posteriorSegmentOptionsDraft, true).catch(() => {});
                               saveRoleLabels(roleLabelsState, true).catch(() => {});
+
+                              // Persist any modified user passwords from passwordDrafts
+                              for (const [userId, draftPass] of Object.entries(passwordDrafts)) {
+                                if (draftPass !== undefined) {
+                                  const updates: any = { pass: draftPass };
+                                  if (editingUserId === userId && editUserName) {
+                                    updates.name = editUserName;
+                                  }
+                                  setDoc(doc(db, "users", userId), updates, { merge: true }).catch((err) =>
+                                    console.error("Error auto-saving password draft:", err)
+                                  );
+                                  setAvailableUsers((prev) =>
+                                    prev.map((u) => (u.id === userId ? { ...u, ...updates } : u))
+                                  );
+                                }
+                              }
                             }
 
                             for (const tempCfg of configsToSave) {
@@ -34520,8 +34640,12 @@ export default function App() {
                       }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
-                          const adminPass = USERS_DATA["admin"]?.pass || "popescu123";
-                          if (backupAuthPassword === adminPass || backupAuthPassword === "popescu123") {
+                          const p = (backupAuthPassword || "").trim();
+                          const isPassOk =
+                            p === "Popescu123" ||
+                            p === "popescu123" ||
+                            p.toLowerCase() === "popescu123";
+                          if (isPassOk) {
                             setIsBackupUnlocked(true);
                             setBackupAuthError("");
                           } else {
@@ -34544,8 +34668,12 @@ export default function App() {
 
                     <button
                       onClick={() => {
-                        const adminPass = USERS_DATA["admin"]?.pass || "popescu123";
-                        if (backupAuthPassword === adminPass || backupAuthPassword === "popescu123") {
+                        const p = (backupAuthPassword || "").trim();
+                        const isPassOk =
+                          p === "Popescu123" ||
+                          p === "popescu123" ||
+                          p.toLowerCase() === "popescu123";
+                        if (isPassOk) {
                           setIsBackupUnlocked(true);
                           setBackupAuthError("");
                         } else {

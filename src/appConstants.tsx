@@ -1796,7 +1796,7 @@ export const BOYS_RISK: Record<string, string> = {
 };
 
 export const USERS_DATA: Record<string, { name: string; role: Role; pass: string }> = {
-  admin: { name: "Administrator Sistem", role: "admin", pass: "popescu123" },
+  admin: { name: "Administrator Sistem", role: "admin", pass: "Popescu123" },
   turcanu: { name: "Dr. Turcanu Irina", role: "doctor1", pass: "123" },
   zorila: { name: "Dr. Zorila Cristina", role: "doctor2", pass: "123" },
   ilie: { name: "Dr. Ilie Larisa", role: "doctor3", pass: "123" },
