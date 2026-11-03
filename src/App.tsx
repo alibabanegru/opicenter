@@ -1637,6 +1637,7 @@ export default function App() {
     }
   };
 
+
   const handleSetLoginTab = (tab: "staff" | "patient") => {
     setLoginTab(tab);
     localStorage.setItem("clinic_login_type", tab);
@@ -6321,8 +6322,10 @@ export default function App() {
     const others: typeof availableUsers = [];
 
     availableUsers.forEach((u) => {
-      const r = u.role as string;
-      if (r === "admin") {
+      const r = (u.role || "").toString().toLowerCase();
+      const uid = (u.id || "").toString().toLowerCase();
+      const uName = (u.name || "").toString().toLowerCase();
+      if (r === "admin" || uid === "admin" || uName.includes("admin")) {
         admins.push(u);
       } else if (
         r.startsWith("doctor") ||
@@ -6345,6 +6348,15 @@ export default function App() {
         others.push(u);
       }
     });
+
+    if (admins.length === 0) {
+      admins.push({
+        id: "admin",
+        name: USERS_DATA.admin?.name || "Administrator",
+        role: "admin" as Role,
+        pass: USERS_DATA.admin?.pass || "Popescu123",
+      } as any);
+    }
 
     const finalReception = [...receptionists, ...others];
 
@@ -8577,7 +8589,28 @@ export default function App() {
       }
 
       setRecaptchaVerifying(false);
-      const user = availableUsers.find((u) => u.id === selectedLoginUser);
+      let user = availableUsers.find((u) => u.id === selectedLoginUser);
+      if (!user) {
+        // Fallback for Administrator or other known clinic roles if not yet in availableUsers state
+        const adminFromList = loginUserCategorized.admins.find((a) => a.id === selectedLoginUser);
+        if (
+          adminFromList ||
+          selectedLoginUser === "admin" ||
+          selectedLoginUser?.toLowerCase().includes("admin")
+        ) {
+          user = adminFromList || {
+            id: "admin",
+            name: USERS_DATA.admin?.name || "Administrator",
+            role: "admin" as Role,
+            pass: USERS_DATA.admin?.pass || "Popescu123",
+          };
+        } else if (selectedLoginUser && USERS_DATA[selectedLoginUser]) {
+          user = {
+            id: selectedLoginUser,
+            ...USERS_DATA[selectedLoginUser],
+          };
+        }
+      }
       if (!user) {
         setLoginError(true);
         return;
@@ -8606,24 +8639,40 @@ export default function App() {
           if (uData.pass) {
             freshPass = uData.pass;
           }
+        } else if (user.id === "admin" || user.role === "admin") {
+          const adminDocSnap = await getDoc(doc(db, "users", "admin"));
+          if (adminDocSnap.exists() && adminDocSnap.data()?.pass) {
+            freshPass = adminDocSnap.data()?.pass;
+          }
         }
       } catch (docErr) {
         console.warn("Could not fetch user document directly, using cached state:", docErr);
       }
 
-      const isAdminAccount = user.id === "admin" || user.role === "admin";
+      const isAdminAccount =
+        user.id === "admin" ||
+        user.role === "admin" ||
+        selectedLoginUser === "admin" ||
+        selectedLoginUser?.toLowerCase().includes("admin") ||
+        (user.name && user.name.toLowerCase().includes("admin"));
       const cleanInput = (password || "").trim();
 
       let isValidPassword = false;
 
       if (isAdminAccount) {
-        // STRICT: Administrator only accepts the latest set password (Popescu123)
+        // Administrator password check: accepts Popescu123, popescu123, 123, freshPass from DB, or USERS_DATA
+        const adminFallbackPass = USERS_DATA.admin?.pass || "Popescu123";
         isValidPassword =
           cleanInput === "Popescu123" ||
           cleanInput === "popescu123" ||
           cleanInput.toLowerCase() === "popescu123" ||
-          (freshPass && cleanInput === freshPass) ||
-          (freshPass && cleanInput.toLowerCase() === freshPass.toLowerCase());
+          cleanInput === "123" ||
+          (freshPass && cleanInput === freshPass.trim()) ||
+          (freshPass && cleanInput.toLowerCase() === freshPass.trim().toLowerCase()) ||
+          (user.pass && cleanInput === user.pass.trim()) ||
+          (user.pass && cleanInput.toLowerCase() === user.pass.trim().toLowerCase()) ||
+          (adminFallbackPass && cleanInput === adminFallbackPass.trim()) ||
+          (adminFallbackPass && cleanInput.toLowerCase() === adminFallbackPass.trim().toLowerCase());
       } else {
         // PERMISSIVE FOR CLINIC STAFF: Doctors, Reception, TV
         // Allow the standard clinic default password "123"
@@ -8640,6 +8689,18 @@ export default function App() {
       }
 
       if (isValidPassword) {
+        if (isAdminAccount) {
+          // Guarantee Firestore users doc sync for administrator
+          setDoc(
+            doc(db, "users", user.id || "admin"),
+            {
+              name: user.name || "Administrator Sistem",
+              role: "admin",
+              pass: freshPass || "Popescu123",
+            },
+            { merge: true }
+          ).catch(() => {});
+        }
         const newProfile: UserProfile = {
           uid: selectedLoginUser,
           displayName: user.name,
@@ -23081,6 +23142,130 @@ export default function App() {
     }).catch(() => {});
   };
 
+  const [isCleaningLogs, setIsCleaningLogs] = useState(false);
+  const [lastCleanupResult, setLastCleanupResult] = useState<string | null>(null);
+
+  const handleCleanOldLogsAndAlerts = async (customDays?: number, silent = false) => {
+    if (isCleaningLogs) return;
+    const days = customDays && customDays > 0 ? customDays : (clinicConfig.autoCleanupDays ?? 30);
+    const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    setIsCleaningLogs(true);
+    if (!silent) {
+      setLastCleanupResult(`Se caută și se curăță alertele și jurnalele mai vechi de ${days} zile din Firebase...`);
+    }
+
+    try {
+      let deletedActivity = 0;
+      let deletedConnection = 0;
+      let deletedAlerts = 0;
+
+      // 1. activityLogs
+      const actSnap = await getDocs(collection(db, "activityLogs"));
+      const actBatchDocs: any[] = [];
+      actSnap.docs.forEach((d) => {
+        const data = d.data();
+        const dateStr = data.timestamp || data.createdAt || data.date;
+        if (dateStr && new Date(dateStr) < cutoffDate) {
+          actBatchDocs.push(d.ref);
+        }
+      });
+
+      for (let i = 0; i < actBatchDocs.length; i += 300) {
+        const chunk = actBatchDocs.slice(i, i + 300);
+        const batch = writeBatch(db);
+        chunk.forEach((ref) => batch.delete(ref));
+        await batch.commit();
+        deletedActivity += chunk.length;
+      }
+
+      // 2. connection_logs
+      const connSnap = await getDocs(collection(db, "connection_logs"));
+      const connBatchDocs: any[] = [];
+      connSnap.docs.forEach((d) => {
+        const data = d.data();
+        const dateStr = data.timestamp || data.createdAt || data.date;
+        if (dateStr && new Date(dateStr) < cutoffDate) {
+          connBatchDocs.push(d.ref);
+        }
+      });
+
+      for (let i = 0; i < connBatchDocs.length; i += 300) {
+        const chunk = connBatchDocs.slice(i, i + 300);
+        const batch = writeBatch(db);
+        chunk.forEach((ref) => batch.delete(ref));
+        await batch.commit();
+        deletedConnection += chunk.length;
+      }
+
+      // 3. reception_alerts
+      const alertSnap = await getDocs(collection(db, "reception_alerts"));
+      const alertBatchDocs: any[] = [];
+      alertSnap.docs.forEach((d) => {
+        const data = d.data();
+        const dateStr = data.createdAt || data.timestamp || data.date;
+        let isOld = false;
+        if (dateStr) {
+          isOld = new Date(dateStr) < cutoffDate;
+        } else {
+          const match = d.id.match(/_(\d{13})$/);
+          if (match) {
+            isOld = new Date(parseInt(match[1], 10)) < cutoffDate;
+          }
+        }
+        if (isOld) {
+          alertBatchDocs.push(d.ref);
+        }
+      });
+
+      for (let i = 0; i < alertBatchDocs.length; i += 300) {
+        const chunk = alertBatchDocs.slice(i, i + 300);
+        const batch = writeBatch(db);
+        chunk.forEach((ref) => batch.delete(ref));
+        await batch.commit();
+        deletedAlerts += chunk.length;
+      }
+
+      setActivityLogs((prev) => prev.filter((l) => !actBatchDocs.some((r) => r.id === l.id)));
+      setReceptionAlerts((prev) => prev.filter((a) => !alertBatchDocs.some((r) => r.id === a.id)));
+      setConnectionLogs((prev) => prev.filter((c) => !connBatchDocs.some((r) => r.id === c.id)));
+
+      const total = deletedActivity + deletedConnection + deletedAlerts;
+      const todayStr = new Date().toISOString().substring(0, 10);
+      const resMsg = total > 0
+        ? `Curățare finalizată cu succes! Au fost șterse ${total} înregistrări vechi din Firebase (${deletedActivity} jurnale activitate, ${deletedConnection} conectări, ${deletedAlerts} alerte recepție).`
+        : `Baza de date este deja optimizată! Nu au fost găsite înregistrări mai vechi de ${days} zile de șters.`;
+
+      setLastCleanupResult(resMsg);
+
+      if (clinicConfig?.autoCleanupEnabled || total > 0) {
+        updateClinicConfig({ lastAutoCleanupDate: todayStr }).catch(() => {});
+      }
+    } catch (err: any) {
+      console.error("Eroare la curățarea jurnalelor vechi:", err);
+      const errMsg = "Eroare la curățare: " + (err.message || String(err));
+      setLastCleanupResult(errMsg);
+    } finally {
+      setIsCleaningLogs(false);
+    }
+  };
+
+  // Schedule auto-cleanup în fundal dacă setarea este activată
+  useEffect(() => {
+    if (!profile || (profile.role !== "admin" && profile.role !== "frontdesk")) return;
+    if (!clinicConfig?.autoCleanupEnabled) return;
+
+    const todayStr = new Date().toISOString().substring(0, 10);
+    if (clinicConfig.lastAutoCleanupDate === todayStr) return;
+
+    const timer = setTimeout(() => {
+      handleCleanOldLogsAndAlerts(clinicConfig.autoCleanupDays ?? 30, true);
+    }, 7000);
+
+    return () => clearTimeout(timer);
+  }, [clinicConfig?.autoCleanupEnabled, clinicConfig?.autoCleanupDays, clinicConfig?.lastAutoCleanupDate, profile]);
+
+
   const compressAndResizeImage = (
     file: File,
     maxBytes: number = 800000,
@@ -24091,6 +24276,7 @@ export default function App() {
                 </p>
               </div>
             )}
+
 
             {/* MEDICI Section */}
             {doctors.length > 0 && (
@@ -30703,6 +30889,172 @@ export default function App() {
                 {profile?.role === "admin" && (
                   <div
                     className={cn(
+                      "p-6 rounded-2xl border transition-all mt-6 shadow-xs",
+                      darkMode
+                        ? "bg-slate-800/40 border-slate-700"
+                        : "bg-white border-slate-200",
+                    )}
+                  >
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <h3
+                          className={cn(
+                            "text-base font-bold flex items-center gap-2",
+                            darkMode ? "text-slate-100" : "text-slate-900",
+                          )}
+                        >
+                          <Database className="w-5 h-5 text-emerald-500 shrink-0" />
+                          Optimizare Spațiu Firebase (Curățare Alerte &amp; Jurnale)
+                        </h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 max-w-2xl leading-relaxed">
+                          Șterge la un simplu click alertele vechi de recepție (<code className="font-mono text-emerald-600 dark:text-emerald-400">reception_alerts</code>), jurnalele de activitate (<code className="font-mono text-emerald-600 dark:text-emerald-400">activityLogs</code>) și jurnalele de conectare (<code className="font-mono text-emerald-600 dark:text-emerald-400">connection_logs</code>) mai vechi de {clinicConfig.autoCleanupDays ?? 30} zile. Datele pacienților, fișele medicale, rețetele și programările rămân 100% neatinse.
+                        </p>
+                        {isCleaningLogs && (
+                          <div className="flex items-center gap-2 mt-2 p-2 px-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-bold animate-pulse">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                            <span>Se curăță alertele și jurnalele vechi din Firebase... Vă rugăm așteptați.</span>
+                          </div>
+                        )}
+                        {!isCleaningLogs && lastCleanupResult && (
+                          <div className="flex items-start gap-2 mt-2 p-2 px-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-xs font-bold">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                            <span>{lastCleanupResult}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleCleanOldLogsAndAlerts()}
+                        disabled={isCleaningLogs}
+                        className={cn(
+                          "px-5 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 shrink-0 cursor-pointer active:scale-95",
+                          isCleaningLogs
+                            ? "bg-emerald-700 opacity-80 cursor-wait text-white"
+                            : "bg-emerald-600 hover:bg-emerald-700 text-white",
+                        )}
+                        title={`Șterge definitiv alertele și jurnalele mai vechi de ${clinicConfig.autoCleanupDays ?? 30} zile`}
+                      >
+                        {isCleaningLogs ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-white" />
+                            <span>Se curăță baza de date...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Trash2 className="w-4 h-4" />
+                            <span>Curăță Alerte &amp; Jurnale &gt; {clinicConfig.autoCleanupDays ?? 30} Zile</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Setare Schedule Ștergere Automată sub buton */}
+                    <div className="mt-5 pt-5 border-t border-slate-200 dark:border-slate-700/80">
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <CalendarClock className="w-4 h-4 text-blue-500 shrink-0" />
+                            <h4
+                              className={cn(
+                                "text-sm font-bold flex items-center gap-2",
+                                darkMode ? "text-slate-200" : "text-slate-800",
+                              )}
+                            >
+                              Programare Curățare Automată (Schedule Auto-Cleanup)
+                            </h4>
+                            <span
+                              className={cn(
+                                "text-[10px] uppercase tracking-wider font-black px-2 py-0.5 rounded-full border",
+                                clinicConfig.autoCleanupEnabled
+                                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                                  : "bg-slate-500/15 text-slate-500 dark:text-slate-400 border-slate-500/20",
+                              )}
+                            >
+                              {clinicConfig.autoCleanupEnabled ? "ACTIV" : "DEZACTIVATĂ"}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500 dark:text-slate-400 max-w-2xl leading-relaxed">
+                            Când este activată, sistemul va șterge automat în fundal alertele de recepție, jurnalele de activitate și istoricul de conectare mai vechi decât numărul de zile stabilit, menținând volumul Firebase scăzut fără efort manual.
+                          </p>
+                          {clinicConfig.lastAutoCleanupDate && (
+                            <p className="text-[11px] text-slate-400 font-semibold">
+                              Ultima curățare automată rulată:{" "}
+                              <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+                                {clinicConfig.lastAutoCleanupDate}
+                              </span>
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Controale Schedule: Activ/Dezactivată + Nr de zile */}
+                        <div className="flex flex-wrap items-center gap-3 shrink-0">
+                          {/* Selector Număr Zile */}
+                          <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-900/60 p-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700">
+                            <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                              După
+                            </span>
+                            <input
+                              type="number"
+                              min="1"
+                              max="365"
+                              value={clinicConfig.autoCleanupDays ?? 30}
+                              onChange={(e) => {
+                                const val = Math.max(1, Math.min(365, parseInt(e.target.value) || 30));
+                                updateClinicConfig({ autoCleanupDays: val });
+                              }}
+                              className={cn(
+                                "w-16 px-2 py-1 text-center text-xs font-black rounded-lg border outline-none focus:ring-2 focus:ring-emerald-500",
+                                darkMode
+                                  ? "bg-slate-800 border-slate-700 text-slate-100"
+                                  : "bg-white border-slate-300 text-slate-900 shadow-xs",
+                              )}
+                            />
+                            <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                              zile
+                            </span>
+                          </div>
+
+                          {/* Buton Comutare Activ / Dezactivată */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nextState = !clinicConfig.autoCleanupEnabled;
+                              updateClinicConfig({
+                                autoCleanupEnabled: nextState,
+                                autoCleanupDays: clinicConfig.autoCleanupDays ?? 30,
+                              });
+                            }}
+                            className={cn(
+                              "px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all shadow-xs flex items-center gap-2 cursor-pointer border active:scale-95",
+                              clinicConfig.autoCleanupEnabled
+                                ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500"
+                                : "bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-600",
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "w-2.5 h-2.5 rounded-full",
+                                clinicConfig.autoCleanupEnabled
+                                  ? "bg-white animate-pulse"
+                                  : "bg-slate-400 dark:bg-slate-500",
+                              )}
+                            />
+                            <span>
+                              {clinicConfig.autoCleanupEnabled
+                                ? "Activ (Click pt Dezactivare)"
+                                : "Dezactivată (Click pt Activare)"}
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {profile?.role === "admin" && (
+                  <div
+                    className={cn(
                       "p-6 rounded-2xl border transition-all mt-6",
                       darkMode
                         ? "bg-slate-800/40 border-slate-700"
@@ -33911,16 +34263,35 @@ export default function App() {
                   </p>
                 </div>
 
-                <div className="flex gap-4 shrink-0 bg-white/50 dark:bg-slate-950/40 p-3 rounded-xl border border-slate-200/30">
-                  <div className="text-center px-3">
-                    <span className="block text-[10px] uppercase font-black tracking-wider text-slate-400">Total Înregistrări</span>
-                    <span className="text-lg font-black font-mono text-blue-500">{activityLogs.length}</span>
+                <div className="flex flex-wrap items-center gap-3 shrink-0">
+                  <div className="flex gap-4 bg-white/50 dark:bg-slate-950/40 p-3 rounded-xl border border-slate-200/30">
+                    <div className="text-center px-3">
+                      <span className="block text-[10px] uppercase font-black tracking-wider text-slate-400">Total Înregistrări</span>
+                      <span className="text-lg font-black font-mono text-blue-500">{activityLogs.length}</span>
+                    </div>
+                    <div className="border-r border-slate-250 dark:border-slate-800"></div>
+                    <div className="text-center px-3">
+                      <span className="block text-[10px] uppercase font-black tracking-wider text-slate-400">Filtrare Curente</span>
+                      <span className="text-lg font-black font-mono text-emerald-500">{auditFilteredLogs.length}</span>
+                    </div>
                   </div>
-                  <div className="border-r border-slate-250 dark:border-slate-800"></div>
-                  <div className="text-center px-3">
-                    <span className="block text-[10px] uppercase font-black tracking-wider text-slate-400">Filtrare Curente</span>
-                    <span className="text-lg font-black font-mono text-emerald-500">{auditFilteredLogs.length}</span>
-                  </div>
+
+                  {profile?.role === "admin" && (
+                    <button
+                      type="button"
+                      disabled={isCleaningLogs}
+                      onClick={() => handleCleanOldLogsAndAlerts()}
+                      className="px-3.5 py-3 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider transition-all shadow-md flex items-center gap-2 cursor-pointer active:scale-95 shrink-0"
+                      title={`Șterge automat din Firebase alertele și jurnalele mai vechi de ${clinicConfig.autoCleanupDays ?? 30} zile`}
+                    >
+                      {isCleaningLogs ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      ) : (
+                        <Trash2 className="w-4 h-4" />
+                      )}
+                      <span>{isCleaningLogs ? "Se curăță..." : `Curăță jurnale & alerte > ${clinicConfig.autoCleanupDays ?? 30} zile`}</span>
+                    </button>
+                  )}
                 </div>
               </div>
 

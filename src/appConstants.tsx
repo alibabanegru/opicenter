@@ -756,6 +756,9 @@ export interface ClinicConfig {
   logoUrl: string;
   secondaryLogoUrl?: string;
   inactivityTimeoutMinutes?: number;
+  autoCleanupEnabled?: boolean;
+  autoCleanupDays?: number;
+  lastAutoCleanupDate?: string;
 }
 
 export interface DayConfig {
@@ -898,7 +901,7 @@ export const DEFAULT_POSTERIOR_SEGMENT = [
 ];
 
 export const ROLE_COLORS: Record<Role, string> = {
-  admin: "bg-slate-500",
+  admin: "bg-purple-600",
   doctor1: "bg-blue-500",
   doctor2: "bg-purple-500",
   doctor3: "bg-emerald-500",
