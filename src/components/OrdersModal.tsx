@@ -49,6 +49,12 @@ import {
   matchPatientName,
   removeUndefined,
 } from "../appConstants";
+import {
+  cleanWhatsAppPhone,
+  buildWhatsAppUrl,
+  openWhatsAppUrl,
+  buildGlassesReadyMessage,
+} from "../utils/whatsappUtils";
 
 export interface OrdersModalProps {
   isOpen: boolean;
@@ -228,122 +234,33 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
     [key: string]: any;
   }) => {
     let rawPhone = (order.patientPhone || "").trim();
-    let cleanDigits = rawPhone.replace(/\D/g, "");
+    let phoneVal = cleanWhatsAppPhone(rawPhone);
 
-    if (!cleanDigits) {
+    if (!phoneVal.isValid) {
       const inputPhone = window.prompt(
         "Introduceți numărul de telefon al pacientului pentru notificarea WhatsApp:",
+        rawPhone
       );
       if (!inputPhone) return;
-      cleanDigits = inputPhone.replace(/\D/g, "");
-    }
-
-    if (cleanDigits.startsWith("0") && cleanDigits.length === 10) {
-      cleanDigits = "4" + cleanDigits;
-    } else if (!cleanDigits.startsWith("40") && cleanDigits.length === 9) {
-      cleanDigits = "40" + cleanDigits;
-    }
-
-    const message =
-      "Bună ziua, vă informăm că ochelarii dumneavoastră sunt gata la Clinica Negreanu din Pitesti (Piata Ceair). Vă așteptăm cu drag pentru ridicare și ajustare! Pentru alte informatii sunati va rog pe  0248223162";
-    const url = `https://wa.me/${cleanDigits}?text=${encodeURIComponent(message)}`;
-    window.open(url, "_blank");
-  };
-
-  const sendSmsNotification = async (order: {
-    patientPhone?: string;
-    patientName?: string;
-    orderNumber?: string;
-    patientId?: string;
-    [key: string]: any;
-  }) => {
-    let rawPhone = (order.patientPhone || "").trim();
-    let cleanDigits = rawPhone.replace(/\D/g, "");
-
-    if (!cleanDigits) {
-      const inputPhone = window.prompt(
-        "Introduceți numărul de telefon al pacientului pentru notificarea SMS:",
-      );
-      if (!inputPhone) return;
-      cleanDigits = inputPhone.replace(/\D/g, "");
-    }
-
-    const message =
-      "Buna ziua, va informam ca ochelarii dvs. sunt gata la Clinica Negreanu Pitesti (Piata Ceair). Va asteptam cu drag pentru ridicare si ajustare! Tel: 0248223162";
-    
-    // Direct SMS protocol (deschide aplicatia nativa de SMS cu destinatar si mesaj precompletat)
-    const smsUrl = `sms:${cleanDigits}?body=${encodeURIComponent(message)}`;
-    window.location.href = smsUrl;
-
-    // Salvare automată confirmare notificare & trecere pe ready_for_pickup
-    try {
-      const nowIso = new Date().toISOString();
-      const notifierName = profile?.displayName || (profile as any)?.name || "Recepție";
-
-      const targetRecord = (medicalRecords || []).find(
-        (r) =>
-          (order.patientId && r.id === order.patientId) ||
-          r.glassesOrder?.orderNumber === order.orderNumber ||
-          (r.orderHistory || []).some((o) => o.orderNumber === order.orderNumber),
-      );
-
-      const patientDocId = order.patientId || targetRecord?.id;
-      if (patientDocId) {
-        const docRef = doc(db, "medicalRecords", patientDocId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data() as MedicalRecord;
-          const history = [...(data.orderHistory || [])];
-          const orderIdx = history.findIndex(
-            (o) => o.orderNumber === order.orderNumber,
-          );
-
-          let updatedOrder: any = null;
-          if (orderIdx !== -1) {
-            const currentOrd = history[orderIdx];
-            const newStatus = currentOrd.status === "completed" ? "completed" : "ready_for_pickup";
-            updatedOrder = {
-              ...currentOrd,
-              status: newStatus,
-              whatsappNotifiedAt: nowIso,
-              whatsappNotifiedBy: notifierName,
-            };
-            history[orderIdx] = updatedOrder;
-          }
-
-          const isMainOrder = data.glassesOrder?.orderNumber === order.orderNumber;
-          let updatedMainGlasses = data.glassesOrder;
-          if (isMainOrder && data.glassesOrder) {
-            const newStatus = data.glassesOrder.status === "completed" ? "completed" : "ready_for_pickup";
-            updatedMainGlasses = {
-              ...data.glassesOrder,
-              status: newStatus,
-              whatsappNotifiedAt: nowIso,
-              whatsappNotifiedBy: notifierName,
-            };
-            if (!updatedOrder) updatedOrder = updatedMainGlasses;
-          }
-
-          await updateDoc(docRef, {
-            orderHistory: history,
-            ...(isMainOrder ? { glassesOrder: updatedMainGlasses } : {}),
-            updatedAt: nowIso,
-          });
-
-          try {
-            await addDoc(collection(db, "activityLogs"), {
-              action: "Trimitere Notificare SMS Comandă Ochelari",
-              details: `Trimis alertă SMS pacient ${order.patientName || data.patientName || ""} (Comanda #${order.orderNumber || "fără număr"}).`,
-              user: notifierName,
-              timestamp: nowIso,
-            });
-          } catch (logErr) {
-            console.warn("Log activity error:", logErr);
-          }
-        }
+      phoneVal = cleanWhatsAppPhone(inputPhone);
+      if (!phoneVal.isValid) {
+        alert("Numărul de telefon introdus nu este valid.");
+        return;
       }
-    } catch (e) {
-      console.error("Eroare salvare notificare SMS:", e);
+    }
+
+    const stripDiacriticsPref = localStorage.getItem("clinic_setting_whatsapp_strip_diacritics") === "true";
+    const message = buildGlassesReadyMessage({
+      patientName: order.patientName,
+      removeDiacritics: stripDiacriticsPref,
+    });
+    const { url } = buildWhatsAppUrl(phoneVal.cleanPhone, message, { removeDiacritics: stripDiacriticsPref });
+    const opened = openWhatsAppUrl(url);
+    if (!opened) {
+      navigator.clipboard?.writeText(message);
+      alert(
+        "Fereastra pop-up WhatsApp a fost blocată de browser. Mesajul a fost copiat în clipboard! Puteți deschide manual WhatsApp și lipi mesajul."
+      );
     }
 
     // Salvare automată confirmare notificare WhatsApp & trecere pe ready_for_pickup
@@ -437,10 +354,134 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
           } catch (e) {
             console.warn("Could not update standalone glasses_orders:", e);
           }
+
+          try {
+            await addDoc(collection(db, "activityLogs"), {
+              action: "Trimitere Notificare WhatsApp Comandă Ochelari",
+              details: `Trimis alertă WhatsApp pacient ${order.patientName || data.patientName || ""} (Comanda #${order.orderNumber || "fără număr"}).`,
+              user: notifierName,
+              timestamp: nowIso,
+            });
+          } catch (logErr) {
+            console.warn("Log activity error:", logErr);
+          }
         }
       }
     } catch (err) {
       console.error("Error setting whatsapp notification status:", err);
+    }
+  };
+
+  const sendSmsNotification = async (order: {
+    patientPhone?: string;
+    patientName?: string;
+    orderNumber?: string;
+    patientId?: string;
+    [key: string]: any;
+  }) => {
+    let rawPhone = (order.patientPhone || "").trim();
+    let cleanDigits = rawPhone.replace(/\D/g, "");
+
+    if (!cleanDigits) {
+      const inputPhone = window.prompt(
+        "Introduceți numărul de telefon al pacientului pentru notificarea SMS:",
+        rawPhone
+      );
+      if (!inputPhone) return;
+      cleanDigits = inputPhone.replace(/\D/g, "");
+    }
+
+    const stripDiacriticsPref = localStorage.getItem("clinic_setting_whatsapp_strip_diacritics") === "true";
+    const message = buildGlassesReadyMessage({
+      patientName: order.patientName,
+      removeDiacritics: stripDiacriticsPref,
+    });
+    
+    // Direct SMS protocol (deschide aplicația nativă de SMS cu destinatar și mesaj precompletat)
+    const smsUrl = `sms:${cleanDigits}?body=${encodeURIComponent(message)}`;
+    window.location.href = smsUrl;
+
+    // Salvare automată confirmare notificare SMS & trecere pe ready_for_pickup
+    try {
+      const nowIso = new Date().toISOString();
+      const notifierName = profile?.displayName || (profile as any)?.name || "Recepție";
+
+      const targetRecord = (medicalRecords || []).find(
+        (r) =>
+          (order.patientId && r.id === order.patientId) ||
+          r.glassesOrder?.orderNumber === order.orderNumber ||
+          (r.orderHistory || []).some((o) => o.orderNumber === order.orderNumber),
+      );
+
+      const patientDocId = order.patientId || targetRecord?.id;
+      if (patientDocId) {
+        const docRef = doc(db, "medicalRecords", patientDocId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data() as MedicalRecord;
+          const history = [...(data.orderHistory || [])];
+          const orderIdx = history.findIndex(
+            (o) => o.orderNumber === order.orderNumber,
+          );
+
+          let updatedOrder: any = null;
+          if (orderIdx !== -1) {
+            const currentOrd = history[orderIdx];
+            const newStatus = currentOrd.status === "completed" ? "completed" : "ready_for_pickup";
+            updatedOrder = {
+              ...currentOrd,
+              status: newStatus,
+              smsNotifiedAt: nowIso,
+              smsNotifiedBy: notifierName,
+            };
+            history[orderIdx] = updatedOrder;
+          }
+
+          const isMainOrder = data.glassesOrder?.orderNumber === order.orderNumber;
+          let updatedMainGlasses = data.glassesOrder;
+          if (isMainOrder && data.glassesOrder) {
+            const newStatus = data.glassesOrder.status === "completed" ? "completed" : "ready_for_pickup";
+            updatedMainGlasses = {
+              ...data.glassesOrder,
+              status: newStatus,
+              smsNotifiedAt: nowIso,
+              smsNotifiedBy: notifierName,
+            };
+            if (!updatedOrder) updatedOrder = updatedMainGlasses;
+          }
+
+          await updateDoc(docRef, {
+            orderHistory: history,
+            ...(isMainOrder ? { glassesOrder: updatedMainGlasses } : {}),
+            updatedAt: nowIso,
+          });
+
+          setMedicalRecords((prev) =>
+            prev.map((r) =>
+              r.id === patientDocId
+                ? {
+                    ...r,
+                    orderHistory: history,
+                    ...(isMainOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
+                  }
+                : r,
+            ),
+          );
+
+          try {
+            await addDoc(collection(db, "activityLogs"), {
+              action: "Trimitere Notificare SMS Comandă Ochelari",
+              details: `Trimis alertă SMS pacient ${order.patientName || data.patientName || ""} (Comanda #${order.orderNumber || "fără număr"}).`,
+              user: notifierName,
+              timestamp: nowIso,
+            });
+          } catch (logErr) {
+            console.warn("Log activity error:", logErr);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Eroare salvare notificare SMS:", e);
     }
   };
 

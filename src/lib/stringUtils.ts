@@ -31,15 +31,14 @@ export const cleanStr = (str: any): string => {
 /**
  * Curăță diacriticele cu excepția literelor Ș și Ț atunci când se folosește randare specială cu virgulă dedesubt.
  */
+/**
+ * Curăță diacriticele cu excepția literelor speciale românești (Ș, Ț, â, î) când se folosește randare cu accente grafice.
+ */
 export const cleanStrExceptTAndS = (str: any): string => {
   if (str === undefined || str === null) return "";
   return String(str)
     .replace(/ă/g, "a")
     .replace(/Ă/g, "A")
-    .replace(/â/g, "a")
-    .replace(/Â/g, "A")
-    .replace(/î/g, "i")
-    .replace(/Î/g, "I")
     .replace(/♂/g, "(M)")
     .replace(/♀/g, "(F)");
 };
@@ -152,4 +151,155 @@ export const recalculateContactLensCylinder = (rawCyl: string | undefined | null
 
   // Lentilele de contact torice sunt aproape exclusiv notate cu cilindru negativ (-)
   return `-${closest.toFixed(2)}`;
+};
+
+/**
+ * Trunchiază textul la o lățime maximă specificată în milimetri pentru jsPDF, adăugând "..." dacă depășește.
+ */
+export const truncateTextToWidth = (
+  doc: any,
+  text: string | undefined | null,
+  maxWidth: number
+): string => {
+  if (!text) return "";
+  const str = String(text);
+  if (doc.getTextWidth(cleanStrExceptTAndS(str)) <= maxWidth) return str;
+  let candidate = str;
+  while (
+    candidate.length > 0 &&
+    doc.getTextWidth(cleanStrExceptTAndS(candidate) + "...") > maxWidth
+  ) {
+    candidate = candidate.slice(0, -1);
+  }
+  return candidate.trim() + "...";
+};
+
+/**
+ * Randează text cu diacritice românești complete (ș, Ș, ț, Ț, ă, Ă, â, Â, î, Î) în jsPDF
+ * folosind fontul Helvetica prin desenarea precisă a virgulei/semnelor specifice,
+ * cu suport opțional pentru aliniere și lățime maximă (maxWidth).
+ */
+export const drawPdfTextWithDiacritics = (
+  doc: any,
+  text: string | undefined | null,
+  x: number,
+  y: number,
+  options?: { align?: "left" | "center" | "right"; maxWidth?: number }
+) => {
+  if (!text) return;
+  const align = options?.align || "left";
+  const maxWidth = options?.maxWidth;
+  const currentFontSize = doc.getFontSize();
+
+  let targetText = String(text);
+  if (maxWidth && maxWidth > 0) {
+    targetText = truncateTextToWidth(doc, targetText, maxWidth);
+  }
+
+  const widthMeasureText = cleanStrExceptTAndS(
+    targetText
+      .replace(/[țţ]/g, "t")
+      .replace(/[ȚŢ]/g, "T")
+      .replace(/[șş]/g, "s")
+      .replace(/[ȘŞ]/g, "S")
+      .replace(/ă/g, "a")
+      .replace(/Ă/g, "A")
+  );
+  const totalWidth = doc.getTextWidth(widthMeasureText);
+
+  let startX = x;
+  if (align === "center") {
+    startX = x - totalWidth / 2;
+  } else if (align === "right") {
+    startX = x - totalWidth;
+  }
+
+  let currentX = startX;
+
+  for (let i = 0; i < targetText.length; i++) {
+    const char = targetText[i];
+    if (char === "ț" || char === "ţ") {
+      doc.text("t", currentX, y);
+      const wt = doc.getTextWidth("t");
+
+      doc.setFontSize(currentFontSize * 0.5);
+      const commaText = ",";
+      const wComma = doc.getTextWidth(commaText);
+      const commaX = currentX + wt / 2 - wComma / 2;
+      const fontSizeInMm = currentFontSize * 0.352778;
+      const commaY_mm = y + fontSizeInMm * 0.22;
+      doc.text(commaText, commaX, commaY_mm);
+
+      doc.setFontSize(currentFontSize);
+      currentX += wt;
+    } else if (char === "Ț" || char === "Ţ") {
+      doc.text("T", currentX, y);
+      const wT = doc.getTextWidth("T");
+
+      doc.setFontSize(currentFontSize * 0.5);
+      const commaText = ",";
+      const wComma = doc.getTextWidth(commaText);
+      const commaX = currentX + wT / 2 - wComma / 2;
+      const fontSizeInMm = currentFontSize * 0.352778;
+      const commaY_mm = y + fontSizeInMm * 0.22;
+      doc.text(commaText, commaX, commaY_mm);
+
+      doc.setFontSize(currentFontSize);
+      currentX += wT;
+    } else if (char === "ș" || char === "ş") {
+      doc.text("s", currentX, y);
+      const ws = doc.getTextWidth("s");
+
+      doc.setFontSize(currentFontSize * 0.5);
+      const commaText = ",";
+      const wComma = doc.getTextWidth(commaText);
+      const commaX = currentX + ws / 2 - wComma / 2;
+      const fontSizeInMm = currentFontSize * 0.352778;
+      const commaY_mm = y + fontSizeInMm * 0.22;
+      doc.text(commaText, commaX, commaY_mm);
+
+      doc.setFontSize(currentFontSize);
+      currentX += ws;
+    } else if (char === "Ș" || char === "Ş") {
+      doc.text("S", currentX, y);
+      const wS = doc.getTextWidth("S");
+
+      doc.setFontSize(currentFontSize * 0.5);
+      const commaText = ",";
+      const wComma = doc.getTextWidth(commaText);
+      const commaX = currentX + wS / 2 - wComma / 2;
+      const fontSizeInMm = currentFontSize * 0.352778;
+      const commaY_mm = y + fontSizeInMm * 0.22;
+      doc.text(commaText, commaX, commaY_mm);
+
+      doc.setFontSize(currentFontSize);
+      currentX += wS;
+    } else if (char === "ă") {
+      doc.text("a", currentX, y);
+      const wa = doc.getTextWidth("a");
+      const fontSizeInMm = currentFontSize * 0.352778;
+      const breveY = y - fontSizeInMm * 0.65;
+      const breveW = wa * 0.45;
+      const breveLeft = currentX + (wa - breveW) / 2;
+      doc.setLineWidth(0.15);
+      doc.line(breveLeft, breveY - 0.18, breveLeft + breveW / 2, breveY);
+      doc.line(breveLeft + breveW / 2, breveY, breveLeft + breveW, breveY - 0.18);
+      currentX += wa;
+    } else if (char === "Ă") {
+      doc.text("A", currentX, y);
+      const wA = doc.getTextWidth("A");
+      const fontSizeInMm = currentFontSize * 0.352778;
+      const breveY = y - fontSizeInMm * 0.95;
+      const breveW = wA * 0.42;
+      const breveLeft = currentX + (wA - breveW) / 2;
+      doc.setLineWidth(0.18);
+      doc.line(breveLeft, breveY - 0.22, breveLeft + breveW / 2, breveY);
+      doc.line(breveLeft + breveW / 2, breveY, breveLeft + breveW, breveY - 0.22);
+      currentX += wA;
+    } else {
+      const cleanChar = cleanStrExceptTAndS(char);
+      doc.text(cleanChar, currentX, y);
+      currentX += doc.getTextWidth(cleanChar);
+    }
+  }
 };

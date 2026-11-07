@@ -1,4 +1,14 @@
-export { cleanStr, cleanStrExceptTAndS, normalizeForPDF, formatPhoneNumber, escapeCsvField, getImageFormatForPdf, recalculateContactLensCylinder } from "./lib/stringUtils";
+export {
+  cleanStr,
+  cleanStrExceptTAndS,
+  normalizeForPDF,
+  formatPhoneNumber,
+  escapeCsvField,
+  getImageFormatForPdf,
+  recalculateContactLensCylinder,
+  truncateTextToWidth,
+  drawPdfTextWithDiacritics,
+} from "./lib/stringUtils";
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { auth } from "./firebase";
 import { ClassValue, clsx } from "clsx";
@@ -363,6 +373,15 @@ export interface Appointment {
   forceSeen?: boolean;
 }
 
+export interface SlotLock {
+  id: string;
+  doctorId: string;
+  slotTime: string;
+  lockedByName: string;
+  lockedByUid: string;
+  lockedAt: string;
+}
+
 export interface EyePrescription {
   sph: string;
   cyl: string;
@@ -422,6 +441,7 @@ export interface GlassesOrder {
   nearDeliveryDate?: string;
   isUrgent: boolean;
   createdAt: string;
+  orderDate?: string;
   note?: string;
   status?: "pending" | "completed" | "in-progress" | "ready_for_pickup";
   stockDeducted?: boolean;
@@ -436,6 +456,8 @@ export interface GlassesOrder {
   sellerName?: string;
   whatsappNotifiedAt?: string;
   whatsappNotifiedBy?: string;
+  smsNotifiedAt?: string;
+  smsNotifiedBy?: string;
   deliveredAt?: string;
   deliveredBy?: string;
   balanceCollectedAt?: string;
@@ -750,6 +772,9 @@ export interface MedicalRecord {
   isControl?: boolean;
   isGratis?: boolean;
   isConsultComplet?: boolean;
+  recallDismissed?: boolean;
+  recallDismissedAt?: string;
+  recallNotifiedAt?: string;
 }
 
 export interface ClinicConfig {

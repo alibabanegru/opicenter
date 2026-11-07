@@ -28,17 +28,55 @@ export interface BNRModalProps {
   darkMode: boolean;
 }
 
+const DEFAULT_BASELINE_RATES: Record<string, number> = {
+  EUR: 4.9765,
+  USD: 4.6520,
+  GBP: 5.8950,
+  CHF: 5.3210,
+  HUF: 1.2580,
+  BGN: 2.5445,
+};
+
 export const BNRModal: React.FC<BNRModalProps> = ({
   isOpen,
   onClose,
   darkMode,
 }) => {
-  const [bnrRates, setBnrRates] = useState<Record<string, number> | null>(null);
+  const [bnrRates, setBnrRates] = useState<Record<string, number> | null>(() => {
+    try {
+      const cached = localStorage.getItem("clinic_bnr_rates_cache");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.rates) return parsed.rates;
+      }
+    } catch {}
+    return DEFAULT_BASELINE_RATES;
+  });
+  const [isOfflineFallback, setIsOfflineFallback] = useState(false);
+  const [cacheTimestamp, setCacheTimestamp] = useState<string | null>(() => {
+    try {
+      const cached = localStorage.getItem("clinic_bnr_rates_cache");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.fetchedAt) return parsed.fetchedAt;
+      }
+    } catch {}
+    return null;
+  });
   const [bnrLoading, setBnrLoading] = useState(false);
   const [bnrError, setBnrError] = useState<string | null>(null);
   const [bnrTrends, setBnrTrends] = useState<
     Record<string, "up" | "down" | "flat">
-  >({});
+  >(() => {
+    try {
+      const cached = localStorage.getItem("clinic_bnr_rates_cache");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.trends) return parsed.trends;
+      }
+    } catch {}
+    return {};
+  });
 
   // History modal states
   const [isCurrencyHistoryModalOpen, setIsCurrencyHistoryModalOpen] =
@@ -71,7 +109,10 @@ export const BNRModal: React.FC<BNRModalProps> = ({
 
       for (const url of apiUrls) {
         try {
-          const res = await fetch(url);
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 6000);
+          const res = await fetch(url, { signal: controller.signal });
+          clearTimeout(timer);
           if (res && res.ok) {
             response = res;
             break;
@@ -83,7 +124,7 @@ export const BNRModal: React.FC<BNRModalProps> = ({
 
       if (!response) {
         throw new Error(
-          "Nu s-a putut realiza conexiunea cu niciunul dintre serverele de curs valuar (Open ER, ExchangeRate-API, Frankfurter). Vă rugăm să verificați conexiunea la internet sau sistemul de securitate al rețelei."
+          "Nu s-a putut realiza conexiunea cu niciunul dintre serverele de curs valuar (Open ER, ExchangeRate-API, Frankfurter)."
         );
       }
 
@@ -118,7 +159,10 @@ export const BNRModal: React.FC<BNRModalProps> = ({
 
         if (Object.keys(rates).length > 0) {
           setBnrRates(rates);
+          setIsOfflineFallback(false);
+          setCacheTimestamp(new Date().toISOString());
 
+          let trends: Record<string, "up" | "down" | "flat"> = {};
           try {
             const fiveDaysAgo = subDays(new Date(), 5);
             const startStr = format(fiveDaysAgo, "yyyy-MM-dd");
@@ -148,7 +192,6 @@ export const BNRModal: React.FC<BNRModalProps> = ({
                   const lastRates = histData.rates[lastDate];
                   const prevRates = histData.rates[prevDate];
 
-                  const trends: Record<string, "up" | "down" | "flat"> = {};
                   ["EUR", "USD", "GBP", "CHF", "HUF", "BGN"].forEach((curr) => {
                     const last = lastRates[curr];
                     const prev = prevRates[curr];
@@ -165,6 +208,13 @@ export const BNRModal: React.FC<BNRModalProps> = ({
           } catch (trendErr) {
             console.warn("Could not fetch trends:", trendErr);
           }
+
+          try {
+            localStorage.setItem(
+              "clinic_bnr_rates_cache",
+              JSON.stringify({ rates, trends, fetchedAt: new Date().toISOString() })
+            );
+          } catch {}
         } else {
           throw new Error(
             "Răspunsul API nu a returnat monedele principale de curs valuar (EUR, USD etc.)."
@@ -176,16 +226,34 @@ export const BNRModal: React.FC<BNRModalProps> = ({
         );
       }
     } catch (error) {
-      console.warn("Error fetching BNR rates:", error);
-      setBnrError(
-        error instanceof Error
-          ? error.message
-          : "Eroare de rețea la preluarea cursului."
-      );
+      console.warn("Error fetching BNR rates, activating fallback:", error);
+
+      // Verificăm dacă avem curs salvat anterior în memoria cache
+      try {
+        const cached = localStorage.getItem("clinic_bnr_rates_cache");
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed && parsed.rates) {
+            setBnrRates(parsed.rates);
+            if (parsed.trends) setBnrTrends(parsed.trends);
+            setIsOfflineFallback(true);
+            setCacheTimestamp(parsed.fetchedAt || null);
+            setBnrError("Mod offline: se afișează cursul salvat anterior în memoria locală.");
+            return;
+          }
+        }
+      } catch {}
+
+      // Fallback la cursul de referință standard
+      setBnrRates(DEFAULT_BASELINE_RATES);
+      setIsOfflineFallback(true);
+      setCacheTimestamp(null);
+      setBnrError("Mod offline: se afișează cursul de referință estimativ.");
     } finally {
       setBnrLoading(false);
     }
   }, []);
+
 
   useEffect(() => {
     if (isOpen) {
@@ -417,7 +485,27 @@ export const BNRModal: React.FC<BNRModalProps> = ({
               </div>
 
               <div className="p-8 pt-0 space-y-6 overflow-y-auto max-h-[70vh] custom-scrollbar">
-                {bnrLoading ? (
+                {isOfflineFallback && (
+                  <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between gap-3 text-amber-600 dark:text-amber-400">
+                    <div className="flex items-center gap-2.5 text-xs font-bold">
+                      <AlertTriangle className="w-5 h-5 shrink-0 text-amber-500" />
+                      <span>
+                        Mod offline: Curs afișat din memoria cache
+                        {cacheTimestamp ? ` (salvat la ${format(new Date(cacheTimestamp), "dd.MM.yyyy HH:mm")})` : ""}.
+                        Toate funcțiile de calcul rămân active!
+                      </span>
+                    </div>
+                    <button
+                      onClick={fetchBNRRates}
+                      disabled={bnrLoading}
+                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shrink-0 cursor-pointer shadow-sm"
+                    >
+                      Reîncearcă
+                    </button>
+                  </div>
+                )}
+
+                {bnrLoading && !bnrRates ? (
                   <div className="flex flex-col items-center justify-center py-20 gap-4">
                     <RefreshCw className="w-12 h-12 text-blue-500 animate-spin" />
                     <p className="text-sm font-bold uppercase tracking-widest opacity-60">

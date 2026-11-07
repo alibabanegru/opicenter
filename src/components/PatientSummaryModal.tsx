@@ -639,7 +639,19 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
         imageTimeout: 0,
       });
 
-      const imgData = canvas.toDataURL("image/jpeg", 0.88);
+      // Calculează coordonatele fiecărui card / secțiune pentru a preveni tăierea lor pe jumătate
+      const cardElements = Array.from(element.querySelectorAll(".summary-entry-card"));
+      const elementRect = element.getBoundingClientRect();
+      const canvasScale = canvas.width / (element.clientWidth || 800);
+
+      const cardCanvasBoundaries = cardElements.map((card) => {
+        const rect = card.getBoundingClientRect();
+        return {
+          top: (rect.top - elementRect.top) * canvasScale,
+          bottom: (rect.bottom - elementRect.top) * canvasScale,
+        };
+      });
+
       const pdf = new jsPDF({
         orientation: "portrait",
         unit: "mm",
@@ -648,23 +660,74 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
 
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = canvas.width;
-      const imgHeight = canvas.height;
 
-      const ratio = pdfWidth / imgWidth;
-      const scaledHeight = imgHeight * ratio;
+      const marginMm = 8;
+      const printableWidthMm = pdfWidth - marginMm * 2;
+      const printableHeightMm = pdfHeight - marginMm * 2;
 
-      let heightLeft = scaledHeight;
-      let position = 0;
+      const mmPerCanvasPixel = printableWidthMm / canvas.width;
+      const maxCanvasHeightPerPage = printableHeightMm / mmPerCanvasPixel;
 
-      pdf.addImage(imgData, "JPEG", 0, position, pdfWidth, scaledHeight);
-      heightLeft -= pdfHeight;
+      let currentTopPx = 0;
+      let pageIndex = 0;
 
-      while (heightLeft > 2) {
-        position -= pdfHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, "JPEG", 0, position, pdfWidth, scaledHeight);
-        heightLeft -= pdfHeight;
+      while (currentTopPx < canvas.height - 5) {
+        let targetBottomPx = currentTopPx + maxCanvasHeightPerPage;
+
+        if (targetBottomPx >= canvas.height) {
+          targetBottomPx = canvas.height;
+        } else {
+          // Găsește cardul care ar fi tăiat de linia de sfârșit de pagină
+          const intersectingCard = cardCanvasBoundaries.find(
+            (b) => b.top < targetBottomPx && b.bottom > targetBottomPx
+          );
+
+          if (intersectingCard && intersectingCard.top > currentTopPx + 50 * canvasScale) {
+            // Tăiem chiar deasupra cardului, mutând întreg cardul pe pagina următoare
+            targetBottomPx = intersectingCard.top;
+          }
+        }
+
+        const sliceHeightPx = Math.max(1, targetBottomPx - currentTopPx);
+
+        const sliceCanvas = document.createElement("canvas");
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = sliceHeightPx;
+        const sliceCtx = sliceCanvas.getContext("2d");
+        if (sliceCtx) {
+          sliceCtx.fillStyle = "#ffffff";
+          sliceCtx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+          sliceCtx.drawImage(
+            canvas,
+            0,
+            currentTopPx,
+            canvas.width,
+            sliceHeightPx,
+            0,
+            0,
+            canvas.width,
+            sliceHeightPx
+          );
+
+          const sliceImgData = sliceCanvas.toDataURL("image/jpeg", 0.92);
+          const sliceHeightMm = sliceHeightPx * mmPerCanvasPixel;
+
+          if (pageIndex > 0) {
+            pdf.addPage();
+          }
+
+          pdf.addImage(
+            sliceImgData,
+            "JPEG",
+            marginMm,
+            marginMm,
+            printableWidthMm,
+            sliceHeightMm
+          );
+          pageIndex++;
+        }
+
+        currentTopPx = targetBottomPx;
       }
 
       const cleanName = (record?.patientName || "Pacient")
@@ -1072,6 +1135,10 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
             overflow: visible !important;
             height: auto !important;
             max-height: none !important;
+          }
+          .summary-entry-card {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
           }
           .no-print {
             display: none !important;
@@ -1705,7 +1772,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
       >
         <div id="printable-a4-summary-sheet" className="p-8 bg-white text-slate-900 space-y-4 font-sans text-xs leading-tight">
           {/* Header */}
-          <div className="border-b-2 border-slate-900 pb-3 flex items-center justify-between gap-4">
+          <div className="summary-entry-card border-b-2 border-slate-900 pb-3 flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               {clinicLogo ? (
                 <img src={clinicLogo} alt="Logo Clinica" className="h-12 w-auto object-contain max-w-[120px]" />
@@ -1732,7 +1799,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
           </div>
 
           {/* Patient Identity Box */}
-          <div className="p-2.5 border border-slate-900 rounded bg-white text-xs space-y-1">
+          <div className="summary-entry-card p-2.5 border border-slate-900 rounded bg-white text-xs space-y-1" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 font-bold">
               <span>Pacient: <span className="text-sm uppercase font-black">{record.patientName}</span></span>
               <span>
@@ -1745,7 +1812,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
           </div>
 
           {/* Title */}
-          <div className="border-b border-slate-900 pb-1">
+          <div className="summary-entry-card border-b border-slate-900 pb-1" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
             <h2 className="text-xs font-black uppercase tracking-wider text-slate-900">
               Consultații & Vizite Cronologice ({timelineEntries.length})
             </h2>
@@ -1784,7 +1851,8 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
               return (
                 <div
                   key={entry.id || idx}
-                  className="p-2.5 border border-slate-400 rounded space-y-1.5 text-xs text-slate-900 bg-white"
+                  className="summary-entry-card p-2.5 border border-slate-400 rounded space-y-1.5 text-xs text-slate-900 bg-white"
+                  style={{ breakInside: "avoid", pageBreakInside: "avoid" }}
                 >
                   {/* Entry Header line */}
                   <div className="flex flex-wrap items-center justify-between font-bold border-b border-slate-300 pb-1">
@@ -1967,7 +2035,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
             {/* A4 Sheet Paper Content (Condensed, B&W, No Tables) */}
             <div className="p-6 sm:p-8 bg-white text-slate-900 space-y-4 font-sans text-xs leading-tight">
               {/* Header */}
-              <div className="border-b-2 border-slate-900 pb-3 flex items-center justify-between gap-4">
+              <div className="summary-entry-card border-b-2 border-slate-900 pb-3 flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   {clinicLogo ? (
                     <img src={clinicLogo} alt="Logo Clinica" className="h-12 w-auto object-contain max-w-[120px]" />
@@ -1994,7 +2062,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
               </div>
 
               {/* Patient Identity Box (No Tables) */}
-              <div className="p-2.5 border border-slate-900 rounded bg-white text-xs space-y-1">
+              <div className="summary-entry-card p-2.5 border border-slate-900 rounded bg-white text-xs space-y-1" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
                 <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 font-bold">
                   <span>Pacient: <span className="text-sm uppercase font-black">{record.patientName}</span></span>
                   <span>
@@ -2007,7 +2075,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
               </div>
 
               {/* Title */}
-              <div className="border-b border-slate-900 pb-1">
+              <div className="summary-entry-card border-b border-slate-900 pb-1" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
                 <h2 className="text-xs font-black uppercase tracking-wider text-slate-900">
                   Consultații & Vizite Cronologice ({timelineEntries.length})
                 </h2>
@@ -2046,7 +2114,8 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                   return (
                     <div
                       key={entry.id || idx}
-                      className="p-2.5 border border-slate-400 rounded space-y-1.5 text-xs text-slate-900 bg-white"
+                      className="summary-entry-card p-2.5 border border-slate-400 rounded space-y-1.5 text-xs text-slate-900 bg-white"
+                      style={{ breakInside: "avoid", pageBreakInside: "avoid" }}
                     >
                       {/* Entry Header line */}
                       <div className="flex flex-wrap items-center justify-between font-bold border-b border-slate-300 pb-1">

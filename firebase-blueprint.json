@@ -218,6 +218,20 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["code", "brand", "quantity"]
+    },
+    "SlotLock": {
+      "title": "SlotLock",
+      "description": "Real-time appointment slot reservation lock held while a user is booking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "doctorId": { "type": "string" },
+        "slotTime": { "type": "string", "format": "date-time" },
+        "lockedByName": { "type": "string" },
+        "lockedByUid": { "type": "string" },
+        "lockedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["doctorId", "slotTime", "lockedByName", "lockedByUid", "lockedAt"]
     }
   },
   "firestore": {
@@ -260,6 +274,10 @@
     "/frame_stock/{frameId}": {
       "schema": "FrameStock",
       "description": "Optical frame inventory stock"
+    },
+    "/slot_locks/{lockId}": {
+      "schema": "SlotLock",
+      "description": "Active slot reservations in the scheduler"
     }
   }
 }

@@ -21,6 +21,7 @@ import { MedicalRegistryModal } from "./components/MedicalRegistryModal";
 import { PhoneEditModal } from "./components/PhoneEditModal";
 import { GlassesOrderModal } from "./components/GlassesOrderModal";
 import { MedicalRecordModal } from "./components/MedicalRecordModal";
+import { PatientRecallPanel } from "./components/PatientRecallPanel";
 import { compressSignatureDataUrl } from "./lib/signatureUtils";
 import React, {
   useState,
@@ -198,6 +199,7 @@ import {
   deleteField,
   orderBy,
   limit,
+  runTransaction,
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
 import { clsx, type ClassValue } from "clsx";
@@ -222,6 +224,8 @@ import {
   normalizeForPDF,
   cleanStr,
   cleanStrExceptTAndS,
+  truncateTextToWidth,
+  drawPdfTextWithDiacritics,
   escapeCsvField,
   getImageFormatForPdf,
   recalculateContactLensCylinder,
@@ -301,7 +305,16 @@ import {
   FrameStockItem,
   getEstimatedAddByAge,
   MONTHS_RO,
+  SlotLock,
 } from "./appConstants";
+import {
+  cleanWhatsAppPhone,
+  buildWhatsAppUrl,
+  openWhatsAppUrl,
+  buildGlassesReadyMessage,
+  normalizeRomanianDiacritics,
+  stripDiacritics,
+} from "./utils/whatsappUtils";
 
 const cleanString = (s: string) =>
   s
@@ -636,6 +649,20 @@ export const findPatientMedicalRecord = (
   if (cleanCnp) {
     const byCnp = recordsList.find((r) => r.patientCnp && r.patientCnp.trim() === cleanCnp);
     if (byCnp) return byCnp;
+  }
+
+  // 1.5. Match by Name and Birth Date if both present (e.g. Persinaru Alexandru 09-05-2003)
+  if (patientName && cleanBirthDate) {
+    const byNameAndBirth = recordsList.find((r) => {
+      if (!r.patientName) return false;
+      const isNameMatch =
+        r.patientName.trim().toLowerCase() === patientName.trim().toLowerCase() ||
+        normalizePatientName(r.patientName) === cleanName ||
+        arePatientNamesMatching(r.patientName, patientName);
+      if (!isNameMatch) return false;
+      return areBirthDatesMatching(r.patientBirthDate, cleanBirthDate);
+    });
+    if (byNameAndBirth) return byNameAndBirth;
   }
 
   // 2. Exact name & phone match
@@ -1167,21 +1194,21 @@ const ModalSearchNameInput = ({
 const hasFinalDioptersOrContactLenses = (r: any, targetDate?: Date): boolean => {
   if (!r) return false;
 
-  // Daca se specifica data programarii (targetDate), verificam daca in acea zi exista dioptrii prescrise sau comanda
+  // 1. Verificam prescripția sau comanda efectuată chiar în ziua respectivă dacă se specifică targetDate
   if (targetDate) {
-    // 1. Verificam prescripția efectuată chiar în ziua respectivă
     if (Array.isArray(r.prescriptionHistory) && r.prescriptionHistory.length > 0) {
       const prescForDate = r.prescriptionHistory.find((p: any) =>
         p.date ? isSameDay(parseISO(p.date), targetDate) : false
       );
       if (prescForDate) {
         const hasD =
-          (prescForDate.od && (String(prescForDate.od.sph || "").trim() !== "" || String(prescForDate.od.cyl || "").trim() !== "")) ||
-          (prescForDate.os && (String(prescForDate.os.sph || "").trim() !== "" || String(prescForDate.os.cyl || "").trim() !== ""));
+          (prescForDate.od && (String(prescForDate.od.sph || "").trim() !== "" || String(prescForDate.od.cyl || "").trim() !== "" || String(prescForDate.od.axis || "").trim() !== "")) ||
+          (prescForDate.os && (String(prescForDate.os.sph || "").trim() !== "" || String(prescForDate.os.cyl || "").trim() !== "" || String(prescForDate.os.axis || "").trim() !== "")) ||
+          (prescForDate.cl_od && (String(prescForDate.cl_od.sph || "").trim() !== "" || String(prescForDate.cl_od.cyl || "").trim() !== "")) ||
+          (prescForDate.cl_os && (String(prescForDate.cl_os.sph || "").trim() !== "" || String(prescForDate.cl_os.cyl || "").trim() !== ""));
         if (hasD) return true;
       }
     }
-    // 2. Verificam comanda de ochelari plasata chiar in ziua respectiva
     if (r.glassesOrder?.createdAt && isSameDay(parseISO(r.glassesOrder.createdAt), targetDate)) {
       return true;
     }
@@ -1191,10 +1218,9 @@ const hasFinalDioptersOrContactLenses = (r: any, targetDate?: Date): boolean => 
       );
       if (orderForDate) return true;
     }
-    return false;
   }
 
-  // Verificare generala fara data (fallback)
+  // 2. Verificare dioptrii ochelari din fișa curentă a pacientului (OD / OS)
   const hasOD = r.od && (
     String(r.od.sph || "").trim() !== "" ||
     String(r.od.cyl || "").trim() !== "" ||
@@ -1215,7 +1241,45 @@ const hasFinalDioptersOrContactLenses = (r: any, targetDate?: Date): boolean => 
 
   if (hasOD || hasOS) return true;
 
-  if (r.cl_od?.sph || r.cl_os?.sph) return true;
+  // 3. Verificare dioptrii lentile de contact (cl_od / cl_os)
+  const hasClOD = r.cl_od && (
+    String(r.cl_od.sph || "").trim() !== "" ||
+    String(r.cl_od.cyl || "").trim() !== "" ||
+    String(r.cl_od.axis || "").trim() !== "" ||
+    String(r.cl_od.base || "").trim() !== "" ||
+    String(r.cl_od.diameter || "").trim() !== ""
+  );
+  const hasClOS = r.cl_os && (
+    String(r.cl_os.sph || "").trim() !== "" ||
+    String(r.cl_os.cyl || "").trim() !== "" ||
+    String(r.cl_os.axis || "").trim() !== "" ||
+    String(r.cl_os.base || "").trim() !== "" ||
+    String(r.cl_os.diameter || "").trim() !== ""
+  );
+
+  if (hasClOD || hasClOS) return true;
+
+  // 4. Verificare dacă există orice prescripție în istoric (inclusiv din alte dăți)
+  if (Array.isArray(r.prescriptionHistory) && r.prescriptionHistory.length > 0) {
+    const anyPrescWithDiopters = r.prescriptionHistory.some((p: any) =>
+      (p.od && (String(p.od.sph || "").trim() !== "" || String(p.od.cyl || "").trim() !== "" || String(p.od.axis || "").trim() !== "")) ||
+      (p.os && (String(p.os.sph || "").trim() !== "" || String(p.os.cyl || "").trim() !== "" || String(p.os.axis || "").trim() !== "")) ||
+      (p.cl_od && (String(p.cl_od.sph || "").trim() !== "" || String(p.cl_od.cyl || "").trim() !== "")) ||
+      (p.cl_os && (String(p.cl_os.sph || "").trim() !== "" || String(p.cl_os.cyl || "").trim() !== ""))
+    );
+    if (anyPrescWithDiopters) return true;
+  }
+
+  // 5. Verificare dacă există orice comandă de ochelari sau lentile existentă
+  if (
+    r.glassesOrder?.glassesOrderNumber ||
+    r.glassesOrder?.orderNumber ||
+    (r.glassesOrder?.od && String(r.glassesOrder.od.sph || "").trim() !== "") ||
+    (r.glassesOrder?.os && String(r.glassesOrder.os.sph || "").trim() !== "") ||
+    (Array.isArray(r.orderHistory) && r.orderHistory.length > 0)
+  ) {
+    return true;
+  }
 
   return false;
 };
@@ -1224,33 +1288,52 @@ const isMedicalRecordMatchForAppointment = (r: any, app: any): boolean => {
   if (!r || !app) return false;
   if (r.id && app.id && r.id === app.id) return true;
 
-  // Daca programarea este pentru un pacient nou, nu prelua fisa sau ochelarii altui pacient vechi
-  if (app.isNewPatientManualEntry) {
-    const appRecordId = (app as any).medicalRecordId;
-    if (appRecordId && r.id === appRecordId) return true;
-    return false;
-  }
+  const appRecordId = (app as any).medicalRecordId;
+  if (appRecordId && r.id === appRecordId) return true;
 
+  // 1. CNP Match
   const appCnp = (app.patientCnp || "").trim();
   const rCnp = (r.patientCnp || "").trim();
   if (appCnp && rCnp && appCnp === rCnp) return true;
 
-  const rName = (r.patientName || "").trim().toLowerCase();
-  const appName = (app.patientName || "").trim().toLowerCase();
-  if (
-    rName &&
-    appName &&
-    (rName === appName || normalizePatientName(r.patientName) === normalizePatientName(app.patientName) || arePatientNamesMatching(r.patientName, app.patientName))
-  ) {
-    const rPhone = (r.patientPhone || "").replace(/[^0-9]/g, "");
-    const appPhone = (app.patientPhone || "").replace(/[^0-9]/g, "");
-    if (rPhone && appPhone) {
-      return rPhone === appPhone || rPhone.endsWith(appPhone) || appPhone.endsWith(rPhone);
+  const rName = (r.patientName || "").trim();
+  const appName = (app.patientName || "").trim();
+  if (!rName || !appName) return false;
+
+  const isNameMatch =
+    rName.toLowerCase() === appName.toLowerCase() ||
+    normalizePatientName(r.patientName) === normalizePatientName(app.patientName) ||
+    arePatientNamesMatching(r.patientName, app.patientName);
+
+  if (!isNameMatch) return false;
+
+  // 2. Data nasterii (Birth date) match - daca data nasterii coincide, este garantat acelasi pacient (ex: Persinaru Alexandru 09-05-2003)
+  const appBirth = (app.patientBirthDate || "").trim();
+  const rBirth = (r.patientBirthDate || "").trim();
+  const isBirthMatch = appBirth && rBirth && areBirthDatesMatching(appBirth, rBirth);
+
+  if (isBirthMatch) return true;
+
+  // 3. Telefon (Phone) match
+  const rPhone = normalizePhone(r.patientPhone);
+  const appPhone = normalizePhone(app.patientPhone);
+  if (rPhone && appPhone) {
+    if (rPhone === appPhone || rPhone.endsWith(appPhone) || appPhone.endsWith(rPhone)) {
+      return true;
     }
-    return true;
+    // Daca ambele au data nasterii dar sunt diferite, sunt persoane distincte
+    if (appBirth && rBirth && !isBirthMatch) {
+      return false;
+    }
+    return false;
   }
 
-  return false;
+  // Daca nu exista telefoane sau unul lipseste, verificam sa nu existe conflict pe data nasterii
+  if (appBirth && rBirth && !isBirthMatch) {
+    return false;
+  }
+
+  return true;
 };
 
 export default function App() {
@@ -1728,33 +1811,7 @@ export default function App() {
     }
   }, [googleUser, profile]);
 
-  useEffect(() => {
-    if (profile?.role !== "admin") return;
-
-    const q = query(
-      collection(db, "connection_logs"),
-      orderBy("timestamp", "desc"),
-      limit(200)
-    );
-
-    const unsub = onSnapshot(
-      q,
-      (snapshot) => {
-        const logs = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as any[];
-        setConnectionLogs(logs);
-      },
-      (error) => {
-        if (!error.message?.toLowerCase().includes("quota")) {
-          console.error("Error fetching connection logs in real-time:", error);
-        }
-      }
-    );
-
-    return () => unsub();
-  }, [profile]);
+  // Connection logs listener moved to run only when isConfigModalOpen is true
 
   const handleGoogleSignIn = async () => {
     try {
@@ -1978,7 +2035,16 @@ export default function App() {
     } catch {}
     return { logoUrl: "", secondaryLogoUrl: "" };
   });
-  const [weather, setWeather] = useState<WeatherData | null>(null);
+  const [weather, setWeather] = useState<WeatherData | null>(() => {
+    try {
+      const cached = localStorage.getItem("clinic_weather_cache");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.data && parsed.data.current) return parsed.data;
+      }
+    } catch {}
+    return null;
+  });
   const [isWeatherModalOpen, setIsWeatherModalOpen] = useState(false);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState<string | null>(null);
@@ -1996,12 +2062,20 @@ export default function App() {
   >("next_appointment");
 
   const [nextAppointmentTemplate, setNextAppointmentTemplate] =
-    useState<string>(
-      "Bună ziua, *{pacient}*! Vă reamintim de programarea dumneavoastră la Clinica Oftalmologică Negreanu din data de *{data}* la ora *{ora}* la *{medic}*. Vă rugăm să ne confirmați prezența printr-un răspuns la acest mesaj. Vă mulțumim!",
-    );
-  const [simpleReminderTemplate, setSimpleReminderTemplate] = useState<string>(
-    "Bună ziua, *{pacient}*! Vă contactăm din partea Clinicii Oftalmologice Negreanu. Vă dorim o zi minunată!",
-  );
+    useState<string>(() => {
+      try {
+        const cached = localStorage.getItem("clinic_setting_whatsapp_next_app");
+        if (cached) return JSON.parse(cached);
+      } catch {}
+      return "Bună ziua, *{pacient}*! Vă reamintim de programarea dumneavoastră la Clinica Oftalmologică Negreanu din data de *{data}* la ora *{ora}* la *{medic}*. Vă rugăm să ne confirmați prezența printr-un răspuns la acest mesaj. Vă mulțumim!";
+    });
+  const [simpleReminderTemplate, setSimpleReminderTemplate] = useState<string>(() => {
+    try {
+      const cached = localStorage.getItem("clinic_setting_whatsapp_simple_rem");
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return "Bună ziua, *{pacient}*! Vă contactăm din partea Clinicii Oftalmologice Negreanu. Vă dorim o zi minunată!";
+  });
 
   const [isDayWhatsAppModalOpen, setIsDayWhatsAppModalOpen] = useState(false);
   const [isDistanceFrameConfigOpen, setIsDistanceFrameConfigOpen] = useState(false);
@@ -2023,27 +2097,17 @@ export default function App() {
     item: any;
   }>({ isOpen: false, item: null });
 
-  useEffect(() => {
-    const unsub = onSnapshot(
-      doc(db, "settings", "whatsappTemplates"),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          if (data.nextAppointmentTemplate)
-            setNextAppointmentTemplate(data.nextAppointmentTemplate);
-          if (data.simpleReminderTemplate)
-            setSimpleReminderTemplate(data.simpleReminderTemplate);
-        }
-      },
-    );
-    return () => unsub();
-  }, []);
-
   const saveWhatsAppTemplates = async (
     nextAppTemp: string,
     simpleRemTemp: string,
   ) => {
     try {
+      setNextAppointmentTemplate(nextAppTemp);
+      setSimpleReminderTemplate(simpleRemTemp);
+      try {
+        localStorage.setItem("clinic_setting_whatsapp_next_app", JSON.stringify(nextAppTemp));
+        localStorage.setItem("clinic_setting_whatsapp_simple_rem", JSON.stringify(simpleRemTemp));
+      } catch {}
       await setDoc(
         doc(db, "settings", "whatsappTemplates"),
         {
@@ -2060,12 +2124,17 @@ export default function App() {
   const fetchWeather = useCallback(async () => {
     setWeatherLoading(true);
     setWeatherError(null);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 7000);
+
     try {
       const lat = 44.8565;
       const lon = 24.8697;
       const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,relative_humidity_2m,wind_speed_10m&hourly=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=Europe%2FBucharest&forecast_days=7`;
 
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
       if (!response.ok)
         throw new Error(`Serverul meteo a returnat codul de eroare: ${response.status}`);
 
@@ -2075,7 +2144,7 @@ export default function App() {
         throw new Error("Formatul datelor despre vreme primit de la server este invalid.");
       }
 
-      setWeather({
+      const formattedWeather: WeatherData = {
         current: {
           temp: data.current.temperature_2m,
           weatherCode: data.current.weather_code,
@@ -2093,14 +2162,39 @@ export default function App() {
           temp: data.hourly.temperature_2m,
           weatherCode: data.hourly.weather_code,
         },
-      });
+      };
+
+      setWeather(formattedWeather);
+      try {
+        localStorage.setItem(
+          "clinic_weather_cache",
+          JSON.stringify({ data: formattedWeather, cachedAt: new Date().toISOString() })
+        );
+      } catch {}
     } catch (error) {
+      clearTimeout(timeoutId);
       console.warn(
-        "Weather fetch failed:",
+        "Weather fetch failed, falling back to cache if available:",
         error instanceof Error ? error.message : "Network error",
       );
+
+      // Verificăm dacă avem date meteo salvate în memoria cache
+      try {
+        const cached = localStorage.getItem("clinic_weather_cache");
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed && parsed.data && parsed.data.current) {
+            setWeather(parsed.data);
+            setWeatherError("Mod offline: se afișează datele meteo salvate anterior.");
+            return;
+          }
+        }
+      } catch {}
+
       setWeatherError(
-        error instanceof Error ? error.message : "Nu s-a putut face conexiunea la serverul Open-Meteo. Verificați conexiunea la internet."
+        error instanceof Error && error.name === "AbortError"
+          ? "Conexiunea la serverul meteo a expirat (timeout). Verificați conexiunea."
+          : "Nu s-a putut conecta la serverul meteo. Verificați conexiunea la internet."
       );
     } finally {
       setWeatherLoading(false);
@@ -2124,6 +2218,7 @@ export default function App() {
   const [isOmniboxOpen, setIsOmniboxOpen] = useState(false);
   const universalSearchInputRef = useRef<HTMLInputElement>(null);
   const omniboxRef = useRef<HTMLDivElement>(null);
+  const searchedOmniboxQueriesRef = useRef<Set<string>>(new Set());
 
   const omniboxMatches = useMemo(() => {
     const q = universalSearchQuery.trim();
@@ -2368,48 +2463,38 @@ export default function App() {
   }, [isOmniboxOpen]);
 
   // Smart / Lazy Loading: Căutare automată în arhivă pentru Omnibox (Spotlight)
+  // Optimizat Firebase: nu declanșează citiri dacă pacientul a fost deja găsit în memorie,
+  // nu re-interoghează medicalRecords (care sunt deja sincronizate integral),
+  // și memorează interogările recente pentru a elimina citirile repetitive la tastare.
   useEffect(() => {
     const q = universalSearchQuery.trim();
     if (q.length < 3) return;
 
+    // 1. Dacă pacientul există deja în memoria locală, nu mai consumăm citiri Firebase
+    if (omniboxMatches.length > 0) return;
+
+    // 2. Dacă termenul a fost deja căutat în această sesiune, nu mai re-interogăm
+    if (searchedOmniboxQueriesRef.current.has(q)) return;
+
     const timer = setTimeout(async () => {
       try {
+        searchedOmniboxQueriesRef.current.add(q);
         const cleanDigits = q.replace(/\D/g, "");
-        const fetchedRecords: MedicalRecord[] = [];
         const fetchedAppointments: Appointment[] = [];
 
-        // Căutare după telefon în arhivă dacă sunt cifre
+        // Căutare doar în arhiva de programări vechi (medicalRecords sunt deja în memorie)
         if (cleanDigits.length >= 4) {
-          const snapRecords = await getDocs(
-            query(collection(db, "medicalRecords"), where("patientPhone", "==", q))
-          ).catch(() => null);
-          snapRecords?.forEach((d) => fetchedRecords.push({ id: d.id, ...d.data() } as MedicalRecord));
-
           const snapApps = await getDocs(
             query(collection(db, "appointments"), where("patientPhone", "==", q))
           ).catch(() => null);
           snapApps?.forEach((d) => fetchedAppointments.push({ id: d.id, ...d.data() } as Appointment));
         }
 
-        // Căutare după nume în arhivă
-        const snapName = await getDocs(
-          query(collection(db, "medicalRecords"), where("patientName", "==", q))
-        ).catch(() => null);
-        snapName?.forEach((d) => fetchedRecords.push({ id: d.id, ...d.data() } as MedicalRecord));
-
         const snapNameApp = await getDocs(
           query(collection(db, "appointments"), where("patientName", "==", q))
         ).catch(() => null);
         snapNameApp?.forEach((d) => fetchedAppointments.push({ id: d.id, ...d.data() } as Appointment));
 
-        // Îmbină în memorie fără duplicare
-        if (fetchedRecords.length > 0) {
-          setMedicalRecords((prev) => {
-            const existingIds = new Set(prev.map((r) => r.id));
-            const toAdd = fetchedRecords.filter((r) => !existingIds.has(r.id));
-            return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
-          });
-        }
         if (fetchedAppointments.length > 0) {
           setAppointments((prev) => {
             const existingIds = new Set(prev.map((a) => a.id));
@@ -2420,10 +2505,11 @@ export default function App() {
       } catch (err) {
         console.warn("Omnibox archive search notice:", err);
       }
-    }, 350);
+    }, 500);
 
     return () => clearTimeout(timer);
-  }, [universalSearchQuery]);
+  }, [universalSearchQuery, omniboxMatches.length]);
+
 
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [openDocDropdownId, setOpenDocDropdownId] = useState<string | null>(
@@ -2610,7 +2696,7 @@ export default function App() {
 
   const [noShowMonthFilter, setNoShowMonthFilter] = useState<string>("all");
   const [noShowSearchQuery, setNoShowSearchQuery] = useState<string>("");
-  const [configActiveTab, setConfigActiveTab] = useState<"settings" | "frames" | "audit" | "noshow" | "elderly" | "backup">("settings");
+  const [configActiveTab, setConfigActiveTab] = useState<"settings" | "frames" | "audit" | "noshow" | "elderly" | "recall" | "backup">("settings");
   // Online / Offline state & auto-sync indicator
   const [isAppOnline, setIsAppOnline] = useState<boolean>(() => typeof navigator !== "undefined" ? navigator.onLine : true);
   const [showReconnectedBanner, setShowReconnectedBanner] = useState<boolean>(false);
@@ -2720,24 +2806,40 @@ export default function App() {
     }
 
     if (qty > 0 && item.id) {
-      const newQty = qty - 1;
-      // Actualizare imediată în starea locală pentru feedback rapid în UI
-      setFrameStockList((prev) =>
-        prev.map((f) => (f.id === item.id ? { ...f, quantity: newQty } : f))
-      );
-      // Persistare în Firestore
       try {
-        await updateDoc(doc(db, "frame_stock", item.id), {
-          quantity: newQty,
-          updatedAt: new Date().toISOString(),
+        let finalQty = 0;
+        await runTransaction(db, async (transaction) => {
+          const frameRef = doc(db, "frame_stock", item.id);
+          const snap = await transaction.get(frameRef);
+          if (!snap.exists()) {
+            throw new Error("Rama nu a fost găsită în baza de date.");
+          }
+          const actualDbQty = Number(snap.data().quantity) || 0;
+          if (actualDbQty <= 0) {
+            throw new Error("Stocul a fost deja epuizat de către un alt utilizator.");
+          }
+          finalQty = actualDbQty - 1;
+          transaction.update(frameRef, {
+            quantity: finalQty,
+            updatedAt: new Date().toISOString(),
+          });
         });
+
+        // Actualizare sincronizată în starea locală
+        setFrameStockList((prev) =>
+          prev.map((f) => (f.id === item.id ? { ...f, quantity: finalQty } : f))
+        );
         await logActivity(
           "Diminuare Stoc Ramă (Comandă)",
-          `Selectată rama "${displayCode}" pentru comanda de ochelari. Stoc diminuat cu 1 buc. (Stoc rămas: ${newQty} buc.)`
+          `Selectată rama "${displayCode}" pentru comanda de ochelari. Stoc diminuat cu 1 buc. (Stoc rămas: ${finalQty} buc.)`
         );
-      } catch (err) {
-        console.error("Eroare la diminuarea stocului în Firestore:", err);
-        handleFirestoreError(err, OperationType.WRITE, "frame_stock");
+      } catch (err: any) {
+        console.error("Eroare tranzacție stoc ramă în Firestore:", err);
+        if (err?.message?.includes("epuizat")) {
+          alert(`⚠️ ATENȚIE: Rama "${displayCode}" figurează cu STOC 0 în baza de date!`);
+        } else {
+          handleFirestoreError(err, OperationType.WRITE, "frame_stock");
+        }
       }
     } else {
       alert(
@@ -2910,15 +3012,24 @@ export default function App() {
   };
 
   const handleQuickStockChange = async (frameId: string, currentQty: number, delta: number) => {
-    const newQty = Math.max(0, currentQty + delta);
-    if (newQty === currentQty) return;
     try {
-      await updateDoc(doc(db, "frame_stock", frameId), {
-        quantity: newQty,
-        updatedAt: new Date().toISOString(),
+      let finalQty = currentQty;
+      await runTransaction(db, async (transaction) => {
+        const frameRef = doc(db, "frame_stock", frameId);
+        const snap = await transaction.get(frameRef);
+        if (!snap.exists()) return;
+        const actualDbQty = Number(snap.data().quantity) || 0;
+        finalQty = Math.max(0, actualDbQty + delta);
+        transaction.update(frameRef, {
+          quantity: finalQty,
+          updatedAt: new Date().toISOString(),
+        });
       });
+      setFrameStockList((prev) =>
+        prev.map((f) => (f.id === frameId ? { ...f, quantity: finalQty } : f))
+      );
     } catch (err) {
-      console.error("Eroare la modificare stoc:", err);
+      console.error("Eroare tranzacție modificare stoc:", err);
       handleFirestoreError(err, OperationType.WRITE, "frame_stock");
     }
   };
@@ -3749,14 +3860,19 @@ export default function App() {
 
   const sendBirthdayWhatsAppMessage = useCallback((phone: string | undefined, message: string) => {
     if (!phone) return;
-    let cleanPhone = phone.replace(/[^0-9+]/g, "");
-    if (cleanPhone.startsWith("07")) {
-      cleanPhone = "4" + cleanPhone;
-    } else if (cleanPhone.startsWith("7")) {
-      cleanPhone = "40" + cleanPhone;
+    const stripDiacriticsPref = localStorage.getItem("clinic_setting_whatsapp_strip_diacritics") === "true";
+    const { url, isValidPhone, sanitizedMessage } = buildWhatsAppUrl(phone, message, {
+      removeDiacritics: stripDiacriticsPref,
+    });
+    if (!isValidPhone) {
+      alert("Numărul de telefon al pacientului nu este valid pentru WhatsApp.");
+      return;
     }
-    const encodedMessage = encodeURIComponent(message);
-    window.open(`https://wa.me/${cleanPhone}?text=${encodedMessage}`, "_blank");
+    const opened = openWhatsAppUrl(url);
+    if (!opened) {
+      navigator.clipboard?.writeText(sanitizedMessage);
+      alert("Fereastra pop-up WhatsApp a fost blocată de browser. Mesajul a fost copiat în clipboard!");
+    }
   }, []);
 
   const getAllPatients = useCallback(() => {
@@ -4033,26 +4149,34 @@ export default function App() {
     [key: string]: any;
   }) => {
     let rawPhone = (order.patientPhone || "").trim();
-    let cleanDigits = rawPhone.replace(/\D/g, "");
+    let phoneVal = cleanWhatsAppPhone(rawPhone);
 
-    if (!cleanDigits) {
+    if (!phoneVal.isValid) {
       const inputPhone = window.prompt(
         "Introduceți numărul de telefon al pacientului pentru notificarea WhatsApp:",
+        rawPhone
       );
       if (!inputPhone) return;
-      cleanDigits = inputPhone.replace(/\D/g, "");
+      phoneVal = cleanWhatsAppPhone(inputPhone);
+      if (!phoneVal.isValid) {
+        alert("Numărul de telefon introdus nu este valid.");
+        return;
+      }
     }
 
-    if (cleanDigits.startsWith("0") && cleanDigits.length === 10) {
-      cleanDigits = "4" + cleanDigits;
-    } else if (!cleanDigits.startsWith("40") && cleanDigits.length === 9) {
-      cleanDigits = "40" + cleanDigits;
+    const stripDiacriticsPref = localStorage.getItem("clinic_setting_whatsapp_strip_diacritics") === "true";
+    const message = buildGlassesReadyMessage({
+      patientName: order.patientName,
+      removeDiacritics: stripDiacriticsPref,
+    });
+    const { url } = buildWhatsAppUrl(phoneVal.cleanPhone, message, { removeDiacritics: stripDiacriticsPref });
+    const opened = openWhatsAppUrl(url);
+    if (!opened) {
+      navigator.clipboard?.writeText(message);
+      alert(
+        "Fereastra pop-up WhatsApp a fost blocată de browser. Mesajul a fost copiat în clipboard! Puteți deschide manual WhatsApp și lipi mesajul."
+      );
     }
-
-    const message =
-      "Bună ziua, vă informăm că ochelarii dumneavoastră sunt gata la Clinica Negreanu din Pitesti (Piata Ceair). Vă așteptăm cu drag pentru ridicare și ajustare! Pentru alte informatii sunati va rog pe  0248223162";
-    const url = `https://wa.me/${cleanDigits}?text=${encodeURIComponent(message)}`;
-    window.open(url, "_blank");
 
     // Salvare automată confirmare notificare WhatsApp & trecere pe ready_for_pickup
     try {
@@ -4616,13 +4740,7 @@ export default function App() {
   } | null>(null);
 
   const formatWhatsAppPhone = (phone: string) => {
-    let cleaned = phone.replace(/\D/g, ""); // keep only digits
-    if (cleaned.startsWith("0")) {
-      cleaned = "40" + cleaned.slice(1);
-    } else if (cleaned.length === 9) {
-      cleaned = "40" + cleaned;
-    }
-    return cleaned;
+    return cleanWhatsAppPhone(phone).cleanPhone;
   };
 
   const getDoctorName = (doctorId: string): string => {
@@ -4657,13 +4775,20 @@ export default function App() {
       msg = msg.replaceAll("{ora}", "---");
       msg = msg.replaceAll("{medic}", "---");
     }
-    return msg;
+
+    try {
+      const stripDiacriticsPref = localStorage.getItem("clinic_setting_whatsapp_strip_diacritics") === "true";
+      return stripDiacriticsPref ? stripDiacritics(msg) : normalizeRomanianDiacritics(msg);
+    } catch {
+      return normalizeRomanianDiacritics(msg);
+    }
   };
 
   const handleOpenWhatsAppModal = (
     patientName: string,
     patientPhone: string,
     appointment?: Appointment,
+    customInitialMessage?: string,
   ) => {
     if (!patientPhone) {
       alert("Pacientul nu are un număr de telefon salvat!");
@@ -4696,16 +4821,22 @@ export default function App() {
 
     let initialTemplate: "next_appointment" | "simple_reminder" | "custom" =
       "simple_reminder";
-    let messageText = generateMessageFromTemplate(
-      simpleReminderTemplate,
-      patientName,
-      nextApp,
-    );
+    let messageText = "";
 
-    if (nextApp) {
+    if (customInitialMessage) {
+      initialTemplate = "custom";
+      messageText = normalizeRomanianDiacritics(customInitialMessage);
+    } else if (nextApp) {
       initialTemplate = "next_appointment";
       messageText = generateMessageFromTemplate(
         nextAppointmentTemplate,
+        patientName,
+        nextApp,
+      );
+    } else {
+      initialTemplate = "simple_reminder";
+      messageText = generateMessageFromTemplate(
+        simpleReminderTemplate,
         patientName,
         nextApp,
       );
@@ -4743,15 +4874,34 @@ export default function App() {
     }
   };
 
-  const [roleLabelsState, setRoleLabelsState] =
-    useState<Record<Role, string>>(ROLE_LABELS);
+  const [roleLabelsState, setRoleLabelsState] = useState<Record<Role, string>>(() => {
+    try {
+      const cached = localStorage.getItem("clinic_setting_role_labels");
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return ROLE_LABELS;
+  });
 
-  const [treatmentCategoriesState, setTreatmentCategoriesState] =
-    useState<
-      Record<string, { name: string; full: string; active?: boolean }[]>
-    >(TREATMENT_CATEGORIES);
-  const [treatmentProtocolsState, setTreatmentProtocolsState] =
-    useState<Record<string, string[]>>(TREATMENT_PROTOCOLS);
+  const [treatmentCategoriesState, setTreatmentCategoriesState] = useState<
+    Record<string, { name: string; full: string; active?: boolean }[]>
+  >(() => {
+    try {
+      const cached = localStorage.getItem("clinic_setting_treatment_categories");
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return TREATMENT_CATEGORIES;
+  });
+
+  const [treatmentProtocolsState, setTreatmentProtocolsState] = useState<
+    Record<string, string[]>
+  >(() => {
+    try {
+      const cached = localStorage.getItem("clinic_setting_treatment_protocols");
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return TREATMENT_PROTOCOLS;
+  });
+
   const [treatmentProtocolsDraft, setTreatmentProtocolsDraft] = useState<
     Record<string, string[]>
   >({});
@@ -4759,7 +4909,15 @@ export default function App() {
     useState<string>("");
   const [newProtocolName, setNewProtocolName] = useState<string>("");
   const [newProtocolItem, setNewProtocolItem] = useState<string>("");
-  const [categoryOrderState, setCategoryOrderState] = useState<string[]>([]);
+
+  const [categoryOrderState, setCategoryOrderState] = useState<string[]>(() => {
+    try {
+      const cached = localStorage.getItem("clinic_setting_treatment_category_order");
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return [];
+  });
+
   const [gestiuneSelectedCategory, setGestiuneSelectedCategory] =
     useState<string>("");
   const [newCategoryName, setNewCategoryName] = useState<string>("");
@@ -4776,7 +4934,16 @@ export default function App() {
   const [isProtocolsGestiuneOpen, setIsProtocolsGestiuneOpen] =
     useState<boolean>(false);
 
-  const [symptomOptionsState, setSymptomOptionsState] = useState<string[]>(SYMPTOM_OPTIONS);
+  const [symptomOptionsState, setSymptomOptionsState] = useState<string[]>(() => {
+    try {
+      const cached = localStorage.getItem("clinic_setting_symptoms");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return SYMPTOM_OPTIONS;
+  });
   const [symptomOptionsDraft, setSymptomOptionsDraft] = useState<string[]>([]);
   const [isSymptomsGestiuneOpen, setIsSymptomsGestiuneOpen] = useState<boolean>(false);
 
@@ -4784,7 +4951,16 @@ export default function App() {
   const [editingSymptomIndex, setEditingSymptomIndex] = useState<number | null>(null);
   const [editingSymptomValue, setEditingSymptomValue] = useState("");
 
-  const [diagnosticOptionsState, setDiagnosticOptionsState] = useState<string[]>(DEFAULT_DIAGNOSTICS);
+  const [diagnosticOptionsState, setDiagnosticOptionsState] = useState<string[]>(() => {
+    try {
+      const cached = localStorage.getItem("clinic_setting_diagnostics");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return DEFAULT_DIAGNOSTICS;
+  });
   const [diagnosticOptionsDraft, setDiagnosticOptionsDraft] = useState<string[]>([]);
   const [isDiagnosticsGestiuneOpen, setIsDiagnosticsGestiuneOpen] = useState<boolean>(false);
 
@@ -4792,7 +4968,16 @@ export default function App() {
   const [editingDiagnosticIndex, setEditingDiagnosticIndex] = useState<number | null>(null);
   const [editingDiagnosticValue, setEditingDiagnosticValue] = useState("");
 
-  const [recommendationOptionsState, setRecommendationOptionsState] = useState<string[]>(DEFAULT_RECOMMENDATIONS);
+  const [recommendationOptionsState, setRecommendationOptionsState] = useState<string[]>(() => {
+    try {
+      const cached = localStorage.getItem("clinic_setting_recommendations");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return DEFAULT_RECOMMENDATIONS;
+  });
   const [recommendationOptionsDraft, setRecommendationOptionsDraft] = useState<string[]>([]);
   const [isRecommendationsGestiuneOpen, setIsRecommendationsGestiuneOpen] = useState<boolean>(false);
 
@@ -4800,169 +4985,166 @@ export default function App() {
   const [editingRecommendationIndex, setEditingRecommendationIndex] = useState<number | null>(null);
   const [editingRecommendationValue, setEditingRecommendationValue] = useState("");
 
-  const [anteriorSegmentOptionsState, setAnteriorSegmentOptionsState] = useState<string[]>(DEFAULT_ANTERIOR_SEGMENT);
+  const [anteriorSegmentOptionsState, setAnteriorSegmentOptionsState] = useState<string[]>(() => {
+    try {
+      const cached = localStorage.getItem("clinic_setting_anterior_segment");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return DEFAULT_ANTERIOR_SEGMENT;
+  });
   const [anteriorSegmentOptionsDraft, setAnteriorSegmentOptionsDraft] = useState<string[]>([]);
   const [isAnteriorSegmentGestiuneOpen, setIsAnteriorSegmentGestiuneOpen] = useState<boolean>(false);
   const [newAnteriorSegmentName, setNewAnteriorSegmentName] = useState("");
   const [editingAnteriorSegmentIndex, setEditingAnteriorSegmentIndex] = useState<number | null>(null);
   const [editingAnteriorSegmentValue, setEditingAnteriorSegmentValue] = useState("");
 
-  const [posteriorSegmentOptionsState, setPosteriorSegmentOptionsState] = useState<string[]>(DEFAULT_POSTERIOR_SEGMENT);
+  const [posteriorSegmentOptionsState, setPosteriorSegmentOptionsState] = useState<string[]>(() => {
+    try {
+      const cached = localStorage.getItem("clinic_setting_posterior_segment");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return DEFAULT_POSTERIOR_SEGMENT;
+  });
   const [posteriorSegmentOptionsDraft, setPosteriorSegmentOptionsDraft] = useState<string[]>([]);
   const [isPosteriorSegmentGestiuneOpen, setIsPosteriorSegmentGestiuneOpen] = useState<boolean>(false);
   const [newPosteriorSegmentName, setNewPosteriorSegmentName] = useState("");
   const [editingPosteriorSegmentIndex, setEditingPosteriorSegmentIndex] = useState<number | null>(null);
   const [editingPosteriorSegmentValue, setEditingPosteriorSegmentValue] = useState("");
 
-  useEffect(() => {
-    const unsub = onSnapshot(
-      doc(db, "settings", "symptomOptions"),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          if (data && Array.isArray(data.options)) {
-            setSymptomOptionsState(data.options);
-          }
-        }
-      },
-      () => {},
-    );
-    return () => unsub();
-  }, []);
+  // Sincronizare optimizată a nomenclatoarelor și setărilor din Firebase (Cache-First)
+  // Înlocuiește 9 ascultători onSnapshot permanenți cu o singură interogare pe sesiune / 30 minute
+  const syncClinicSettingsFromFirebase = useCallback(async (force = false) => {
+    try {
+      const lastSync = Number(localStorage.getItem("clinic_settings_last_sync") || 0);
+      const now = Date.now();
+      // Verificare cache: dacă datele au fost descărcate în ultimele 30 minute și nu s-a forțat reîmprospătarea, folosim memoria locală
+      if (!force && now - lastSync < 30 * 60 * 1000) {
+        return;
+      }
 
-  useEffect(() => {
-    const unsub = onSnapshot(
-      doc(db, "settings", "diagnosticOptions"),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          if (data && Array.isArray(data.options)) {
-            setDiagnosticOptionsState(data.options);
-          }
-        }
-      },
-      () => {},
-    );
-    return () => unsub();
-  }, []);
+      const settingsSnap = await getDocs(collection(db, "settings")).catch(() => null);
+      if (!settingsSnap || settingsSnap.empty) return;
 
-  useEffect(() => {
-    const unsub = onSnapshot(
-      doc(db, "settings", "recommendationOptions"),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          if (data && Array.isArray(data.options)) {
-            let mappedOptions = data.options.map((opt: string) =>
-              opt === "Purtarea ochelarilor doar la distanță (conducere auto, TV)."
-                ? "Purtarea ochelarilor doar la distanță (stradă, TV, condus-dacă este cazul)."
-                : opt
-            );
+      settingsSnap.forEach((docSnap) => {
+        const docId = docSnap.id;
+        const data = docSnap.data();
+        if (!data) return;
 
-            const targetDistanceText = "Purtarea ochelarilor doar la distanță (stradă, TV, condus-dacă este cazul).";
-            const hasTensiuneArteriala = mappedOptions.some((opt: string) =>
+        if (docId === "symptomOptions" && Array.isArray(data.options)) {
+          setSymptomOptionsState(data.options);
+          try {
+            localStorage.setItem("clinic_setting_symptoms", JSON.stringify(data.options));
+          } catch {}
+        } else if (docId === "diagnosticOptions" && Array.isArray(data.options)) {
+          setDiagnosticOptionsState(data.options);
+          try {
+            localStorage.setItem("clinic_setting_diagnostics", JSON.stringify(data.options));
+          } catch {}
+        } else if (docId === "recommendationOptions" && Array.isArray(data.options)) {
+          let mappedOptions = data.options.map((opt: string) =>
+            opt === "Purtarea ochelarilor doar la distanță (conducere auto, TV)."
+              ? "Purtarea ochelarilor doar la distanță (stradă, TV, condus-dacă este cazul)."
+              : opt
+          );
+          const targetDistanceText = "Purtarea ochelarilor doar la distanță (stradă, TV, condus-dacă este cazul).";
+          const hasTensiuneArteriala = mappedOptions.some((opt: string) =>
+            opt.toLowerCase().includes("tensiun") && opt.toLowerCase().includes("arterial")
+          );
+          if (!hasTensiuneArteriala) {
+            const distIdx = mappedOptions.indexOf(targetDistanceText);
+            if (distIdx !== -1) {
+              mappedOptions.splice(distIdx + 1, 0, "Măsurarea tensiunii arteriale.");
+            } else {
+              mappedOptions.push("Măsurarea tensiunii arteriale.");
+            }
+          } else {
+            const distIdx = mappedOptions.indexOf(targetDistanceText);
+            const artIdx = mappedOptions.findIndex((opt: string) =>
               opt.toLowerCase().includes("tensiun") && opt.toLowerCase().includes("arterial")
             );
-
-            if (!hasTensiuneArteriala) {
-              const distIdx = mappedOptions.indexOf(targetDistanceText);
-              if (distIdx !== -1) {
-                mappedOptions.splice(distIdx + 1, 0, "Măsurarea tensiunii arteriale.");
-              } else {
-                mappedOptions.push("Măsurarea tensiunii arteriale.");
-              }
-            } else {
-              const distIdx = mappedOptions.indexOf(targetDistanceText);
-              const artIdx = mappedOptions.findIndex((opt: string) =>
-                opt.toLowerCase().includes("tensiun") && opt.toLowerCase().includes("arterial")
-              );
-              if (distIdx !== -1 && artIdx !== -1 && distIdx > artIdx) {
-                const [item] = mappedOptions.splice(distIdx, 1);
-                mappedOptions.splice(artIdx, 0, item);
-              }
-            }
-
-            setRecommendationOptionsState(mappedOptions);
-          }
-        }
-      },
-      () => {},
-    );
-    return () => unsub();
-  }, []);
-
-  useEffect(() => {
-    const unsub = onSnapshot(
-      doc(db, "settings", "anteriorSegmentOptions"),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          if (data && Array.isArray(data.options)) {
-            setAnteriorSegmentOptionsState(data.options);
-          }
-        }
-      },
-      () => {},
-    );
-    return () => unsub();
-  }, []);
-
-  useEffect(() => {
-    const unsub = onSnapshot(
-      doc(db, "settings", "posteriorSegmentOptions"),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          if (data && Array.isArray(data.options)) {
-            setPosteriorSegmentOptionsState(data.options);
-          }
-        }
-      },
-      () => {},
-    );
-    return () => unsub();
-  }, []);
-
-  useEffect(() => {
-    const unsub = onSnapshot(
-      doc(db, "settings", "treatmentCategories"),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          if (data) {
-            if (data.categories) {
-              setTreatmentCategoriesState(data.categories);
-              const keys = Object.keys(data.categories).sort();
-              const savedOrder = data.categoryOrder || [];
-              const mergedOrder = [
-                ...savedOrder.filter((k: string) => keys.includes(k)),
-                ...keys.filter((k: string) => !savedOrder.includes(k)),
-              ];
-              setCategoryOrderState(mergedOrder);
+            if (distIdx !== -1 && artIdx !== -1 && distIdx > artIdx) {
+              const [item] = mappedOptions.splice(distIdx, 1);
+              mappedOptions.splice(artIdx, 0, item);
             }
           }
+          setRecommendationOptionsState(mappedOptions);
+          try {
+            localStorage.setItem("clinic_setting_recommendations", JSON.stringify(mappedOptions));
+          } catch {}
+        } else if (docId === "anteriorSegmentOptions" && Array.isArray(data.options)) {
+          setAnteriorSegmentOptionsState(data.options);
+          try {
+            localStorage.setItem("clinic_setting_anterior_segment", JSON.stringify(data.options));
+          } catch {}
+        } else if (docId === "posteriorSegmentOptions" && Array.isArray(data.options)) {
+          setPosteriorSegmentOptionsState(data.options);
+          try {
+            localStorage.setItem("clinic_setting_posterior_segment", JSON.stringify(data.options));
+          } catch {}
+        } else if (docId === "treatmentCategories" && data.categories) {
+          setTreatmentCategoriesState(data.categories);
+          const keys = Object.keys(data.categories).sort();
+          const savedOrder = data.categoryOrder || [];
+          const mergedOrder = [
+            ...savedOrder.filter((k: string) => keys.includes(k)),
+            ...keys.filter((k: string) => !savedOrder.includes(k)),
+          ];
+          setCategoryOrderState(mergedOrder);
+          try {
+            localStorage.setItem("clinic_setting_treatment_categories", JSON.stringify(data.categories));
+            localStorage.setItem("clinic_setting_treatment_category_order", JSON.stringify(mergedOrder));
+          } catch {}
+        } else if (docId === "treatmentProtocols" && data.protocols) {
+          setTreatmentProtocolsState(data.protocols);
+          try {
+            localStorage.setItem("clinic_setting_treatment_protocols", JSON.stringify(data.protocols));
+          } catch {}
+        } else if (docId === "whatsappTemplates") {
+          if (data.nextAppointmentTemplate) {
+            setNextAppointmentTemplate(data.nextAppointmentTemplate);
+            try {
+              localStorage.setItem("clinic_setting_whatsapp_next_app", JSON.stringify(data.nextAppointmentTemplate));
+            } catch {}
+          }
+          if (data.simpleReminderTemplate) {
+            setSimpleReminderTemplate(data.simpleReminderTemplate);
+            try {
+              localStorage.setItem("clinic_setting_whatsapp_simple_rem", JSON.stringify(data.simpleReminderTemplate));
+            } catch {}
+          }
+        } else if (docId === "roleLabels") {
+          setRoleLabelsState((prev) => {
+            const merged = { ...prev, ...data };
+            try {
+              localStorage.setItem("clinic_setting_role_labels", JSON.stringify(merged));
+            } catch {}
+            return merged;
+          });
         }
-      },
-      () => {},
-    );
-    return () => unsub();
+      });
+
+      localStorage.setItem("clinic_settings_last_sync", String(Date.now()));
+    } catch (err) {
+      console.warn("Could not sync clinic settings from Firebase:", err);
+    }
   }, []);
 
   useEffect(() => {
-    const unsub = onSnapshot(
-      doc(db, "settings", "treatmentProtocols"),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          if (data && data.protocols) {
-            setTreatmentProtocolsState(data.protocols);
-          }
-        }
-      },
-      () => {},
-    );
-    return () => unsub();
-  }, []);
+    syncClinicSettingsFromFirebase();
+  }, [syncClinicSettingsFromFirebase]);
+
+  // La deschiderea configurărilor sau gestiunii, ne asigurăm că avem datele proaspete
+  useEffect(() => {
+    if (isConfigModalOpen) {
+      syncClinicSettingsFromFirebase(true);
+    }
+  }, [isConfigModalOpen, syncClinicSettingsFromFirebase]);
 
   const saveTreatmentCategories = async (
     newCategories: Record<
@@ -4974,9 +5156,16 @@ export default function App() {
   ) => {
     try {
       if (!silent) setLoading(true);
+      const effectiveOrder = newOrder || categoryOrderState;
+      setTreatmentCategoriesState(newCategories);
+      setCategoryOrderState(effectiveOrder);
+      try {
+        localStorage.setItem("clinic_setting_treatment_categories", JSON.stringify(newCategories));
+        localStorage.setItem("clinic_setting_treatment_category_order", JSON.stringify(effectiveOrder));
+      } catch {}
       await setDoc(doc(db, "settings", "treatmentCategories"), {
         categories: newCategories,
-        categoryOrder: newOrder || categoryOrderState,
+        categoryOrder: effectiveOrder,
       });
     } catch (e) {
       console.error("Error saving treatment categories:", e);
@@ -4992,6 +5181,10 @@ export default function App() {
   ) => {
     try {
       if (!silent) setLoading(true);
+      setTreatmentProtocolsState(newProtocols);
+      try {
+        localStorage.setItem("clinic_setting_treatment_protocols", JSON.stringify(newProtocols));
+      } catch {}
       await setDoc(doc(db, "settings", "treatmentProtocols"), {
         protocols: newProtocols,
       });
@@ -5009,6 +5202,10 @@ export default function App() {
   ) => {
     try {
       if (!silent) setLoading(true);
+      setSymptomOptionsState(newSymptoms);
+      try {
+        localStorage.setItem("clinic_setting_symptoms", JSON.stringify(newSymptoms));
+      } catch {}
       await setDoc(doc(db, "settings", "symptomOptions"), {
         options: newSymptoms,
       });
@@ -5026,6 +5223,10 @@ export default function App() {
   ) => {
     try {
       if (!silent) setLoading(true);
+      setDiagnosticOptionsState(newDiagnostics);
+      try {
+        localStorage.setItem("clinic_setting_diagnostics", JSON.stringify(newDiagnostics));
+      } catch {}
       await setDoc(doc(db, "settings", "diagnosticOptions"), {
         options: newDiagnostics,
       });
@@ -5043,6 +5244,10 @@ export default function App() {
   ) => {
     try {
       if (!silent) setLoading(true);
+      setRecommendationOptionsState(newRecommendations);
+      try {
+        localStorage.setItem("clinic_setting_recommendations", JSON.stringify(newRecommendations));
+      } catch {}
       await setDoc(doc(db, "settings", "recommendationOptions"), {
         options: newRecommendations,
       });
@@ -5060,6 +5265,10 @@ export default function App() {
   ) => {
     try {
       if (!silent) setLoading(true);
+      setAnteriorSegmentOptionsState(newOptions);
+      try {
+        localStorage.setItem("clinic_setting_anterior_segment", JSON.stringify(newOptions));
+      } catch {}
       await setDoc(doc(db, "settings", "anteriorSegmentOptions"), {
         options: newOptions,
       });
@@ -5077,6 +5286,10 @@ export default function App() {
   ) => {
     try {
       if (!silent) setLoading(true);
+      setPosteriorSegmentOptionsState(newOptions);
+      try {
+        localStorage.setItem("clinic_setting_posterior_segment", JSON.stringify(newOptions));
+      } catch {}
       await setDoc(doc(db, "settings", "posteriorSegmentOptions"), {
         options: newOptions,
       });
@@ -5087,6 +5300,7 @@ export default function App() {
       if (!silent) setLoading(false);
     }
   };
+
 
   const handleAddSymptom = () => {
     if (!newSymptomName.trim()) return;
@@ -5741,18 +5955,7 @@ export default function App() {
     return clean || str;
   };
 
-  useEffect(() => {
-    const unsub = onSnapshot(
-      doc(db, "settings", "roleLabels"),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          setRoleLabelsState((prev) => ({ ...prev, ...snapshot.data() }));
-        }
-      },
-      () => {},
-    );
-    return () => unsub();
-  }, []);
+  // Rolurile și etichetele sunt sincronizate optimizat prin syncClinicSettingsFromFirebase
 
   const saveRoleLabels = async (
     newLabels: Record<string, string>,
@@ -5760,6 +5963,10 @@ export default function App() {
   ) => {
     try {
       if (!silent) setLoading(true);
+      setRoleLabelsState(newLabels as Record<Role, string>);
+      try {
+        localStorage.setItem("clinic_setting_role_labels", JSON.stringify(newLabels));
+      } catch {}
       await setDoc(doc(db, "settings", "roleLabels"), newLabels, {
         merge: true,
       });
@@ -5847,6 +6054,11 @@ export default function App() {
   const [editUserName, setEditUserName] = useState<string>("");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [appNotification, setAppNotification] = useState<{
+    message: string;
+    type: "error" | "warning" | "success" | "info";
+    id: number;
+  } | null>(null);
   const [tempConfigs, setTempConfigs] = useState<ScheduleConfig[]>([]);
   const [isCheckingDbConnection, setIsCheckingDbConnection] = useState(false);
 
@@ -6038,6 +6250,51 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [errorMessage]);
+
+  useEffect(() => {
+    if (appNotification) {
+      const timer = setTimeout(() => setAppNotification(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [appNotification]);
+
+  useEffect(() => {
+    // Înlocuiește alertele native de browser (alert(...)) cu notificări in-app (toasts)
+    // moderne, elegante și non-blocante, evitând pop-up-urile de sistem care blochează interfața.
+    const originalAlert = window.alert;
+    window.alert = (msg?: any) => {
+      const message = String(msg ?? "").trim();
+      if (!message) return;
+      const lower = message.toLowerCase();
+      const isSuccess =
+        lower.includes("succes") ||
+        lower.includes("restabilit") ||
+        lower.includes("salvat") ||
+        lower.includes("descărcat");
+      const isWarning =
+        lower.includes("atenție") ||
+        lower.includes("atentie") ||
+        lower.includes("avertisment") ||
+        lower.includes("blocat") ||
+        lower.includes("există deja") ||
+        lower.includes("exista deja") ||
+        lower.includes("stoc 0") ||
+        lower.includes("completați") ||
+        lower.includes("completati") ||
+        lower.includes("vă rugăm") ||
+        lower.includes("va rugam");
+
+      setAppNotification({
+        id: Date.now(),
+        message,
+        type: isSuccess ? "success" : isWarning ? "warning" : "error",
+      });
+    };
+
+    return () => {
+      window.alert = originalAlert;
+    };
+  }, []);
 
   useEffect(() => {
     const cleanupDuplicates = async () => {
@@ -7473,6 +7730,73 @@ export default function App() {
   const patientPhoneInputRef = useRef<HTMLInputElement>(null);
   const patientBirthDateInputRef = useRef<HTMLInputElement>(null);
   const [isBookingSubmitting, setIsBookingSubmitting] = useState(false);
+  const [activeSlotLocks, setActiveSlotLocks] = useState<Record<string, SlotLock>>({});
+  const currentSlotLockRef = useRef<string | null>(null);
+
+  // Eliberare lock interval orar (la salvare, cancel, ștergere sau unmount)
+  const releaseSlotLock = useCallback(async (customKey?: string) => {
+    const keyToRelease = customKey || currentSlotLockRef.current;
+    if (!keyToRelease) return;
+    if (!customKey || customKey === currentSlotLockRef.current) {
+      currentSlotLockRef.current = null;
+    }
+    try {
+      await deleteDoc(doc(db, "slot_locks", keyToRelease));
+    } catch (err) {
+      console.warn("Notice releasing slot lock:", err);
+    }
+  }, []);
+
+  const closeBookingModal = useCallback(() => {
+    releaseSlotLock();
+    setIsBookingModalOpen(false);
+    if (reschedulingAppointment) {
+      setReschedulingAppointment(null);
+    }
+    setRescheduleAsControl(false);
+    setBookingError(null);
+    setExistingPatientPrompt(null);
+    setIsBookingSubmitting(false);
+  }, [releaseSlotLock, reschedulingAppointment]);
+
+  useEffect(() => {
+    // Ascultător în timp real ultra-eficient pentru blocarea intervalelor în curs de programare
+    const unsubSlotLocks = onSnapshot(
+      collection(db, "slot_locks"),
+      (snapshot) => {
+        const locks: Record<string, SlotLock> = {};
+        const now = Date.now();
+        snapshot.docs.forEach((d) => {
+          const data = d.data() as SlotLock;
+          if (data && data.lockedAt) {
+            const age = now - new Date(data.lockedAt).getTime();
+            // Păstrăm lock-urile active sub 5 minute (TTL de siguranță anti-abandon)
+            if (age < 5 * 60 * 1000) {
+              locks[d.id] = { ...data, id: d.id };
+            } else {
+              deleteDoc(d.ref).catch(() => {});
+            }
+          }
+        });
+        setActiveSlotLocks(locks);
+      },
+      (error) => {
+        console.warn("Notice slot_locks listener:", error);
+      }
+    );
+
+    const handleBeforeUnload = () => {
+      if (currentSlotLockRef.current) {
+        deleteDoc(doc(db, "slot_locks", currentSlotLockRef.current)).catch(() => {});
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      unsubSlotLocks();
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, []);
 
   useEffect(() => {
     if (isBookingModalOpen || isNewPatientFromSearchModalOpen) {
@@ -7886,6 +8210,34 @@ export default function App() {
   }, [isConfigModalOpen, configActiveTab]);
 
   useEffect(() => {
+    if (profile?.role !== "admin" || !isConfigModalOpen) return;
+
+    const q = query(
+      collection(db, "connection_logs"),
+      orderBy("timestamp", "desc"),
+      limit(200)
+    );
+
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        const logs = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        })) as any[];
+        setConnectionLogs(logs);
+      },
+      (error) => {
+        if (!error.message?.toLowerCase().includes("quota")) {
+          console.error("Error fetching connection logs in real-time:", error);
+        }
+      }
+    );
+
+    return () => unsub();
+  }, [profile?.role, isConfigModalOpen]);
+
+  useEffect(() => {
     if (profile?.role.startsWith("doctor")) {
       setAppointmentHistoryDoctorFilter(profile.role);
     } else {
@@ -8032,7 +8384,7 @@ export default function App() {
           return;
         }
         if (isBookingModalOpen) {
-          setIsBookingModalOpen(false);
+          closeBookingModal();
           return;
         }
         if (isConfigModalOpen) {
@@ -8418,60 +8770,22 @@ export default function App() {
     setSearchFilter("all");
     setIsSearchModalOpen(true);
 
-    // On-demand Firestore search for historical records matching query
+    // Căutare la cerere în arhiva de programări mai vechi de 30 de zile (medicalRecords sunt deja în memorie)
     const trimmedQuery = queryStr.trim();
     if (trimmedQuery.length >= 3) {
       (async () => {
         try {
-          const extraDocs: MedicalRecord[] = [];
           const extraApps: Appointment[] = [];
           if (type === "phone" && cleanDigits.length >= 3) {
-            const snap = await getDocs(
-              query(collection(db, "medicalRecords"), where("patientPhone", "==", trimmedQuery))
-            );
-            snap.forEach((d) => extraDocs.push({ id: d.id, ...d.data() } as MedicalRecord));
-
             const snapApp = await getDocs(
               query(collection(db, "appointments"), where("patientPhone", "==", trimmedQuery))
             ).catch(() => null);
             snapApp?.forEach((d) => extraApps.push({ id: d.id, ...d.data() } as Appointment));
           } else if (type === "name") {
-            const snap = await getDocs(
-              query(collection(db, "medicalRecords"), where("patientName", "==", trimmedQuery))
-            );
-            snap.forEach((d) => extraDocs.push({ id: d.id, ...d.data() } as MedicalRecord));
-
             const snapApp = await getDocs(
               query(collection(db, "appointments"), where("patientName", "==", trimmedQuery))
             ).catch(() => null);
             snapApp?.forEach((d) => extraApps.push({ id: d.id, ...d.data() } as Appointment));
-          }
-
-          if (extraDocs.length > 0) {
-            setMedicalRecords((prev) => {
-              const existingIds = new Set(prev.map((r) => r.id));
-              const toAdd = extraDocs.filter((r) => !existingIds.has(r.id));
-              return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
-            });
-            setSearchResults((prev) => {
-              const existingIds = new Set(prev.map((r) => r.id));
-              const formattedToAdd = extraDocs
-                .filter((med) => !existingIds.has(`med_${med.id}`) && !existingIds.has(med.id))
-                .map((med) => ({
-                  id: `med_${med.id}`,
-                  patientName: med.patientName || "",
-                  patientPhone: med.patientPhone || "",
-                  patientAge: med.patientAge?.toString() || "",
-                  patientBirthDate: med.patientBirthDate || "",
-                  patientSex: med.patientSex || "",
-                  startTime: med.updatedAt || med.createdAt || new Date(0).toISOString(),
-                  endTime: med.updatedAt || med.createdAt || new Date(0).toISOString(),
-                  doctorId: "all",
-                  status: "completed" as const,
-                  isFromHistoryOnly: true,
-                } as unknown as Appointment));
-              return formattedToAdd.length > 0 ? [...prev, ...formattedToAdd] : prev;
-            });
           }
 
           if (extraApps.length > 0) {
@@ -8481,7 +8795,7 @@ export default function App() {
               return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
             });
             setSearchResults((prev) => {
-              const existingIds = new Set(prev.map((r) => r.id));
+              const existingIds = new Set(prev.map((a) => a.id));
               const toAdd = extraApps.filter((a) => !existingIds.has(a.id));
               return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
             });
@@ -10880,23 +11194,23 @@ export default function App() {
 
   const handleGlassesOrderFromMain = (appointment: Appointment) => {
     const record =
+      medicalRecords.find(
+        (r) => isMedicalRecordMatchForAppointment(r, appointment)
+      ) ||
       findPatientMedicalRecord(
         appointment.patientName,
         appointment.patientPhone,
         appointment.patientCnp,
         medicalRecords,
-      ) ||
-      medicalRecords.find(
-        (r) => isMedicalRecordMatchForAppointment(r, appointment)
+        appointment.patientBirthDate
       ) ||
       medicalRecords.find(
         (r) =>
           r.patientName &&
           appointment.patientName &&
-          r.patientName.toLowerCase().trim() ===
-            appointment.patientName.toLowerCase().trim() &&
-          (r.patientPhone || "").trim() ===
-            (appointment.patientPhone || "").trim(),
+          arePatientNamesMatching(r.patientName, appointment.patientName) &&
+          (areBirthDatesMatching(r.patientBirthDate, appointment.patientBirthDate) ||
+           (r.patientPhone || "").trim() === (appointment.patientPhone || "").trim())
       );
 
     if (!record) {
@@ -11278,6 +11592,64 @@ export default function App() {
         setErrorMessage(msg);
         return false;
       }
+    }
+
+    const checkDiopterVal = (v: any) => {
+      if (v === undefined || v === null) return false;
+      const s = String(v).trim();
+      return s !== "" && s !== "-" && s !== "+";
+    };
+
+    const hasDioptersOnRecord = !!(
+      checkDiopterVal(currentMedicalRecord.od?.sph) ||
+      checkDiopterVal(currentMedicalRecord.od?.cyl) ||
+      checkDiopterVal(currentMedicalRecord.od?.axis) ||
+      checkDiopterVal(currentMedicalRecord.od?.add) ||
+      checkDiopterVal(currentMedicalRecord.od?.prism) ||
+      checkDiopterVal(currentMedicalRecord.os?.sph) ||
+      checkDiopterVal(currentMedicalRecord.os?.cyl) ||
+      checkDiopterVal(currentMedicalRecord.os?.axis) ||
+      checkDiopterVal(currentMedicalRecord.os?.add) ||
+      checkDiopterVal(currentMedicalRecord.os?.prism) ||
+      checkDiopterVal(currentMedicalRecord.od?.near_sph) ||
+      checkDiopterVal(currentMedicalRecord.od?.near_cyl) ||
+      checkDiopterVal(currentMedicalRecord.od?.near_axis) ||
+      checkDiopterVal(currentMedicalRecord.os?.near_sph) ||
+      checkDiopterVal(currentMedicalRecord.os?.near_cyl) ||
+      checkDiopterVal(currentMedicalRecord.os?.near_axis) ||
+      checkDiopterVal(currentMedicalRecord.od?.intermediate_sph) ||
+      checkDiopterVal(currentMedicalRecord.od?.intermediate_cyl) ||
+      checkDiopterVal(currentMedicalRecord.od?.intermediate_axis) ||
+      checkDiopterVal(currentMedicalRecord.os?.intermediate_sph) ||
+      checkDiopterVal(currentMedicalRecord.os?.intermediate_cyl) ||
+      checkDiopterVal(currentMedicalRecord.os?.intermediate_axis)
+    );
+
+    const checkDpVal = (v: any) => {
+      if (v === undefined || v === null) return false;
+      const s = String(v).trim();
+      return s !== "" && s !== "-" && s !== "0";
+    };
+
+    const hasDpOnRecord = !!(
+      checkDpVal(currentMedicalRecord.dp) ||
+      checkDpVal(currentMedicalRecord.dp_od) ||
+      checkDpVal(currentMedicalRecord.dp_os) ||
+      checkDpVal(currentMedicalRecord.dp_aproape) ||
+      checkDpVal(currentMedicalRecord.dp_aproape_od) ||
+      checkDpVal(currentMedicalRecord.dp_aproape_os) ||
+      checkDpVal(currentMedicalRecord.intermediate_dp) ||
+      checkDpVal(currentMedicalRecord.intermediate_dp_od) ||
+      checkDpVal(currentMedicalRecord.intermediate_dp_os) ||
+      checkDpVal(currentMedicalRecord.od?.pd) ||
+      checkDpVal(currentMedicalRecord.os?.pd)
+    );
+
+    if (hasDioptersOnRecord && !hasDpOnRecord) {
+      const msg = "Atenție: Au fost introduse dioptrii pe fișă (la distanță sau aproape), dar distanța interpupilară (DP) nu a fost completată! Vă rugăm să introduceți DP pentru a putea salva fișa.";
+      setBookingError(msg);
+      setErrorMessage(msg);
+      return false;
     }
 
     if (currentMedicalRecord.patientCnp) {
@@ -12504,29 +12876,43 @@ export default function App() {
     }
   };
 
-    const returnFrameStockHelper = async (frameIds: string[], reason: string) => {
+  const returnFrameStockHelper = async (frameIds: string[], reason: string) => {
     if (!frameIds || frameIds.length === 0) return;
     for (const frameId of frameIds) {
       if (!frameId) continue;
-      const matched = frameStockList.find((f) => f.id === frameId);
-      if (matched) {
-        const currentQty = Number(matched.quantity) || 0;
-        const newQty = currentQty + 1;
-        try {
-          await updateDoc(doc(db, "frame_stock", matched.id), {
-            quantity: newQty,
+      try {
+        let finalQty = 0;
+        let frameBrand = "";
+        let frameCode = "";
+        let returnSuccess = false;
+
+        await runTransaction(db, async (transaction) => {
+          const frameRef = doc(db, "frame_stock", frameId);
+          const snap = await transaction.get(frameRef);
+          if (!snap.exists()) return;
+          const data = snap.data();
+          frameBrand = data.brand || "";
+          frameCode = data.code || "";
+          const actualDbQty = Number(data.quantity) || 0;
+          finalQty = actualDbQty + 1;
+          transaction.update(frameRef, {
+            quantity: finalQty,
             updatedAt: new Date().toISOString(),
           });
+          returnSuccess = true;
+        });
+
+        if (returnSuccess) {
           setFrameStockList((prev) =>
-            prev.map((f) => (f.id === matched.id ? { ...f, quantity: newQty } : f))
+            prev.map((f) => (f.id === frameId ? { ...f, quantity: finalQty } : f))
           );
           await logActivity(
             "Revenire Stoc Ramă (+1)",
-            `Stocul pentru rama "${matched.brand ? matched.brand + " - " : ""}${matched.code}" a fost restabilit (+1 buc) datorită: ${reason}. Stoc nou: ${newQty} buc.`
+            `Stocul pentru rama "${frameBrand ? frameBrand + " - " : ""}${frameCode || frameId}" a fost restabilit (+1 buc) datorită: ${reason}. Stoc nou: ${finalQty} buc.`
           );
-        } catch (stockErr) {
-          console.error("Eroare revenire stoc ramă:", stockErr);
         }
+      } catch (stockErr) {
+        console.error("Eroare tranzacție revenire stoc ramă:", stockErr);
       }
     }
   };
@@ -12699,32 +13085,46 @@ export default function App() {
         );
       }
 
-      // 2. Pentru ramele noi care nu au fost încă scăzute, scădem 1 buc din stoc
+      // 2. Pentru ramele noi care nu au fost încă scăzute, scădem 1 buc din stoc atomic
       let activeDeductedFrameIds = prevDeductedFrameIds.filter((id) => currentTargetFrameIds.includes(id));
       for (const targetId of currentTargetFrameIds) {
         if (!activeDeductedFrameIds.includes(targetId)) {
-          const matched = frameStockList.find((f) => f.id === targetId);
-          if (matched) {
-            const currentQty = Number(matched.quantity) || 0;
-            if (currentQty > 0) {
-              const newQty = currentQty - 1;
-              try {
-                await updateDoc(doc(db, "frame_stock", matched.id), {
-                  quantity: newQty,
+          try {
+            let finalQty = 0;
+            let frameBrand = "";
+            let frameCode = "";
+            let deductedSuccess = false;
+
+            await runTransaction(db, async (transaction) => {
+              const frameRef = doc(db, "frame_stock", targetId);
+              const snap = await transaction.get(frameRef);
+              if (!snap.exists()) return;
+              const data = snap.data();
+              frameBrand = data.brand || "";
+              frameCode = data.code || "";
+              const currentDbQty = Number(data.quantity) || 0;
+              if (currentDbQty > 0) {
+                finalQty = currentDbQty - 1;
+                transaction.update(frameRef, {
+                  quantity: finalQty,
                   updatedAt: new Date().toISOString(),
                 });
-                setFrameStockList((prev) =>
-                  prev.map((f) => (f.id === matched.id ? { ...f, quantity: newQty } : f))
-                );
-                activeDeductedFrameIds.push(matched.id);
-                await logActivity(
-                  "Scădere Automată Stoc Ramă",
-                  `Scăzut automat 1 buc. din stoc pentru rama "${matched.brand ? matched.brand + " - " : ""}${matched.code}" la salvarea comenzii #${currentOrder.orderNumber}. Stoc nou: ${newQty} buc.`
-                );
-              } catch (stockErr) {
-                console.error("Eroare scădere automată stoc ramă:", stockErr);
+                deductedSuccess = true;
               }
+            });
+
+            if (deductedSuccess) {
+              setFrameStockList((prev) =>
+                prev.map((f) => (f.id === targetId ? { ...f, quantity: finalQty } : f))
+              );
+              activeDeductedFrameIds.push(targetId);
+              await logActivity(
+                "Scădere Automată Stoc Ramă",
+                `Scăzut automat 1 buc. din stoc pentru rama "${frameBrand ? frameBrand + " - " : ""}${frameCode || targetId}" la salvarea comenzii #${currentOrder.orderNumber}. Stoc nou: ${finalQty} buc.`
+              );
             }
+          } catch (stockErr) {
+            console.error("Eroare tranzacție scădere automată stoc ramă:", stockErr);
           }
         }
       }
@@ -12769,6 +13169,27 @@ export default function App() {
           removeUndefined(updatedRecord),
           { merge: true },
         );
+      }
+
+      try {
+        const qStandalone = query(
+          collection(db, "glasses_orders"),
+          where("orderNumber", "==", currentOrder.orderNumber),
+        );
+        const snapStandalone = await getDocs(qStandalone);
+        if (!snapStandalone.empty) {
+          const batch = writeBatch(db);
+          snapStandalone.docs.forEach((d) => {
+            batch.update(d.ref, removeUndefined({
+              createdAt: currentOrder.createdAt,
+              orderDate: (currentOrder as any).orderDate || currentOrder.createdAt,
+              updatedAt: new Date().toISOString(),
+            }));
+          });
+          await batch.commit();
+        }
+      } catch (e) {
+        // standalone sync is safe to ignore
       }
 
       setMedicalRecords((prev) =>
@@ -13629,8 +14050,26 @@ export default function App() {
 
     doc.setFontSize(8);
     doc.setTextColor(100);
+    let orderPlacementDateStr = "";
+    try {
+      const rawDate = order.createdAt || (order as any).orderDate;
+      if (rawDate) {
+        const d = new Date(rawDate);
+        if (!isNaN(d.getTime())) {
+          orderPlacementDateStr = format(d, "dd.MM.yyyy");
+          const hours = d.getHours();
+          const mins = d.getMinutes();
+          if (hours !== 0 || mins !== 0) {
+            orderPlacementDateStr += ` ${format(d, "HH:mm")}`;
+          }
+        }
+      }
+    } catch {}
+    if (!orderPlacementDateStr) {
+      orderPlacementDateStr = format(new Date(), "dd.MM.yyyy");
+    }
     doc.text(
-      `DATA PLASARE: ${format(new Date(order.createdAt), "dd.MM.yyyy HH:mm")}`,
+      `DATA PLASARE: ${orderPlacementDateStr}`,
       20,
       37,
     );
@@ -16084,6 +16523,7 @@ export default function App() {
           ).catch((e) => console.warn("Universal sync notice:", e));
         }
       }
+      await releaseSlotLock();
       setIsBookingModalOpen(false);
       setEditingAppointment(null);
       setReschedulingAppointment(null); // Clear rescheduling mode
@@ -16301,6 +16741,11 @@ export default function App() {
     }
 
     setDeletedAppointments((prev) => [...prev, appointmentToCancel].slice(-20));
+    try {
+      const appTime = parseISO(appointmentToCancel.startTime);
+      const lockKey = `${appointmentToCancel.doctorId}_${format(appTime, "yyyy-MM-dd_HH-mm")}`;
+      deleteDoc(doc(db, "slot_locks", lockKey)).catch(() => {});
+    } catch {}
     await deleteDoc(doc(db, "appointments", appointmentToCancel.id));
     // Eliminare garantată și instantanee din starea calendarului din memorie (pentru programări de la orice dată din trecut)
     setAppointments((prev) => prev.filter((a) => a.id !== appointmentToCancel.id));
@@ -16933,27 +17378,61 @@ export default function App() {
   const printPrescription = () => {
     if (!currentMedicalRecord) return;
 
+    const checkDiopterVal = (v: any) => {
+      if (v === undefined || v === null) return false;
+      const s = String(v).trim();
+      return s !== "" && s !== "-" && s !== "+";
+    };
+
     const hasDioptersCheck = !!(
-      (currentMedicalRecord.od.sph && currentMedicalRecord.od.sph !== "-") ||
-      (currentMedicalRecord.od.cyl && currentMedicalRecord.od.cyl !== "-") ||
-      (currentMedicalRecord.od.axis && currentMedicalRecord.od.axis !== "-") ||
-      (currentMedicalRecord.od.add && currentMedicalRecord.od.add !== "-") ||
-      (currentMedicalRecord.os.sph && currentMedicalRecord.os.sph !== "-") ||
-      (currentMedicalRecord.os.cyl && currentMedicalRecord.os.cyl !== "-") ||
-      (currentMedicalRecord.os.axis && currentMedicalRecord.os.axis !== "-") ||
-      (currentMedicalRecord.os.add && currentMedicalRecord.os.add !== "-") ||
-      (currentMedicalRecord.intermediate_enabled && currentMedicalRecord.od.intermediate_sph && currentMedicalRecord.od.intermediate_sph !== "-") ||
-      (currentMedicalRecord.intermediate_enabled && currentMedicalRecord.os.intermediate_sph && currentMedicalRecord.os.intermediate_sph !== "-")
+      checkDiopterVal(currentMedicalRecord.od?.sph) ||
+      checkDiopterVal(currentMedicalRecord.od?.cyl) ||
+      checkDiopterVal(currentMedicalRecord.od?.axis) ||
+      checkDiopterVal(currentMedicalRecord.od?.add) ||
+      checkDiopterVal(currentMedicalRecord.od?.prism) ||
+      checkDiopterVal(currentMedicalRecord.os?.sph) ||
+      checkDiopterVal(currentMedicalRecord.os?.cyl) ||
+      checkDiopterVal(currentMedicalRecord.os?.axis) ||
+      checkDiopterVal(currentMedicalRecord.os?.add) ||
+      checkDiopterVal(currentMedicalRecord.os?.prism) ||
+      checkDiopterVal(currentMedicalRecord.od?.near_sph) ||
+      checkDiopterVal(currentMedicalRecord.od?.near_cyl) ||
+      checkDiopterVal(currentMedicalRecord.od?.near_axis) ||
+      checkDiopterVal(currentMedicalRecord.os?.near_sph) ||
+      checkDiopterVal(currentMedicalRecord.os?.near_cyl) ||
+      checkDiopterVal(currentMedicalRecord.os?.near_axis) ||
+      checkDiopterVal(currentMedicalRecord.od?.intermediate_sph) ||
+      checkDiopterVal(currentMedicalRecord.od?.intermediate_cyl) ||
+      checkDiopterVal(currentMedicalRecord.od?.intermediate_axis) ||
+      checkDiopterVal(currentMedicalRecord.os?.intermediate_sph) ||
+      checkDiopterVal(currentMedicalRecord.os?.intermediate_cyl) ||
+      checkDiopterVal(currentMedicalRecord.os?.intermediate_axis)
     );
 
+    const checkDpVal = (v: any) => {
+      if (v === undefined || v === null) return false;
+      const s = String(v).trim();
+      return s !== "" && s !== "-" && s !== "0";
+    };
+
     const hasDpCheck = !!(
-      (currentMedicalRecord.dp && currentMedicalRecord.dp.trim() !== "" && currentMedicalRecord.dp !== "-") ||
-      (currentMedicalRecord.dp_od && currentMedicalRecord.dp_os && currentMedicalRecord.dp_od.trim() !== "" && currentMedicalRecord.dp_os.trim() !== "") ||
-      (currentMedicalRecord.dp_aproape && currentMedicalRecord.dp_aproape.trim() !== "" && currentMedicalRecord.dp_aproape !== "-")
+      checkDpVal(currentMedicalRecord.dp) ||
+      checkDpVal(currentMedicalRecord.dp_od) ||
+      checkDpVal(currentMedicalRecord.dp_os) ||
+      checkDpVal(currentMedicalRecord.dp_aproape) ||
+      checkDpVal(currentMedicalRecord.dp_aproape_od) ||
+      checkDpVal(currentMedicalRecord.dp_aproape_os) ||
+      checkDpVal(currentMedicalRecord.intermediate_dp) ||
+      checkDpVal(currentMedicalRecord.intermediate_dp_od) ||
+      checkDpVal(currentMedicalRecord.intermediate_dp_os) ||
+      checkDpVal(currentMedicalRecord.od?.pd) ||
+      checkDpVal(currentMedicalRecord.os?.pd)
     );
 
     if (hasDioptersCheck && !hasDpCheck) {
-      alert("Atenție: Au fost introduse dioptrii pe fișă, dar distanța interpupilară (DP) nu a fost completată! Vă rugăm să introduceți DP pentru a putea printa fișa.");
+      const msg = "Atenție: Au fost introduse dioptrii pe fișă (la distanță sau aproape), dar distanța interpupilară (DP) nu a fost completată! Vă rugăm să introduceți DP pentru a putea printa fișa.";
+      setBookingError(msg);
+      setErrorMessage(msg);
       return;
     }
 
@@ -20602,7 +21081,7 @@ export default function App() {
 
     doc.setFontSize(14);
     doc.setFont("helvetica", "bold");
-    doc.text("ADEVERINTA MEDICALA", pageWidth / 2, 28, { align: "center" });
+    drawPdfTextWithDiacritics(doc, "ADEVERINȚĂ MEDICALĂ", pageWidth / 2, 28, { align: "center" });
 
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
@@ -20610,133 +21089,128 @@ export default function App() {
     let y = 42;
     const lineSpacing = 8;
 
-    doc.text(`Se adevereste ca:`, 10, y);
-    doc.setFont("helvetica", "bold");
-    const pName = cleanStr(documentForm.patientName);
-    doc.text(pName, 42, y);
-    doc.setFont("helvetica", "normal");
+    drawPdfTextWithDiacritics(doc, "Se adeverește că:", 10, y);
     doc.line(40, y + 1.5, 150, y + 1.5);
-    doc.text(`Sexul: ${documentForm.patientSex || "M / F"}`, pageWidth - 40, y);
+    doc.setFont("helvetica", "bold");
+    drawPdfTextWithDiacritics(doc, documentForm.patientName || "", 42, y, { maxWidth: 106 });
+    doc.setFont("helvetica", "normal");
+    drawPdfTextWithDiacritics(doc, `Sexul: ${documentForm.patientSex || "M / F"}`, pageWidth - 40, y);
     doc.setFontSize(7);
-    doc.text(`numele si prenumele`, 65, y + 4);
+    drawPdfTextWithDiacritics(doc, "numele și prenumele", 65, y + 4);
     doc.setFontSize(10);
 
     y += lineSpacing + 4;
-    doc.text(`cu domiciliul in: judetul`, 10, y);
-    const judet = cleanStr(documentForm.patientJudet) || "";
-    doc.setFont("helvetica", "bold");
-    doc.text(judet, 48, y);
-    doc.setFont("helvetica", "normal");
+    drawPdfTextWithDiacritics(doc, "cu domiciliul în: județul", 10, y);
     doc.line(46, y + 1.5, 78, y + 1.5);
-
-    doc.text(`localitatea`, 80, y);
-    const loc = cleanStr(documentForm.patientLocalitate) || "";
     doc.setFont("helvetica", "bold");
-    doc.text(loc, 100, y);
+    drawPdfTextWithDiacritics(doc, documentForm.patientJudet || "", 48, y, { maxWidth: 29 });
     doc.setFont("helvetica", "normal");
+
+    drawPdfTextWithDiacritics(doc, "localitatea", 80, y);
     doc.line(100, y + 1.5, 140, y + 1.5);
-
-    doc.text(`str.`, 142, y);
-    const strada = cleanStr(documentForm.patientStrada) || "";
     doc.setFont("helvetica", "bold");
-    doc.text(strada, 148, y);
+    drawPdfTextWithDiacritics(doc, documentForm.patientLocalitate || "", 100, y, { maxWidth: 39 });
     doc.setFont("helvetica", "normal");
+
+    drawPdfTextWithDiacritics(doc, "str.", 142, y);
     doc.line(148, y + 1.5, pageWidth - 10, y + 1.5);
+    doc.setFont("helvetica", "bold");
+    drawPdfTextWithDiacritics(doc, documentForm.patientStrada || "", 148, y, { maxWidth: pageWidth - 10 - 150 });
+    doc.setFont("helvetica", "normal");
 
     y += lineSpacing;
-    doc.text(`nr.`, 10, y);
-    doc.setFont("helvetica", "bold");
-    doc.text(documentForm.patientStreetNumber || "", 17, y);
-    doc.setFont("helvetica", "normal");
+    drawPdfTextWithDiacritics(doc, "nr.", 10, y);
     doc.line(16, y + 1.5, 30, y + 1.5);
-
-    doc.text(`bl.`, 32, y);
     doc.setFont("helvetica", "bold");
-    doc.text(documentForm.patientBloc || "", 38, y);
+    drawPdfTextWithDiacritics(doc, documentForm.patientStreetNumber || "", 17, y, { maxWidth: 13 });
     doc.setFont("helvetica", "normal");
+
+    drawPdfTextWithDiacritics(doc, "bl.", 32, y);
     doc.line(37, y + 1.5, 50, y + 1.5);
-
-    doc.text(`ap.`, 52, y);
     doc.setFont("helvetica", "bold");
-    doc.text(documentForm.patientApartament || "", 58, y);
+    drawPdfTextWithDiacritics(doc, documentForm.patientBloc || "", 38, y, { maxWidth: 12 });
     doc.setFont("helvetica", "normal");
+
+    drawPdfTextWithDiacritics(doc, "ap.", 52, y);
     doc.line(57, y + 1.5, 70, y + 1.5);
-
-    doc.text(`sect. ....; avand ocupatia de:`, 72, y);
-    const ocupatie = cleanStr(documentForm.occupation) || "";
     doc.setFont("helvetica", "bold");
-    doc.text(ocupatie, 125, y);
+    drawPdfTextWithDiacritics(doc, documentForm.patientApartament || "", 58, y, { maxWidth: 12 });
     doc.setFont("helvetica", "normal");
+
+    drawPdfTextWithDiacritics(doc, "sect. ....; având ocupația de:", 72, y);
     doc.line(125, y + 1.5, pageWidth - 10, y + 1.5);
+    doc.setFont("helvetica", "bold");
+    drawPdfTextWithDiacritics(doc, documentForm.occupation || "", 125, y, { maxWidth: pageWidth - 10 - 126 });
+    doc.setFont("helvetica", "normal");
 
     y += lineSpacing;
-    doc.text(`la`, 10, y);
-    const inst = cleanStr(documentForm.institution) || "";
-    doc.setFont("helvetica", "bold");
-    doc.text(inst, 15, y);
-    doc.setFont("helvetica", "normal");
+    drawPdfTextWithDiacritics(doc, "la", 10, y);
     doc.line(14, y + 1.5, pageWidth - 10, y + 1.5);
+    doc.setFont("helvetica", "bold");
+    drawPdfTextWithDiacritics(doc, documentForm.institution || "", 15, y, { maxWidth: pageWidth - 10 - 16 });
+    doc.setFont("helvetica", "normal");
 
     y += lineSpacing;
-    doc.text(`Este suferind de:`, 10, y);
-    const diagnostic = cleanStr(documentForm.diagnostic) || "";
-    const splitDiag = doc.splitTextToSize(diagnostic, pageWidth - 60);
-    doc.setFont("helvetica", "bold");
-    doc.text(splitDiag[0] || "", 40, y);
-    doc.setFont("helvetica", "normal");
+    drawPdfTextWithDiacritics(doc, "Este suferind de:", 10, y);
     doc.line(38, y + 1.5, pageWidth - 10, y + 1.5);
+    const diagnostic = documentForm.diagnostic || "";
+    const splitDiag = doc.splitTextToSize(cleanStrExceptTAndS(diagnostic), pageWidth - 60).slice(0, 2);
+    doc.setFont("helvetica", "bold");
+    drawPdfTextWithDiacritics(doc, splitDiag[0] || "", 40, y, { maxWidth: pageWidth - 10 - 41 });
+    doc.setFont("helvetica", "normal");
 
     for (let i = 1; i < splitDiag.length; i++) {
       y += lineSpacing;
       doc.setFont("helvetica", "bold");
-      doc.text(splitDiag[i], 10, y);
+      drawPdfTextWithDiacritics(doc, splitDiag[i], 10, y, { maxWidth: pageWidth - 20 });
       doc.setFont("helvetica", "normal");
       doc.line(10, y + 1.5, pageWidth - 10, y + 1.5);
     }
 
     y += lineSpacing;
-    doc.text(`Se recomanda:`, 10, y);
-    const treatmentRecs = cleanStr(documentForm.treatment || "")
+    drawPdfTextWithDiacritics(doc, "Se recomandă:", 10, y);
+    const treatmentRecs = (documentForm.treatment || "")
       .split("\n")
       .filter(
         (l: string) => l.trim() && !l.includes("Medicamentele se utilizeaza"),
       )
       .join(", ");
-    const scutire = cleanStr(documentForm.scutire || "");
+    const scutire = documentForm.scutire || "";
     const recomandari = scutire
       ? treatmentRecs
         ? `${scutire}, ${treatmentRecs}`
         : scutire
       : treatmentRecs;
 
-    const splitRec = doc.splitTextToSize(recomandari, pageWidth - 45);
+    const splitRec = doc.splitTextToSize(cleanStrExceptTAndS(recomandari), pageWidth - 45).slice(0, 2);
     doc.setFont("helvetica", "bold");
-    doc.text(splitRec[0] || "", 40, y);
+    drawPdfTextWithDiacritics(doc, splitRec[0] || "", 40, y, { maxWidth: pageWidth - 10 - 41 });
     doc.setFont("helvetica", "normal");
     doc.line(38, y + 1.5, pageWidth - 10, y + 1.5);
 
-    y += lineSpacing;
     if (splitRec.length > 1) {
+      y += lineSpacing;
       doc.setFont("helvetica", "bold");
-      doc.text(splitRec[1], 10, y);
+      drawPdfTextWithDiacritics(doc, splitRec[1], 10, y, { maxWidth: pageWidth - 20 });
       doc.setFont("helvetica", "normal");
+      doc.line(10, y + 1.5, pageWidth - 10, y + 1.5);
     }
-    doc.line(10, y + 1.5, pageWidth - 10, y + 1.5);
 
     y += lineSpacing;
-    doc.text(`S-a eliberat prezenta spre a-i servi la:`, 10, y);
+    drawPdfTextWithDiacritics(doc, "S-a eliberat prezenta spre a-i servi la:", 10, y);
     y += lineSpacing;
-    const servila = cleanStr(documentForm.servesTo);
+    const servila = documentForm.servesTo;
     if (servila) {
       doc.setFont("helvetica", "bold");
-      doc.text(servila, 10, y);
+      drawPdfTextWithDiacritics(doc, servila, 10, y, { maxWidth: pageWidth - 20 });
       doc.setFont("helvetica", "normal");
     }
     doc.line(10, y + 1.5, pageWidth - 10, y + 1.5);
 
     y += lineSpacing * 2 - 10;
-    doc.text(`Data eliberarii:`, 10, y);
-    doc.text(
+    drawPdfTextWithDiacritics(doc, "Data eliberării:", 10, y);
+    drawPdfTextWithDiacritics(
+      doc,
       `anul ${documentForm.eliberatAn || new Date().getFullYear()} luna ${documentForm.eliberatLuna || "Ianuarie"} ziua ${documentForm.eliberatZi || new Date().getDate()}`,
       10,
       y + 6,
@@ -20744,11 +21218,11 @@ export default function App() {
 
     doc.text(`L. S.`, pageWidth / 2 - 10, y + 6);
 
-    doc.text(`Semnatura si parafa medicului,`, pageWidth - 70, y);
+    drawPdfTextWithDiacritics(doc, "Semnătura și parafa medicului,", pageWidth - 70, y);
     const doctorName = documentForm.doctorName || "";
     if (doctorName) {
       doc.setFont("helvetica", "bold");
-      doc.text(cleanStr(doctorName), pageWidth - 70, y + 6);
+      drawPdfTextWithDiacritics(doc, doctorName, pageWidth - 70, y + 6, { maxWidth: 60 });
       doc.setFont("helvetica", "normal");
     } else {
       doc.text(
@@ -20807,7 +21281,7 @@ export default function App() {
 
     doc.setFontSize(16);
     doc.setFont("helvetica", "bold");
-    doc.text("Referat medical", pageWidth / 2, 55, {
+    drawPdfTextWithDiacritics(doc, "REFERAT MEDICAL", pageWidth / 2, 55, {
       align: "center",
     });
     doc.line(pageWidth / 2 - 35, 57, pageWidth / 2 + 35, 57);
@@ -20830,66 +21304,73 @@ export default function App() {
       }
     };
 
-    doc.text(`Privind situatia pacientului`, 14, y);
+    drawPdfTextWithDiacritics(doc, "Privind situația pacientului", 14, y);
     drawDottedLine(60, pageWidth - 30, y);
     doc.setFont("helvetica", "bold");
-    doc.text(
-      cleanStr(documentForm.patientName),
+    drawPdfTextWithDiacritics(
+      doc,
+      documentForm.patientName || "",
       (60 + pageWidth - 30) / 2,
       y - 1,
-      { align: "center" },
+      { align: "center", maxWidth: pageWidth - 30 - 64 },
     );
     doc.setFont("helvetica", "normal");
-    doc.text(`posesor al`, pageWidth - 28, y);
+    drawPdfTextWithDiacritics(doc, "posesor al", pageWidth - 28, y);
 
     y += lineSpacing;
-    doc.text(`B.I./C.I.:`, 14, y);
+    drawPdfTextWithDiacritics(doc, "B.I./C.I.:", 14, y);
     drawDottedLine(32, 60, y);
     doc.setFont("helvetica", "bold");
-    doc.text(documentForm.patientSeries || "", 46, y - 1, {
+    drawPdfTextWithDiacritics(doc, documentForm.patientSeries || "", 46, y - 1, {
       align: "center",
+      maxWidth: 26,
     });
     doc.setFont("helvetica", "normal");
-    doc.text(`/`, 62, y);
+    drawPdfTextWithDiacritics(doc, "/", 62, y);
     drawDottedLine(65, 100, y);
     doc.setFont("helvetica", "bold");
-    doc.text(documentForm.patientNumber || "", 82.5, y - 1, {
+    drawPdfTextWithDiacritics(doc, documentForm.patientNumber || "", 82.5, y - 1, {
       align: "center",
+      maxWidth: 33,
     });
     doc.setFont("helvetica", "normal");
-    doc.text(`CNP`, 102, y);
+    drawPdfTextWithDiacritics(doc, "CNP", 102, y);
     drawDottedLine(112, pageWidth - 45, y);
     doc.setFont("helvetica", "bold");
-    doc.text(documentForm.patientCnp || "", (112 + pageWidth - 45) / 2, y - 1, {
+    drawPdfTextWithDiacritics(doc, documentForm.patientCnp || "", (112 + pageWidth - 45) / 2, y - 1, {
       align: "center",
+      maxWidth: pageWidth - 45 - 114,
     });
     doc.setFont("helvetica", "normal");
-    doc.text(`,cu domiciliul in`, pageWidth - 43, y);
+    drawPdfTextWithDiacritics(doc, ", cu domiciliul în", pageWidth - 43, y);
 
     y += lineSpacing;
-    doc.text(`localitatea`, 14, y);
+    drawPdfTextWithDiacritics(doc, "localitatea", 14, y);
     drawDottedLine(35, 100, y);
     doc.setFont("helvetica", "bold");
-    doc.text(cleanStr(documentForm.patientLocalitate) || "", 67.5, y - 1, {
+    drawPdfTextWithDiacritics(doc, documentForm.patientLocalitate || "", 67.5, y - 1, {
       align: "center",
+      maxWidth: 63,
     });
     doc.setFont("helvetica", "normal");
-    doc.text(`judetul`, 102, y);
+    drawPdfTextWithDiacritics(doc, "județul", 102, y);
     drawDottedLine(118, pageWidth - 14, y);
     doc.setFont("helvetica", "bold");
-    doc.text(
-      cleanStr(documentForm.patientJudet) || "",
+    drawPdfTextWithDiacritics(
+      doc,
+      documentForm.patientJudet || "",
       (118 + pageWidth - 14) / 2,
       y - 1,
-      { align: "center" },
+      { align: "center", maxWidth: pageWidth - 14 - 120 },
     );
 
     y += lineSpacing;
-    doc.text(`str./sat`, 14, y);
+    drawPdfTextWithDiacritics(doc, "str./sat", 14, y);
     drawDottedLine(30, 90, y);
     doc.setFont("helvetica", "bold");
-    doc.text(cleanStr(documentForm.patientStrada) || "", 60, y - 1, {
+    drawPdfTextWithDiacritics(doc, documentForm.patientStrada || "", 60, y - 1, {
       align: "center",
+      maxWidth: 58,
     });
     doc.setFont("helvetica", "normal");
     doc.text(`bl`, 92, y);
@@ -20915,9 +21396,9 @@ export default function App() {
     doc.setFont("helvetica", "normal");
 
     y += lineSpacing;
-    doc.text(`.......Fisa de dispensarizare`, 14, y);
+    drawPdfTextWithDiacritics(doc, ".......Fișa de dispensarizare", 14, y);
     drawDottedLine(65, 110, y);
-    doc.text(`data intocmirii`, 112, y);
+    drawPdfTextWithDiacritics(doc, "data întocmirii", 112, y);
     drawDottedLine(140, pageWidth - 14, y);
     doc.setFont("helvetica", "bold");
     const dAn = documentForm.eliberatAn || new Date().getFullYear().toString();
@@ -20954,7 +21435,7 @@ export default function App() {
     y += 12;
     checkY(20);
     doc.setFont("helvetica", "bold");
-    doc.text("Antecedente privind afectiunea", 14, y);
+    drawPdfTextWithDiacritics(doc, "Antecedente privind afecțiunea", 14, y);
     doc.line(14, y + 1, 70, y + 1);
     y += lineSpacing;
     doc.setFont("helvetica", "normal");
@@ -20966,7 +21447,7 @@ export default function App() {
 
     checkY(20);
     doc.setFont("helvetica", "bold");
-    doc.text("Debutul si evolutia bolii", 14, y);
+    drawPdfTextWithDiacritics(doc, "Debutul și evoluția bolii", 14, y);
     doc.line(14, y + 1, 58, y + 1);
     y += lineSpacing;
     doc.setFont("helvetica", "normal");
@@ -21013,7 +21494,7 @@ export default function App() {
     checkY(20);
     y += 10;
     doc.setFont("helvetica", "bold");
-    doc.text("Ultimele internari in spital", 14, y);
+    drawPdfTextWithDiacritics(doc, "Ultimele internări în spital", 14, y);
     doc.line(14, y + 1, 62, y + 1);
     y += lineSpacing;
     doc.setFont("helvetica", "normal");
@@ -21048,7 +21529,7 @@ export default function App() {
     checkY(20);
     y += 10;
     doc.setFont("helvetica", "bold");
-    doc.text("Diagnostic clinic", 14, y);
+    drawPdfTextWithDiacritics(doc, "Diagnostic clinic", 14, y);
     doc.line(14, y + 1, 45, y + 1);
     y += lineSpacing;
     doc.setFont("helvetica", "normal");
@@ -21061,7 +21542,7 @@ export default function App() {
     checkY(25);
     y += 10;
     doc.setFont("helvetica", "bold");
-    doc.text("Diagnostic vizual", 14, y);
+    drawPdfTextWithDiacritics(doc, "Diagnostic vizual", 14, y);
     doc.line(14, y + 1, 44, y + 1);
     y += lineSpacing;
     doc.setFont("helvetica", "normal");
@@ -21081,7 +21562,7 @@ export default function App() {
     checkY(20);
     y += 10;
     doc.setFont("helvetica", "bold");
-    doc.text("Tratament clinic (simptomatic, curativ)", 14, y);
+    drawPdfTextWithDiacritics(doc, "Tratament clinic (simptomatic, curativ)", 14, y);
     doc.line(14, y + 1, 85, y + 1);
     y += lineSpacing;
     doc.setFont("helvetica", "normal");
@@ -21110,7 +21591,7 @@ export default function App() {
     checkY(20);
     y += 10;
     doc.setFont("helvetica", "bold");
-    doc.text("Dependent sau partial dependent de alta persoana", 14, y);
+    drawPdfTextWithDiacritics(doc, "Dependent sau parțial dependent de altă persoană", 14, y);
     doc.line(14, y + 1, 105, y + 1);
     y += lineSpacing;
     doc.setFont("helvetica", "normal");
@@ -21139,8 +21620,9 @@ export default function App() {
     checkY(25);
     y += 10;
     doc.setFont("helvetica", "bold");
-    doc.text(
-      "Deplasabila (singur,cu ajutor uni/bi lateral. Fotoliu rulant,baston, cadru etc.) sau nedeplasabila",
+    drawPdfTextWithDiacritics(
+      doc,
+      "Deplasabilă (singur, cu ajutor uni/bilateral. Fotoliu rulant, baston, cadru etc.) sau nedeplasabilă",
       14,
       y,
     );
@@ -21172,7 +21654,7 @@ export default function App() {
     checkY(20);
     y += 10;
     doc.setFont("helvetica", "bold");
-    doc.text("Plan de recuperare", 14, y);
+    drawPdfTextWithDiacritics(doc, "Plan de recuperare", 14, y);
     doc.line(14, y + 1, 48, y + 1);
     y += lineSpacing;
     doc.setFont("helvetica", "normal");
@@ -21201,7 +21683,7 @@ export default function App() {
     checkY(20);
     y += 10;
     doc.setFont("helvetica", "bold");
-    doc.text("Prognostic recuperator", 14, y);
+    drawPdfTextWithDiacritics(doc, "Prognostic recuperator", 14, y);
     doc.line(14, y + 1, 55, y + 1);
     y += lineSpacing;
     doc.setFont("helvetica", "normal");
@@ -21230,20 +21712,22 @@ export default function App() {
     checkY(35);
     y += 10;
     doc.setFont("helvetica", "normal");
-    doc.text("S-a eliberat spre a-i servi la", 14, y);
+    drawPdfTextWithDiacritics(doc, "S-a eliberat spre a-i servi la", 14, y);
     y += lineSpacing;
     doc.setFont("helvetica", "bold");
-    doc.text(
+    drawPdfTextWithDiacritics(
+      doc,
       cleanStr(
         documentForm.servesTo ||
           "Serviciul de Evaluare Complexa a Persoanelor Adulte cu Handicap - D.G.A.S.P.C.-Arges",
       ),
       14,
       y,
+      { maxWidth: pageWidth - 28 },
     );
 
     y += 15;
-    doc.text("Semnatura si parafa medicului specialist", 14, y);
+    drawPdfTextWithDiacritics(doc, "Semnătura și parafa medicului specialist", 14, y);
     y += lineSpacing;
     doc.text(
       "........................................................................",
@@ -21251,8 +21735,9 @@ export default function App() {
       y,
     );
     doc.setFont("helvetica", "bold");
-    doc.text(cleanStr(documentForm.doctorName || ""), 49, y - 1, {
+    drawPdfTextWithDiacritics(doc, cleanStr(documentForm.doctorName || ""), 49, y - 1, {
       align: "center",
+      maxWidth: 60,
     });
     doc.setFont("helvetica", "normal");
 
@@ -21319,7 +21804,7 @@ export default function App() {
 
     doc.setFontSize(18);
     doc.setFont("helvetica", "bold");
-    doc.text("Raport Medical", pageWidth / 2, 32, { align: "center" });
+    drawPdfTextWithDiacritics(doc, "RAPORT MEDICAL", pageWidth / 2, 32, { align: "center" });
 
     const activeTypesForRaport: string[] = [];
     if (documentForm.isConsultComplet) activeTypesForRaport.push("Consult Complet");
@@ -21349,22 +21834,22 @@ export default function App() {
     let y = 44;
     const lineSpacing = 6.5;
 
-    // Rând 1: Nume, Prenume, Vârstă, CNP (Fără puncte '....', doar eticheta + valoarea completată)
-    doc.text(`Nume:`, 14, y);
+    // Rând 1: Nume, Prenume, Vârstă, CNP
+    drawPdfTextWithDiacritics(doc, "Nume:", 14, y);
     if (documentForm.lastName) {
       doc.setFont("helvetica", "bold");
-      doc.text(cleanStr(documentForm.lastName), 26, y);
+      drawPdfTextWithDiacritics(doc, documentForm.lastName, 28, y, { maxWidth: 40 });
       doc.setFont("helvetica", "normal");
     }
 
-    doc.text(`Prenume:`, 70, y);
+    drawPdfTextWithDiacritics(doc, "Prenume:", 70, y);
     if (documentForm.firstName) {
       doc.setFont("helvetica", "bold");
-      doc.text(cleanStr(documentForm.firstName), 87, y);
+      drawPdfTextWithDiacritics(doc, documentForm.firstName, 87, y, { maxWidth: 40 });
       doc.setFont("helvetica", "normal");
     }
 
-    doc.text(`Varsta:`, 130, y);
+    drawPdfTextWithDiacritics(doc, "Vârstă:", 130, y);
     if (documentForm.ageSimple) {
       doc.setFont("helvetica", "bold");
       doc.text(String(documentForm.ageSimple), 143, y);
@@ -21382,52 +21867,60 @@ export default function App() {
 
     // Rând 2: Simptome
     y += lineSpacing;
-    doc.text(`Simptome:`, 14, y);
+    drawPdfTextWithDiacritics(doc, "Simptome:", 14, y);
     if (documentForm.symptoms && documentForm.symptoms.trim()) {
       doc.setFont("helvetica", "bold");
-      doc.text(
-        truncateToWidth(cleanStr(documentForm.symptoms.trim()), pageWidth - 14 - 35),
+      drawPdfTextWithDiacritics(
+        doc,
+        documentForm.symptoms.trim(),
         35,
         y,
+        { maxWidth: pageWidth - 14 - 36 }
       );
       doc.setFont("helvetica", "normal");
     }
 
     // Rând 3: Alte boli oculare
     y += lineSpacing;
-    doc.text(`Alte boli oculare:`, 14, y);
+    drawPdfTextWithDiacritics(doc, "Alte boli oculare:", 14, y);
     if (documentForm.otherEyeDiseases && documentForm.otherEyeDiseases.trim()) {
       doc.setFont("helvetica", "bold");
-      doc.text(
-        truncateToWidth(cleanStr(documentForm.otherEyeDiseases.trim()), pageWidth - 14 - 45),
+      drawPdfTextWithDiacritics(
+        doc,
+        documentForm.otherEyeDiseases.trim(),
         45,
         y,
+        { maxWidth: pageWidth - 14 - 46 }
       );
       doc.setFont("helvetica", "normal");
     }
 
     // Rând 4: Antecedente personale
     y += lineSpacing;
-    doc.text(`Antecedente personale:`, 14, y);
+    drawPdfTextWithDiacritics(doc, "Antecedente personale:", 14, y);
     if (documentForm.history && documentForm.history.trim()) {
       doc.setFont("helvetica", "bold");
-      doc.text(
-        truncateToWidth(cleanStr(documentForm.history.trim()), pageWidth - 14 - 58),
+      drawPdfTextWithDiacritics(
+        doc,
+        documentForm.history.trim(),
         58,
         y,
+        { maxWidth: pageWidth - 14 - 59 }
       );
       doc.setFont("helvetica", "normal");
     }
 
     // Rând 5: Medicamente folosite
     y += lineSpacing;
-    doc.text(`Medicamente folosite:`, 14, y);
+    drawPdfTextWithDiacritics(doc, "Medicamente folosite:", 14, y);
     if (documentForm.medications && documentForm.medications.trim()) {
       doc.setFont("helvetica", "bold");
-      doc.text(
-        truncateToWidth(cleanStr(documentForm.medications.trim()), pageWidth - 14 - 55),
+      drawPdfTextWithDiacritics(
+        doc,
+        documentForm.medications.trim(),
         55,
         y,
+        { maxWidth: pageWidth - 14 - 56 }
       );
       doc.setFont("helvetica", "normal");
     }
@@ -21435,7 +21928,7 @@ export default function App() {
     y += 10;
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
-    doc.text("EXAMEN OBIECTIV", pageWidth / 2, y, { align: "center" });
+    drawPdfTextWithDiacritics(doc, "EXAMEN OBIECTIV", pageWidth / 2, y, { align: "center" });
 
     const cl_od_desc =
       documentForm.clOdSph || documentForm.clOdCyl
@@ -21711,16 +22204,18 @@ export default function App() {
     });
 
     doc.setFont("helvetica", "normal");
-    doc.text(`MEDIC CONSULTANT`, pageWidth - 44, finalY + 12, {
+    drawPdfTextWithDiacritics(doc, "MEDIC CONSULTANT", pageWidth - 44, finalY + 12, {
       align: "center",
     });
     doc.setFont("helvetica", "bold");
-    doc.text(
-      cleanStr(documentForm.doctorName || ""),
+    drawPdfTextWithDiacritics(
+      doc,
+      documentForm.doctorName || "",
       pageWidth - 44,
       finalY + 19.5,
       {
         align: "center",
+        maxWidth: 58,
       },
     );
     doc.setFont("helvetica", "normal");
@@ -22115,7 +22610,7 @@ export default function App() {
 
     doc.setFontSize(14);
     doc.setFont("helvetica", "bold");
-    doc.text("CERTIFICAT MEDICAL Nr. ", 10, 45);
+    drawPdfTextWithDiacritics(doc, "CERTIFICAT MEDICAL Nr. ", 10, 45);
     const certTitleWidth = doc.getTextWidth("CERTIFICAT MEDICAL Nr. ");
     doc.setFontSize(10);
     doc.text(documentForm.documentNumber || "...........", 10 + certTitleWidth, 45);
@@ -22143,30 +22638,33 @@ export default function App() {
     const dZi = String(
       documentForm.eliberatZi || new Date().getDate(),
     ).padStart(2, "0");
-    doc.text(`anul ${dAn} luna ${dLunaNumeric} ziua ${dZi}`, 10, 52);
+    drawPdfTextWithDiacritics(doc, `anul ${dAn} luna ${dLunaNumeric} ziua ${dZi}`, 10, 52);
 
     doc.setFont("helvetica", "normal");
     let y = 65;
     const lineSpacing = 8;
 
-    doc.text(`In baza referatului Dr.`, 10, y);
+    drawPdfTextWithDiacritics(doc, "În baza referatului Dr.", 10, y);
     drawDottedLine(45, pageWidth - 10, y);
     doc.setFont("helvetica", "bold");
-    doc.text(
-      cleanStr(documentForm.doctorName || ""),
+    drawPdfTextWithDiacritics(
+      doc,
+      documentForm.doctorName || "",
       (45 + pageWidth - 10) / 2,
       y - 2,
       {
         align: "center",
+        maxWidth: pageWidth - 10 - 48,
       },
     );
     doc.setFont("helvetica", "normal");
 
     y += lineSpacing;
-    doc.text(`In calitate de`, 10, y);
+    drawPdfTextWithDiacritics(doc, "În calitate de", 10, y);
     drawDottedLine(30, pageWidth - 10, y);
     doc.setFont("helvetica", "bold");
-    doc.text(
+    drawPdfTextWithDiacritics(
+      doc,
       "medic specialist oftalmologie",
       (30 + pageWidth - 10) / 2,
       y - 2,
@@ -22175,19 +22673,20 @@ export default function App() {
     doc.setFont("helvetica", "normal");
 
     y += lineSpacing;
-    doc.text(`Se certifica de noi ca:`, 10, y);
+    drawPdfTextWithDiacritics(doc, "Se certifică de noi că:", 10, y);
     drawDottedLine(45, pageWidth - 10, y);
     doc.setFont("helvetica", "bold");
-    doc.text(
-      cleanStr(documentForm.patientName),
+    drawPdfTextWithDiacritics(
+      doc,
+      documentForm.patientName || "",
       (45 + pageWidth - 10) / 2,
       y - 2,
-      { align: "center" },
+      { align: "center", maxWidth: pageWidth - 10 - 48 },
     );
     doc.setFont("helvetica", "normal");
 
     y += lineSpacing;
-    doc.text(`Codul numeric personal`, 10, y);
+    drawPdfTextWithDiacritics(doc, "Codul numeric personal", 10, y);
     const cnp = documentForm.patientCnp || "";
     const boxWidth = 5;
     const boxHeight = 7;
@@ -22205,7 +22704,7 @@ export default function App() {
     }
 
     y += lineSpacing;
-    doc.text(`in varsta de`, 10, y);
+    drawPdfTextWithDiacritics(doc, "în vârstă de", 10, y);
     drawDottedLine(30, 45, y);
     doc.setFont("helvetica", "bold");
     doc.text(documentForm.ageSimple || "", (30 + 45) / 2, y - 2, {
@@ -22214,7 +22713,7 @@ export default function App() {
     doc.setFont("helvetica", "normal");
 
     y += lineSpacing;
-    doc.text(`sexul`, 60, y);
+    drawPdfTextWithDiacritics(doc, "sexul", 60, y);
     drawDottedLine(72, 85, y);
     if (documentForm.patientSex) {
       doc.setFont("helvetica", "bold");
@@ -22225,49 +22724,52 @@ export default function App() {
     }
 
     y += lineSpacing;
-    doc.text(`Domiciliat in: jud. /sect.`, 10, y);
+    drawPdfTextWithDiacritics(doc, "Domiciliat în: jud. /sect.", 10, y);
     drawDottedLine(48, 80, y);
     doc.setFont("helvetica", "bold");
-    doc.text(cleanStr(documentForm.patientJudet) || "", 64, y - 2, {
+    drawPdfTextWithDiacritics(doc, documentForm.patientJudet || "", 64, y - 2, {
       align: "center",
+      maxWidth: 30,
     });
     doc.setFont("helvetica", "normal");
-    doc.text(`loc.`, 82, y);
+    drawPdfTextWithDiacritics(doc, "loc.", 82, y);
     drawDottedLine(90, pageWidth - 10, y);
     doc.setFont("helvetica", "bold");
-    doc.text(
-      cleanStr(documentForm.patientLocalitate) || "",
+    drawPdfTextWithDiacritics(
+      doc,
+      documentForm.patientLocalitate || "",
       (90 + pageWidth - 10) / 2,
       y - 2,
-      { align: "center" },
+      { align: "center", maxWidth: pageWidth - 10 - 92 },
     );
     doc.setFont("helvetica", "normal");
 
     y += lineSpacing;
-    doc.text(`str.`, 10, y);
+    drawPdfTextWithDiacritics(doc, "str.", 10, y);
     drawDottedLine(18, 55, y);
     doc.setFont("helvetica", "bold");
-    doc.text(cleanStr(documentForm.patientStrada) || "", 36.5, y - 2, {
+    drawPdfTextWithDiacritics(doc, documentForm.patientStrada || "", 36.5, y - 2, {
       align: "center",
+      maxWidth: 35,
     });
     doc.setFont("helvetica", "normal");
-    doc.text(`nr.`, 57, y);
+    drawPdfTextWithDiacritics(doc, "nr.", 57, y);
     drawDottedLine(63, 80, y);
-    doc.text(`bl.`, 82, y);
+    drawPdfTextWithDiacritics(doc, "bl.", 82, y);
     drawDottedLine(87, 105, y);
     doc.setFont("helvetica", "bold");
     doc.text(documentForm.patientBloc || "", 96, y - 2, {
       align: "center",
     });
     doc.setFont("helvetica", "normal");
-    doc.text(`sc.`, 107, y);
+    drawPdfTextWithDiacritics(doc, "sc.", 107, y);
     drawDottedLine(113, 125, y);
     doc.setFont("helvetica", "bold");
     doc.text(documentForm.patientScara || "", 119, y - 2, {
       align: "center",
     });
     doc.setFont("helvetica", "normal");
-    doc.text(`ap.`, 127, y);
+    drawPdfTextWithDiacritics(doc, "ap.", 127, y);
     drawDottedLine(133, pageWidth - 10, y);
     doc.setFont("helvetica", "bold");
     doc.text(
@@ -22279,36 +22781,38 @@ export default function App() {
     doc.setFont("helvetica", "normal");
 
     y += lineSpacing;
-    doc.text(`B.I./C.I. seria`, 10, y);
+    drawPdfTextWithDiacritics(doc, "B.I./C.I. seria", 10, y);
     drawDottedLine(32, 50, y);
     doc.text(documentForm.patientSeries || "", 34, y - 2);
-    doc.text(`nr.`, 52, y);
+    drawPdfTextWithDiacritics(doc, "nr.", 52, y);
     drawDottedLine(57, 77, y);
     doc.text(documentForm.patientNumber || "", 59, y - 2);
-    doc.text(`avand ocupatia de:`, 79, y);
+    drawPdfTextWithDiacritics(doc, "având ocupația de:", 79, y);
     drawDottedLine(108, pageWidth - 10, y);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8.5);
-    doc.text(
-      cleanStr(documentForm.ocupatie || ""),
+    drawPdfTextWithDiacritics(
+      doc,
+      documentForm.ocupatie || "",
       (108 + pageWidth - 10) / 2,
       y - 2,
-      { align: "center" },
+      { align: "center", maxWidth: pageWidth - 10 - 110 },
     );
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
 
     y += lineSpacing;
-    doc.text(`la`, 10, y);
+    drawPdfTextWithDiacritics(doc, "la", 10, y);
     drawDottedLine(15, pageWidth - 10, y);
     doc.setFont("helvetica", "bold");
-    doc.text(cleanStr(documentForm.lucru || ""), (15 + pageWidth - 10) / 2, y - 2, {
+    drawPdfTextWithDiacritics(doc, documentForm.lucru || "", (15 + pageWidth - 10) / 2, y - 2, {
       align: "center",
+      maxWidth: pageWidth - 10 - 18,
     });
     doc.setFont("helvetica", "normal");
 
     y += lineSpacing;
-    doc.text(`Este suferind de:`, 10, y);
+    drawPdfTextWithDiacritics(doc, "Este suferind de:", 10, y);
     drawDottedLine(38, pageWidth - 10, y);
     const diagText = cleanStr(documentForm.diagnostic) || "";
     const diagLines = doc.splitTextToSize(diagText, pageWidth - 50);
@@ -22321,24 +22825,26 @@ export default function App() {
     }
 
     y += 15;
-    doc.text(`S-a eliberat prezentul spre a-i servi la:`, 10, y);
+    drawPdfTextWithDiacritics(doc, "S-a eliberat prezentul spre a-i servi la:", 10, y);
     drawDottedLine(75, pageWidth - 10, y);
     doc.setFont("helvetica", "bold");
-    doc.text(
-      cleanStr(documentForm.servesTo || ""),
+    drawPdfTextWithDiacritics(
+      doc,
+      documentForm.servesTo || "",
       (75 + pageWidth - 10) / 2,
       y - 2,
-      { align: "center" },
+      { align: "center", maxWidth: pageWidth - 10 - 78 },
     );
     doc.setFont("helvetica", "normal");
 
     y += 25;
-    doc.text("Medic director,", pageWidth - 60, y);
+    drawPdfTextWithDiacritics(doc, "Medic director,", pageWidth - 60, y);
     y += 10;
     drawDottedLine(pageWidth - 65, pageWidth - 10, y);
     doc.setFont("helvetica", "bold");
-    doc.text(cleanStr(documentForm.doctorName || ""), pageWidth - 37.5, y - 2, {
+    drawPdfTextWithDiacritics(doc, documentForm.doctorName || "", pageWidth - 37.5, y - 2, {
       align: "center",
+      maxWidth: 50,
     });
     doc.setFont("helvetica", "normal");
     y += 5;
@@ -22373,10 +22879,11 @@ export default function App() {
 
     doc.setFontSize(14);
     doc.setFont("helvetica", "bold");
-    doc.text("EXAMEN OFTALMOLOGIC", pageWidth / 2, 22, { align: "center" });
+    drawPdfTextWithDiacritics(doc, "EXAMEN OFTALMOLOGIC", pageWidth / 2, 22, { align: "center" });
     doc.setFontSize(11);
-    doc.text(
-      cleanStr("PENTRU EXPERTIZA MEDICALĂ A CAPACITĂȚII DE MUNCĂ"),
+    drawPdfTextWithDiacritics(
+      doc,
+      "PENTRU EXPERTIZA MEDICALĂ A CAPACITĂȚII DE MUNCĂ",
       pageWidth / 2,
       28,
       { align: "center" },
@@ -22386,52 +22893,56 @@ export default function App() {
     doc.setFontSize(9.5);
     let y = 40;
 
-    doc.text("Nume", 15, y);
+    drawPdfTextWithDiacritics(doc, "Nume", 15, y);
     drawDottedLine(27, 100, y);
     doc.setFont("helvetica", "bold");
-    doc.text(cleanStr(documentForm.lastName || ""), 63.5, y - 0.5, {
+    drawPdfTextWithDiacritics(doc, documentForm.lastName || "", 63.5, y - 0.5, {
       align: "center",
+      maxWidth: 70,
     });
 
     doc.setFont("helvetica", "normal");
-    doc.text("Prenume", 105, y);
+    drawPdfTextWithDiacritics(doc, "Prenume", 105, y);
     drawDottedLine(121, 195, y);
     doc.setFont("helvetica", "bold");
-    doc.text(cleanStr(documentForm.firstName || ""), 158, y - 0.5, {
+    drawPdfTextWithDiacritics(doc, documentForm.firstName || "", 158, y - 0.5, {
       align: "center",
+      maxWidth: 70,
     });
 
     y += 7;
     doc.setFont("helvetica", "normal");
-    doc.text("CNP", 15, y);
+    drawPdfTextWithDiacritics(doc, "CNP", 15, y);
     drawDottedLine(26, 80, y);
     doc.setFont("helvetica", "bold");
-    doc.text(cleanStr(documentForm.patientCnp || ""), 53, y - 0.5, {
+    drawPdfTextWithDiacritics(doc, documentForm.patientCnp || "", 53, y - 0.5, {
       align: "center",
+      maxWidth: 52,
     });
 
     doc.setFont("helvetica", "normal");
-    doc.text("Domiciliu", 85, y);
+    drawPdfTextWithDiacritics(doc, "Domiciliu", 85, y);
     drawDottedLine(103, 195, y);
     doc.setFont("helvetica", "bold");
     const fullAddr = [documentForm.patientJudet, documentForm.patientLocalitate]
       .filter(Boolean)
       .join(", ");
-    doc.text(cleanStr(fullAddr || ""), 149, y - 0.5, { align: "center" });
+    drawPdfTextWithDiacritics(doc, fullAddr || "", 149, y - 0.5, { align: "center", maxWidth: 88 });
 
     y += 7;
     doc.setFont("helvetica", "normal");
-    doc.text(cleanStr("Nr. fișă/Reg. cons."), 15, y);
+    drawPdfTextWithDiacritics(doc, "Nr. fișă/Reg. cons.", 15, y);
     drawDottedLine(47, 100, y);
     doc.setFont("helvetica", "bold");
-    doc.text(cleanStr(documentForm.documentNumber || ""), 73.5, y - 0.5, {
+    drawPdfTextWithDiacritics(doc, documentForm.documentNumber || "", 73.5, y - 0.5, {
       align: "center",
+      maxWidth: 50,
     });
 
     y += 10;
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
-    doc.text("1 DIAGNOSTIC CLINIC:", 15, y);
+    drawPdfTextWithDiacritics(doc, "1 DIAGNOSTIC CLINIC:", 15, y);
     y += 5;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
@@ -22445,7 +22956,7 @@ export default function App() {
     y += 2;
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
-    doc.text(cleanStr("2 DIAGNOSTIC FUNCȚIONAL/DEFICIENȚĂ VIZUALĂ:"), 15, y);
+    drawPdfTextWithDiacritics(doc, "2 DIAGNOSTIC FUNCȚIONAL/DEFICIENȚĂ VIZUALĂ:", 15, y);
     y += 5;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
@@ -22562,7 +23073,7 @@ export default function App() {
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9.5);
-    doc.text("DATA", 15, y);
+    drawPdfTextWithDiacritics(doc, "DATA", 15, y);
     const dAn = documentForm.eliberatAn || new Date().getFullYear().toString();
     const dLuna = documentForm.eliberatLuna || "01";
     const dZi = String(
@@ -22570,23 +23081,23 @@ export default function App() {
     ).padStart(2, "0");
     const dateFormatted = `${dZi} ${dLuna} ${dAn}`;
     doc.setFont("helvetica", "normal");
-    doc.text(cleanStr(dateFormatted), 30, y);
+    drawPdfTextWithDiacritics(doc, dateFormatted, 30, y);
     doc.line(28, y + 1, 90, y + 1);
 
     doc.setFont("helvetica", "bold");
-    doc.text("MEDIC OFTALMOLOG,", 110, y);
+    drawPdfTextWithDiacritics(doc, "MEDIC OFTALMOLOG,", 110, y);
     doc.setFont("helvetica", "normal");
-    const docNameVal = cleanStr(documentForm.doctorName || "");
-    doc.text(docNameVal, 110, y + 8);
+    drawPdfTextWithDiacritics(doc, documentForm.doctorName || "", 110, y + 8, { maxWidth: 80 });
     doc.line(110, y + 10, 195, y + 10);
 
     y += 18;
     doc.setFont("helvetica", "italic");
     doc.setFontSize(7.5);
-    doc.text("TOATE RUBRICILE TREBUIE COMPLETATE", 15, y);
+    drawPdfTextWithDiacritics(doc, "TOATE RUBRICILE TREBUIE COMPLETATE", 15, y);
     y += 4;
-    doc.text(
-      cleanStr("* OBLIGATOR PUNCTUL 4 ȘI 5 CU GRAFIC ANEXAT ȘI INTERPRETARE"),
+    drawPdfTextWithDiacritics(
+      doc,
+      "* OBLIGATORIU PUNCTUL 4 ȘI 5 CU GRAFIC ANEXAT ȘI INTERPRETARE",
       15,
       y,
     );
@@ -22602,6 +23113,39 @@ export default function App() {
     slot: { doctorId: string; time: Date },
     appointment?: Appointment,
   ) => {
+    const isEditingExistingOnly = !!appointment && !reschedulingAppointment;
+    const lockKey = `${slot.doctorId}_${format(slot.time, "yyyy-MM-dd_HH-mm")}`;
+
+    if (!isEditingExistingOnly) {
+      const existingLock = activeSlotLocks[lockKey];
+      const currentUid = auth.currentUser?.uid || profile?.uid || profile?.role || "local_user";
+      if (
+        existingLock &&
+        existingLock.lockedByUid !== currentUid &&
+        existingLock.lockedAt &&
+        Date.now() - new Date(existingLock.lockedAt).getTime() < 5 * 60 * 1000
+      ) {
+        alert(
+          `Ora ${format(slot.time, "HH:mm")} este blocată temporar de către ${existingLock.lockedByName} (în curs de programare). Vă rugăm să alegeți alt interval sau să așteptați câteva momente.`
+        );
+        return;
+      }
+
+      // Eliberare lock anterior dacă utilizatorul dăduse click pe alt slot înainte
+      if (currentSlotLockRef.current && currentSlotLockRef.current !== lockKey) {
+        releaseSlotLock(currentSlotLockRef.current);
+      }
+
+      currentSlotLockRef.current = lockKey;
+      setDoc(doc(db, "slot_locks", lockKey), {
+        doctorId: slot.doctorId,
+        slotTime: slot.time.toISOString(),
+        lockedByName: profile?.displayName || (profile as any)?.name || profile?.role || "Utilizator",
+        lockedByUid: currentUid,
+        lockedAt: new Date().toISOString(),
+      }).catch((err) => console.warn("Notice setting slot lock:", err));
+    }
+
     setBookingError(null);
     setModalSearchResults([]);
     setSelectedSlot(slot);
@@ -24588,12 +25132,8 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
-                    setExistingPatientPrompt(null);
-                    setIsBookingModalOpen(false);
-                    setIsBookingSubmitting(false);
-                    setReschedulingAppointment(null);
+                    closeBookingModal();
                     setQuickBookingPatient(null);
-                    setBookingError(null);
                   }}
                   className="p-2 -mr-1 -mt-1 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
                   title="Închide și anulează programarea"
@@ -24736,6 +25276,7 @@ export default function App() {
             </span>
             <button
               onClick={() => {
+                releaseSlotLock();
                 setReschedulingAppointment(null);
                 setRescheduleAsControl(false);
               }}
@@ -25387,7 +25928,8 @@ export default function App() {
               )}
             </div>
 
-            <div className="flex items-center gap-4 shrink-0">
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="hidden lg:block h-6 w-px bg-slate-200 dark:bg-slate-800 shrink-0" />
               {profile?.role !== "tv" && (
                 <button
                   onClick={() => {
@@ -26632,36 +27174,51 @@ export default function App() {
                     darkMode ? "bg-slate-900" : "bg-white",
                     isSaturday
                       ? darkMode
-                        ? "border-slate-400 border-[3px] shadow-xl"
-                        : "border-slate-400 border-[3px] shadow-xl"
-                      : "border-black shadow-sm",
+                        ? "border-slate-600 border-2 shadow-lg"
+                        : "border-slate-350 border-2 shadow-sm"
+                      : isToday
+                        ? darkMode
+                          ? "border-blue-500/80 shadow-md ring-1 ring-blue-500/30"
+                          : "border-blue-400 shadow-md ring-1 ring-blue-400/30"
+                        : darkMode
+                          ? "border-slate-800 shadow-xs"
+                          : "border-slate-200 shadow-2xs",
                   )}
                 >
                   <div
                     className={cn(
-                      "p-2 text-center transition-all relative sticky top-0 z-20 shadow-sm",
+                      "p-2 text-center transition-all relative sticky top-0 z-20 shadow-xs",
                       profile?.role !== "tv" && "border-b",
                       isToday
                         ? darkMode
-                          ? "bg-blue-950 border-black"
-                          : "bg-blue-50 border-black"
+                          ? "bg-blue-950/70 border-blue-900/60"
+                          : "bg-blue-50/80 border-blue-200/80"
                         : darkMode
-                          ? "bg-slate-900 border-black"
-                          : "bg-slate-50 border-black",
+                          ? "bg-slate-900 border-slate-800"
+                          : "bg-slate-50/90 border-slate-200",
                       isSaturday &&
                         (darkMode
-                          ? "bg-slate-800 border-slate-700"
-                          : "bg-slate-100 border-slate-200"),
+                          ? "bg-slate-850 border-slate-700"
+                          : "bg-slate-100/90 border-slate-200"),
                     )}
                   >
-                    <p
-                      className={cn(
-                        "text-[14px] font-black uppercase tracking-widest mb-0.5",
-                        darkMode ? "text-slate-500" : "text-slate-400",
+                    <div className="flex items-center justify-center gap-1.5 mb-0.5">
+                      <p
+                        className={cn(
+                          "text-[13px] font-black uppercase tracking-widest",
+                          isToday
+                            ? (darkMode ? "text-blue-400 font-black" : "text-blue-700 font-black")
+                            : (darkMode ? "text-slate-400" : "text-slate-500"),
+                        )}
+                      >
+                        {format(day, "EEEE", { locale: ro })}
+                      </p>
+                      {isToday && (
+                        <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded-full bg-blue-600 text-white tracking-wider">
+                          Azi
+                        </span>
                       )}
-                    >
-                      {format(day, "EEEE", { locale: ro })}
-                    </p>
+                    </div>
 
                     <div className="flex justify-center items-center h-5 my-0.5">
                       {appointmentsForDay.length === 0 ? (
@@ -26685,10 +27242,10 @@ export default function App() {
                         "inline-flex items-baseline justify-center gap-1.5 px-3.5 py-1 mx-auto rounded-xl border transition-all shadow-2xs",
                         workingDoctors.length > 1 ? "mb-1" : "mb-1.5",
                         isToday
-                          ? "bg-blue-600 border-blue-400 text-white shadow-md shadow-blue-900/30"
+                          ? "bg-blue-600 border-blue-500 text-white shadow-md shadow-blue-900/30"
                           : darkMode
-                            ? "bg-slate-900 border-slate-700 text-slate-300"
-                            : "bg-white border-slate-200 text-slate-700",
+                            ? "bg-slate-800/90 border-slate-700 text-slate-200"
+                            : "bg-white border-slate-200 text-slate-800",
                       )}
                     >
                       <span className="text-2xl font-black leading-none">
@@ -26953,21 +27510,14 @@ export default function App() {
                             const hasMedicalReportToday = slotMeta?.hasMedicalReportToday || false;
 
                             const matchingRecord = appointment
-                              ? (appointment.isNewPatientManualEntry
-                                  ? ((appointment as any).medicalRecordId
-                                      ? medicalRecords.find((r) => r.id === (appointment as any).medicalRecordId) || null
-                                      : null)
-                                  : medicalRecords.find((r) => {
-                                      const appRecordId = (appointment as any).medicalRecordId;
-                                      if (appRecordId && r.id === appRecordId) return true;
-                                      const appName = (appointment.patientName || "").trim().toLowerCase();
-                                      const rName = (r.patientName || "").trim().toLowerCase();
-                                      if (!appName || !rName || (!arePatientNamesMatching(appName, rName) && appName !== rName)) return false;
-                                      const appPhone = (appointment.patientPhone || "").replace(/\D/g, "");
-                                      const rPhone = (r.patientPhone || "").replace(/\D/g, "");
-                                      if (appPhone && rPhone && appPhone !== rPhone) return false;
-                                      return true;
-                                    }) || null)
+                              ? (medicalRecords.find((r) => isMedicalRecordMatchForAppointment(r, appointment)) ||
+                                 findPatientMedicalRecord(
+                                   appointment.patientName,
+                                   appointment.patientPhone,
+                                   appointment.patientCnp,
+                                   medicalRecords,
+                                   appointment.patientBirthDate
+                                 ) || null)
                               : null;
 
                             const historyItemForSlot = matchingRecord?.prescriptionHistory?.find((item) =>
@@ -27003,6 +27553,16 @@ export default function App() {
                               isBefore(time, new Date()) &&
                               !isSameDay(time, new Date());
 
+                            const slotLockKey = `${role}_${format(time, "yyyy-MM-dd_HH-mm")}`;
+                            const activeLock = activeSlotLocks[slotLockKey];
+                            const currentUid = auth.currentUser?.uid || profile?.uid || profile?.role || "local_user";
+                            const isLockValid =
+                              !!activeLock &&
+                              !!activeLock.lockedAt &&
+                              Date.now() - new Date(activeLock.lockedAt).getTime() < 5 * 60 * 1000;
+                            const isLockedByOther = !appointment && isLockValid && activeLock.lockedByUid !== currentUid;
+                            const isLockedByMe = !appointment && isLockValid && activeLock.lockedByUid === currentUid && isBookingModalOpen;
+
                             return (
                               <div
                                 key={`${role}-${sIdx}`}
@@ -27021,12 +27581,23 @@ export default function App() {
                                     return;
                                   }
 
+                                  if (!appointment && isLockedByOther) {
+                                    alert(
+                                      `Ora ${format(time, "HH:mm")} este blocată temporar de către ${activeLock.lockedByName} (în curs de programare). Vă rugăm să alegeți alt interval sau să așteptați câteva momente.`
+                                    );
+                                    return;
+                                  }
+
                                   if (
                                     quickBookingPatient &&
                                     !appointment &&
                                     !isPast &&
                                     !isDoctorBlocked
                                   ) {
+                                    if (isLockedByOther) {
+                                      alert(`Ora ${format(time, "HH:mm")} este blocată temporar de către ${activeLock.lockedByName}.`);
+                                      return;
+                                    }
                                     performQuickBooking(role, time);
                                     return;
                                   }
@@ -27041,29 +27612,39 @@ export default function App() {
                                   "w-full rounded-xl text-left transition-all border flex flex-col group relative cursor-pointer",
                                   appointment
                                     ? cn(
-                                        "p-2 gap-1",
+                                        "p-2 gap-1.5 shadow-xs hover:shadow-sm",
                                         appointment.status === "cancelled"
                                           ? darkMode
-                                            ? "bg-slate-800 border-slate-700 text-slate-500 opacity-60"
-                                            : "bg-slate-100 border-slate-200 text-slate-400 opacity-60"
+                                            ? "bg-slate-800/60 border-slate-700/80 text-slate-500 opacity-60"
+                                            : "bg-slate-100/70 border-slate-200 text-slate-400 opacity-60"
                                           : isConsultedToday
                                             ? darkMode
-                                              ? "bg-slate-900/10 border-slate-700 text-slate-500 opacity-60"
-                                              : "bg-slate-100/40 border-slate-300 text-slate-500 opacity-60"
+                                              ? "bg-slate-900/40 border-slate-800 text-slate-400 opacity-65 hover:opacity-90"
+                                              : "bg-slate-100/70 border-slate-250 text-slate-500 opacity-70 hover:opacity-100"
                                             : darkMode
-                                              ? "bg-red-900/20 border-red-900/30 text-red-400 hover:bg-red-900/40"
-                                              : "bg-red-50 border-red-200 text-red-600 hover:bg-red-100",
+                                              ? "bg-rose-955/30 border-rose-900/60 text-slate-200 hover:border-rose-800/80 hover:bg-rose-950/40"
+                                              : "bg-rose-50/70 border-rose-200/90 text-slate-800 hover:border-rose-300 hover:bg-rose-50",
                                       )
-                                    : cn(
-                                        "p-1 px-2",
-                                        isDoctorBlocked
-                                          ? darkMode
-                                            ? "bg-amber-900/10 border-amber-900/30 text-amber-500 hover:bg-amber-900/20"
-                                            : "bg-amber-50 border-amber-200 text-amber-600 hover:bg-amber-100"
-                                          : darkMode
-                                            ? "bg-slate-800 border-slate-700 text-slate-300 hover:border-blue-500 hover:bg-slate-700"
-                                            : "bg-white border-slate-200 text-slate-600 hover:border-blue-400 hover:bg-slate-50 shadow-sm",
-                                      ),
+                                    : isLockedByOther
+                                      ? darkMode
+                                        ? "bg-amber-950/30 border-amber-600/50 text-amber-300 cursor-not-allowed shadow-inner"
+                                        : "bg-amber-50 border-amber-300 text-amber-800 cursor-not-allowed shadow-inner"
+                                      : isLockedByMe
+                                        ? darkMode
+                                          ? "bg-blue-950/30 border-blue-500/60 text-blue-300 ring-2 ring-blue-500/40"
+                                          : "bg-blue-50 border-blue-400 text-blue-800 ring-2 ring-blue-400"
+                                        : cn(
+                                            "p-1.5 px-2.5",
+                                            isDoctorBlocked
+                                              ? darkMode
+                                                ? "bg-amber-900/10 border-amber-900/30 text-amber-500 hover:bg-amber-900/20"
+                                                : "bg-amber-50 border-amber-200 text-amber-600 hover:bg-amber-100"
+                                              : darkMode
+                                                ? "bg-slate-850/60 border-slate-800 text-slate-300 hover:border-blue-500/80 hover:bg-slate-800/90 shadow-2xs"
+                                                : "bg-white border-slate-200 text-slate-600 hover:border-blue-400 hover:bg-blue-50/25 shadow-2xs",
+                                          ),
+                                  isLockedByOther && "p-1.5 px-2.5 opacity-90",
+                                  isLockedByMe && "p-1.5 px-2.5",
                                   ((isPast && !appointment) ||
                                     (appointment &&
                                       !canDeleteOrReschedule &&
@@ -27071,6 +27652,7 @@ export default function App() {
                                     (!appointment && !canAddAppointments)) &&
                                     !quickBookingPatient &&
                                     !reschedulingAppointment &&
+                                    !isLockedByOther &&
                                     "opacity-40 grayscale pointer-events-none",
                                   isPast &&
                                     appointment &&
@@ -27132,15 +27714,36 @@ export default function App() {
                                     {!appointment && (
                                       <span
                                         className={cn(
-                                          "text-[9px] italic opacity-40",
-                                          darkMode
-                                            ? "text-slate-400"
-                                            : "text-slate-500",
+                                          "text-[9.5px] flex items-center gap-1",
+                                          isLockedByOther
+                                            ? "text-amber-600 dark:text-amber-400 font-semibold"
+                                            : isLockedByMe
+                                              ? "text-blue-600 dark:text-blue-400 font-semibold"
+                                              : cn(
+                                                  "text-[9px] italic opacity-40",
+                                                  darkMode
+                                                    ? "text-slate-400"
+                                                    : "text-slate-500",
+                                                ),
                                         )}
                                       >
-                                        {isDoctorBlocked
-                                          ? "Înlocuire necesară"
-                                          : "Disponibil"}
+                                        {isLockedByOther ? (
+                                          <>
+                                            <Lock className="w-2.5 h-2.5 text-amber-500 shrink-0" />
+                                            <span className="truncate max-w-[95px] text-[9px]" title={`În curs de programare de către ${activeLock?.lockedByName}`}>
+                                              În curs ({activeLock?.lockedByName})
+                                            </span>
+                                          </>
+                                        ) : isLockedByMe ? (
+                                          <>
+                                            <Lock className="w-2.5 h-2.5 text-blue-500 shrink-0" />
+                                            <span className="text-[9px]">Rezervat de dvs.</span>
+                                          </>
+                                        ) : isDoctorBlocked ? (
+                                          "Înlocuire necesară"
+                                        ) : (
+                                          "Disponibil"
+                                        )}
                                       </span>
                                     )}
                                   </div>
@@ -27177,14 +27780,20 @@ export default function App() {
                                       {canDeleteOrReschedule && (
                                         <>
                                           {canManageOrders &&
-                                            medicalRecords.some(
-                                              (r) =>
-                                                isMedicalRecordMatchForAppointment(
-                                                  r,
-                                                  appointment,
-                                                ) &&
-                                                hasFinalDioptersOrContactLenses(r, time),
-                                            ) && (
+                                            (matchingRecord
+                                              ? hasFinalDioptersOrContactLenses(matchingRecord)
+                                              : medicalRecords.some(
+                                                  (r) =>
+                                                    (isMedicalRecordMatchForAppointment(r, appointment) ||
+                                                     findPatientMedicalRecord(
+                                                       appointment.patientName,
+                                                       appointment.patientPhone,
+                                                       appointment.patientCnp,
+                                                       [r],
+                                                       appointment.patientBirthDate
+                                                     )) &&
+                                                    hasFinalDioptersOrContactLenses(r),
+                                                )) && (
                                               <button
                                                 onClick={(e) => {
                                                   e.stopPropagation();
@@ -27193,12 +27802,12 @@ export default function App() {
                                                   );
                                                 }}
                                                 className={cn(
-                                                  "p-0.5 rounded transition-colors",
+                                                  "p-1 rounded-md transition-all hover:scale-105 active:scale-95",
                                                   darkMode
-                                                    ? "hover:bg-emerald-900/40 text-emerald-400"
-                                                    : "hover:bg-emerald-50 text-emerald-600",
+                                                    ? "hover:bg-emerald-900/50 text-emerald-400 bg-emerald-950/30"
+                                                    : "hover:bg-emerald-100 text-emerald-700 bg-emerald-50/80",
                                                 )}
-                                                title="Comenzi"
+                                                title="Comenzi Ochelari / Lentile"
                                               >
                                                 <Glasses className="w-3.5 h-3.5" />
                                               </button>
@@ -27212,10 +27821,10 @@ export default function App() {
                                               );
                                             }}
                                             className={cn(
-                                              "p-0.5 rounded transition-colors",
+                                              "p-1 rounded-md transition-all hover:scale-105 active:scale-95",
                                               darkMode
-                                                ? "hover:bg-amber-900/40 text-amber-400"
-                                                : "hover:bg-amber-50 text-amber-600",
+                                                ? "hover:bg-amber-900/50 text-amber-400 bg-amber-950/30"
+                                                : "hover:bg-amber-100 text-amber-700 bg-amber-50/80",
                                             )}
                                             title="Modifică date pacient"
                                           >
@@ -27227,10 +27836,10 @@ export default function App() {
                                               startRescheduling(appointment);
                                             }}
                                             className={cn(
-                                              "p-0.5 rounded transition-colors",
+                                              "p-1 rounded-md transition-all hover:scale-105 active:scale-95",
                                               darkMode
-                                                ? "hover:bg-blue-900/40 text-blue-400"
-                                                : "hover:bg-blue-50 text-blue-600",
+                                                ? "hover:bg-blue-900/50 text-blue-400 bg-blue-950/30"
+                                                : "hover:bg-blue-100 text-blue-700 bg-blue-50/80",
                                             )}
                                             title="Reprogramare"
                                           >
@@ -27242,10 +27851,10 @@ export default function App() {
                                               confirmDeleteDirectly(appointment.id);
                                             }}
                                             className={cn(
-                                              "p-0.5 rounded transition-colors",
+                                              "p-1 rounded-md transition-all hover:scale-105 active:scale-95",
                                               darkMode
-                                                ? "hover:bg-red-900/40 text-red-400"
-                                                : "hover:bg-red-50 text-red-600",
+                                                ? "hover:bg-red-900/50 text-red-400 bg-red-950/30"
+                                                : "hover:bg-red-100 text-red-700 bg-rose-50/80",
                                             )}
                                             title="Șterge"
                                           >
@@ -27331,10 +27940,10 @@ export default function App() {
                                                  appointment,
                                                );
                                              }}
-                                             className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-[#25D366] text-white hover:bg-[#20ba5a] active:scale-95 transition-all shrink-0"
-                                             title="WhatsApp"
+                                             className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-[#25D366] text-white hover:bg-[#20ba5a] hover:scale-110 active:scale-95 shadow-sm transition-all shrink-0 ml-0.5"
+                                             title="Trimite mesaj WhatsApp"
                                            >
-                                             <MessageSquare className="w-2 h-2 fill-current" />
+                                             <MessageSquare className="w-2.5 h-2.5 fill-current" />
                                            </button>
                                          )}
                                        </div>
@@ -28956,12 +29565,7 @@ export default function App() {
           >
             {/* Elegant Floating Red Close Button outside the modal box, fixed in the viewport */}
             <button
-               onClick={() => {
-                 setIsBookingModalOpen(false);
-                 if (reschedulingAppointment) {
-                   setReschedulingAppointment(null);
-                 }
-               }}
+               onClick={closeBookingModal}
                className="fixed top-4 right-4 md:top-8 md:right-8 z-[60] p-3 rounded-full shadow-[0_8px_30px_rgb(239,68,68,0.4)] transition-all hover:scale-115 active:scale-95 bg-red-650 hover:bg-red-700 text-white border border-red-500"
                title="Închide fereastra (Mereu vizibil)"
              >
@@ -28992,12 +29596,7 @@ export default function App() {
                  </h2>
                  <button
                    type="button"
-                   onClick={() => {
-                     setIsBookingModalOpen(false);
-                     if (reschedulingAppointment) {
-                       setReschedulingAppointment(null);
-                     }
-                   }}
+                   onClick={closeBookingModal}
                    className={cn(
                      "p-2 rounded-full transition-colors",
                      darkMode
@@ -29828,13 +30427,21 @@ export default function App() {
         {successMessage && (
           <motion.div
             key="success-toast"
-            initial={{ opacity: 0, y: 50 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 50 }}
-            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] bg-emerald-500 text-white px-6 py-3 rounded-2xl font-bold shadow-2xl flex items-center gap-2"
+            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[99999] bg-emerald-600/95 border border-emerald-400 text-white px-5 py-3.5 rounded-2xl font-bold shadow-2xl flex items-center gap-3 backdrop-blur-md max-w-lg w-[90vw] sm:w-auto text-sm"
           >
-            <CheckCircle2 className="w-5 h-5" />
-            {successMessage}
+            <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-100" />
+            <span className="flex-1 leading-snug">{successMessage}</span>
+            <button
+              onClick={() => setSuccessMessage(null)}
+              className="p-1 hover:bg-white/20 rounded-lg transition-colors ml-2 shrink-0 cursor-pointer text-white/90 hover:text-white"
+              title="Închide"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -29843,13 +30450,57 @@ export default function App() {
         {errorMessage && (
           <motion.div
             key="error-toast"
-            initial={{ opacity: 0, y: 50 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 50 }}
-            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] bg-rose-500 text-white px-6 py-3 rounded-2xl font-bold shadow-2xl flex items-center gap-2"
+            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[99999] bg-rose-600/95 border border-rose-400 text-white px-5 py-3.5 rounded-2xl font-bold shadow-2xl flex items-center gap-3 backdrop-blur-md max-w-lg w-[90vw] sm:w-auto text-sm"
           >
-            <AlertCircle className="w-5 h-5" />
-            {errorMessage}
+            <AlertCircle className="w-5 h-5 shrink-0 text-rose-100" />
+            <span className="flex-1 leading-snug">{errorMessage}</span>
+            <button
+              onClick={() => setErrorMessage(null)}
+              className="p-1 hover:bg-white/20 rounded-lg transition-colors ml-2 shrink-0 cursor-pointer text-white/90 hover:text-white"
+              title="Închide"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {appNotification && (
+          <motion.div
+            key={`app-notif-${appNotification.id}`}
+            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+            className={cn(
+              "fixed bottom-8 left-1/2 -translate-x-1/2 z-[99999] px-5 py-3.5 rounded-2xl font-bold shadow-2xl flex items-center gap-3 border backdrop-blur-md max-w-lg w-[90vw] sm:w-auto text-sm",
+              appNotification.type === "success"
+                ? "bg-emerald-600/95 border-emerald-400 text-white shadow-emerald-900/30"
+                : appNotification.type === "warning"
+                ? "bg-amber-500/95 border-amber-300 text-white shadow-amber-900/30"
+                : "bg-rose-600/95 border-rose-400 text-white shadow-rose-900/30"
+            )}
+          >
+            {appNotification.type === "success" ? (
+              <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-100" />
+            ) : appNotification.type === "warning" ? (
+              <AlertTriangle className="w-5 h-5 shrink-0 text-amber-100" />
+            ) : (
+              <AlertCircle className="w-5 h-5 shrink-0 text-rose-100" />
+            )}
+            <span className="flex-1 leading-snug">{appNotification.message}</span>
+            <button
+              onClick={() => setAppNotification(null)}
+              className="p-1 hover:bg-white/20 rounded-lg transition-colors ml-2 shrink-0 cursor-pointer text-white/90 hover:text-white"
+              title="Închide"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -30050,6 +30701,20 @@ export default function App() {
                           {elderlyPatientsList.length}
                         </span>
                       )}
+                    </button>
+                    )}
+                    {(profile?.role === "admin" || profile?.role === "frontdesk") && (
+                    <button
+                      onClick={() => setConfigActiveTab("recall")}
+                      className={cn(
+                        "flex-1 px-2 py-2 text-[10px] xl:text-[11px] font-black border-b-2 transition-all cursor-pointer flex items-center justify-center gap-1 uppercase tracking-tight text-center",
+                        configActiveTab === "recall"
+                          ? "border-indigo-500 text-indigo-600 dark:text-indigo-400"
+                          : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                      )}
+                    >
+                      <CalendarClock className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
+                      <span>Rechemare (Recall)</span>
                     </button>
                     )}
                     {profile?.role === "admin" && (
@@ -34963,6 +35628,34 @@ export default function App() {
                 Închide Lista
               </button>
             </div>
+          ) : configActiveTab === "recall" ? (
+            /* TAB: ALERTE DE RECHEMARE A PACIENȚILOR (RECALL) */
+            <PatientRecallPanel
+              darkMode={darkMode}
+              medicalRecords={medicalRecords}
+              setMedicalRecords={setMedicalRecords}
+              appointments={appointments}
+              onOpenWhatsApp={(name, phone, message) => {
+                handleOpenWhatsAppModal(name, phone, undefined, message);
+              }}
+              onOpenMedicalRecord={(record) => {
+                setIsConfigModalOpen(false);
+                openMedicalRecord(record as any);
+              }}
+              onQuickSchedule={(name, phone) => {
+                setIsConfigModalOpen(false);
+                setQuickBookingPatient({
+                  name,
+                  phone,
+                  age: "",
+                  birthDate: "",
+                  sex: "",
+                });
+              }}
+              logActivity={logActivity}
+              getDoctorDisplayName={getDoctorDisplayName}
+              onClose={() => setIsConfigModalOpen(false)}
+            />
           ) : (
             /* TAB: SECURITATE & BACKUP DATE (Protejat cu Parolă Admin) */
             <div className="space-y-6">

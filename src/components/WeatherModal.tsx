@@ -132,6 +132,22 @@ export const WeatherModal = React.memo(function WeatherModal({
             </div>
           ) : weather ? (
             <>
+              {weatherError && (
+                <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between gap-3 text-xs font-bold text-amber-600 dark:text-amber-400">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-amber-500" />
+                    <span>{weatherError}</span>
+                  </div>
+                  <button
+                    onClick={fetchWeather}
+                    disabled={weatherLoading}
+                    className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shrink-0 cursor-pointer shadow-sm"
+                  >
+                    Reîncearcă
+                  </button>
+                </div>
+              )}
+
               {/* Current Weather card */}
               <div
                 className={cn(

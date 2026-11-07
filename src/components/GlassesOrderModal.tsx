@@ -38,6 +38,12 @@ import {
   deformPath,
 } from "../appConstants";
 import { FrameConfigurator, FRAME_SHAPES } from "./FrameConfigurator";
+import {
+  cleanWhatsAppPhone,
+  buildWhatsAppUrl,
+  openWhatsAppUrl,
+  buildGlassesReadyMessage,
+} from "../utils/whatsappUtils";
 
 export interface GlassesOrderModalProps {
   isOpen: boolean;
@@ -1706,20 +1712,42 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                               <Calendar className="w-3 h-3 text-blue-500" />
                               Data Comandă
                             </label>
-                            <p className="text-sm font-black text-blue-600 dark:text-blue-400">
-                              {currentMedicalRecord.glassesOrder?.createdAt
-                                ? format(
-                                    new Date(
-                                      currentMedicalRecord.glassesOrder
-                                        .createdAt,
-                                    ),
-                                    "dd MMM yyyy",
-                                    { locale: ro },
-                                  )
-                                : format(new Date(), "dd MMM yyyy", {
-                                    locale: ro,
-                                  })}
-                            </p>
+                            <input
+                              type="date"
+                              value={
+                                currentMedicalRecord.glassesOrder?.createdAt
+                                  ? (() => {
+                                      try {
+                                        const d = new Date(currentMedicalRecord.glassesOrder.createdAt);
+                                        return !isNaN(d.getTime()) ? format(d, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
+                                      } catch {
+                                        return format(new Date(), "yyyy-MM-dd");
+                                      }
+                                    })()
+                                  : format(new Date(), "yyyy-MM-dd")
+                              }
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (!val) return;
+                                let timeStr = "12:00:00";
+                                if (currentMedicalRecord.glassesOrder?.createdAt) {
+                                  try {
+                                    const d = new Date(currentMedicalRecord.glassesOrder.createdAt);
+                                    if (!isNaN(d.getTime())) {
+                                      timeStr = d.toTimeString().split(" ")[0];
+                                    }
+                                  } catch {}
+                                }
+                                const isoVal = new Date(`${val}T${timeStr}`).toISOString();
+                                updateOrder({ createdAt: isoVal, orderDate: val });
+                              }}
+                              className={cn(
+                                "w-full bg-transparent border-none p-0 text-sm font-black outline-none cursor-pointer",
+                                darkMode
+                                  ? "text-blue-400 [color-scheme:dark]"
+                                  : "text-blue-600",
+                              )}
+                            />
                           </div>
                           <div className="space-y-1.5 p-3 rounded-2xl bg-white/40 dark:bg-slate-800/40 border border-blue-100 dark:border-blue-900/20">
                             <label
@@ -2597,21 +2625,42 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                                     <Calendar className="w-3 h-3 text-emerald-500" />
                                     Data Comandă
                                   </label>
-                                  <p className="text-sm font-black text-emerald-600 dark:text-emerald-400">
-                                    {currentMedicalRecord.glassesOrder
-                                      ?.createdAt
-                                      ? format(
-                                          new Date(
-                                            currentMedicalRecord.glassesOrder
-                                              .createdAt,
-                                          ),
-                                          "dd MMM yyyy",
-                                          { locale: ro },
-                                        )
-                                      : format(new Date(), "dd MMM yyyy", {
-                                          locale: ro,
-                                        })}
-                                  </p>
+                                  <input
+                                    type="date"
+                                    value={
+                                      currentMedicalRecord.glassesOrder?.createdAt
+                                        ? (() => {
+                                            try {
+                                              const d = new Date(currentMedicalRecord.glassesOrder.createdAt);
+                                              return !isNaN(d.getTime()) ? format(d, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
+                                            } catch {
+                                              return format(new Date(), "yyyy-MM-dd");
+                                            }
+                                          })()
+                                        : format(new Date(), "yyyy-MM-dd")
+                                    }
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      if (!val) return;
+                                      let timeStr = "12:00:00";
+                                      if (currentMedicalRecord.glassesOrder?.createdAt) {
+                                        try {
+                                          const d = new Date(currentMedicalRecord.glassesOrder.createdAt);
+                                          if (!isNaN(d.getTime())) {
+                                            timeStr = d.toTimeString().split(" ")[0];
+                                          }
+                                        } catch {}
+                                      }
+                                      const isoVal = new Date(`${val}T${timeStr}`).toISOString();
+                                      updateOrder({ createdAt: isoVal, orderDate: val });
+                                    }}
+                                    className={cn(
+                                      "w-full bg-transparent border-none p-0 text-sm font-black outline-none cursor-pointer",
+                                      darkMode
+                                        ? "text-emerald-400 [color-scheme:dark]"
+                                        : "text-emerald-600",
+                                    )}
+                                  />
                                 </div>
                                 <div className="space-y-1.5 p-3 rounded-2xl bg-white/40 dark:bg-slate-800/40 border border-emerald-100 dark:border-emerald-900/20">
                                   <label
@@ -2917,19 +2966,28 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                             type="button"
                             onClick={() => {
                               let rawPhone = (currentMedicalRecord.patientPhone || "").trim();
-                              let cleanDigits = rawPhone.replace(/\D/g, "");
-                              if (!cleanDigits) {
-                                const inputPhone = window.prompt("Introduceți numărul de telefon al pacientului pentru notificarea WhatsApp:");
+                              let phoneVal = cleanWhatsAppPhone(rawPhone);
+                              if (!phoneVal.isValid) {
+                                const inputPhone = window.prompt("Introduceți numărul de telefon al pacientului pentru notificarea WhatsApp:", rawPhone);
                                 if (!inputPhone) return;
-                                cleanDigits = inputPhone.replace(/\D/g, "");
+                                phoneVal = cleanWhatsAppPhone(inputPhone);
+                                if (!phoneVal.isValid) {
+                                  alert("Numărul de telefon introdus nu este valid.");
+                                  return;
+                                }
                               }
-                              if (cleanDigits.startsWith("0") && cleanDigits.length === 10) {
-                                cleanDigits = "4" + cleanDigits;
-                              } else if (!cleanDigits.startsWith("40") && cleanDigits.length === 9) {
-                                cleanDigits = "40" + cleanDigits;
+
+                              const stripDiacriticsPref = localStorage.getItem("clinic_setting_whatsapp_strip_diacritics") === "true";
+                              const message = buildGlassesReadyMessage({
+                                patientName: currentMedicalRecord.patientName,
+                                removeDiacritics: stripDiacriticsPref,
+                              });
+                              const { url } = buildWhatsAppUrl(phoneVal.cleanPhone, message, { removeDiacritics: stripDiacriticsPref });
+                              const opened = openWhatsAppUrl(url);
+                              if (!opened) {
+                                navigator.clipboard?.writeText(message);
+                                alert("Fereastra pop-up WhatsApp a fost blocată de browser. Mesajul a fost copiat în clipboard!");
                               }
-                              const message = "Bună ziua, vă informăm că ochelarii dumneavoastră sunt gata la Clinica Negreanu din Pitesti (Piata Ceair). Vă așteptăm cu drag pentru ridicare și ajustare! Pentru alte informatii sunati va rog pe  0248223162";
-                              window.open(`https://wa.me/${cleanDigits}?text=${encodeURIComponent(message)}`, "_blank");
 
                               const nowIso = new Date().toISOString();
                               const notifierName = profile?.displayName || (profile as any)?.name || "Recepție";

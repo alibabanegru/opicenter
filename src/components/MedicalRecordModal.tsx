@@ -8288,6 +8288,62 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                   type="button"
                   id="save-medical-record-btn"
                   onClick={async () => {
+                    const checkDiopterVal = (v: any) => {
+                      if (v === undefined || v === null) return false;
+                      const s = String(v).trim();
+                      return s !== "" && s !== "-" && s !== "+";
+                    };
+
+                    const hasDiopters = !!(
+                      checkDiopterVal(currentMedicalRecord.od?.sph) ||
+                      checkDiopterVal(currentMedicalRecord.od?.cyl) ||
+                      checkDiopterVal(currentMedicalRecord.od?.axis) ||
+                      checkDiopterVal(currentMedicalRecord.od?.add) ||
+                      checkDiopterVal(currentMedicalRecord.od?.prism) ||
+                      checkDiopterVal(currentMedicalRecord.os?.sph) ||
+                      checkDiopterVal(currentMedicalRecord.os?.cyl) ||
+                      checkDiopterVal(currentMedicalRecord.os?.axis) ||
+                      checkDiopterVal(currentMedicalRecord.os?.add) ||
+                      checkDiopterVal(currentMedicalRecord.os?.prism) ||
+                      checkDiopterVal(currentMedicalRecord.od?.near_sph) ||
+                      checkDiopterVal(currentMedicalRecord.od?.near_cyl) ||
+                      checkDiopterVal(currentMedicalRecord.od?.near_axis) ||
+                      checkDiopterVal(currentMedicalRecord.os?.near_sph) ||
+                      checkDiopterVal(currentMedicalRecord.os?.near_cyl) ||
+                      checkDiopterVal(currentMedicalRecord.os?.near_axis) ||
+                      checkDiopterVal(currentMedicalRecord.od?.intermediate_sph) ||
+                      checkDiopterVal(currentMedicalRecord.od?.intermediate_cyl) ||
+                      checkDiopterVal(currentMedicalRecord.od?.intermediate_axis) ||
+                      checkDiopterVal(currentMedicalRecord.os?.intermediate_sph) ||
+                      checkDiopterVal(currentMedicalRecord.os?.intermediate_cyl) ||
+                      checkDiopterVal(currentMedicalRecord.os?.intermediate_axis)
+                    );
+
+                    const checkDpVal = (v: any) => {
+                      if (v === undefined || v === null) return false;
+                      const s = String(v).trim();
+                      return s !== "" && s !== "-" && s !== "0";
+                    };
+
+                    const hasDp = !!(
+                      checkDpVal(currentMedicalRecord.dp) ||
+                      checkDpVal(currentMedicalRecord.dp_od) ||
+                      checkDpVal(currentMedicalRecord.dp_os) ||
+                      checkDpVal(currentMedicalRecord.dp_aproape) ||
+                      checkDpVal(currentMedicalRecord.dp_aproape_od) ||
+                      checkDpVal(currentMedicalRecord.dp_aproape_os) ||
+                      checkDpVal(currentMedicalRecord.intermediate_dp) ||
+                      checkDpVal(currentMedicalRecord.intermediate_dp_od) ||
+                      checkDpVal(currentMedicalRecord.intermediate_dp_os) ||
+                      checkDpVal(currentMedicalRecord.od?.pd) ||
+                      checkDpVal(currentMedicalRecord.os?.pd)
+                    );
+
+                    if (hasDiopters && !hasDp) {
+                      setErrorMessage("Atenție: Au fost introduse dioptrii pe fișă (la distanță sau aproape), dar distanța interpupilară (DP) nu a fost completată! Vă rugăm să introduceți DP pentru a putea salva fișa.");
+                      return;
+                    }
+
                     await saveMedicalRecord(true);
                   }}
                   disabled={loading}
@@ -8425,25 +8481,59 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                     type="button"
                     id="save-and-print-medical-record-btn"
                     onClick={async () => {
+                      const checkDiopterVal = (v: any) => {
+                        if (v === undefined || v === null) return false;
+                        const s = String(v).trim();
+                        return s !== "" && s !== "-" && s !== "+";
+                      };
+
                       const hasDiopters = !!(
-                        (currentMedicalRecord.od.sph && currentMedicalRecord.od.sph !== "-") ||
-                        (currentMedicalRecord.od.cyl && currentMedicalRecord.od.cyl !== "-") ||
-                        (currentMedicalRecord.od.axis && currentMedicalRecord.od.axis !== "-") ||
-                        (currentMedicalRecord.od.add && currentMedicalRecord.od.add !== "-") ||
-                        (currentMedicalRecord.os.sph && currentMedicalRecord.os.sph !== "-") ||
-                        (currentMedicalRecord.os.cyl && currentMedicalRecord.os.cyl !== "-") ||
-                        (currentMedicalRecord.os.axis && currentMedicalRecord.os.axis !== "-") ||
-                        (currentMedicalRecord.os.add && currentMedicalRecord.os.add !== "-")
+                        checkDiopterVal(currentMedicalRecord.od?.sph) ||
+                        checkDiopterVal(currentMedicalRecord.od?.cyl) ||
+                        checkDiopterVal(currentMedicalRecord.od?.axis) ||
+                        checkDiopterVal(currentMedicalRecord.od?.add) ||
+                        checkDiopterVal(currentMedicalRecord.od?.prism) ||
+                        checkDiopterVal(currentMedicalRecord.os?.sph) ||
+                        checkDiopterVal(currentMedicalRecord.os?.cyl) ||
+                        checkDiopterVal(currentMedicalRecord.os?.axis) ||
+                        checkDiopterVal(currentMedicalRecord.os?.add) ||
+                        checkDiopterVal(currentMedicalRecord.os?.prism) ||
+                        checkDiopterVal(currentMedicalRecord.od?.near_sph) ||
+                        checkDiopterVal(currentMedicalRecord.od?.near_cyl) ||
+                        checkDiopterVal(currentMedicalRecord.od?.near_axis) ||
+                        checkDiopterVal(currentMedicalRecord.os?.near_sph) ||
+                        checkDiopterVal(currentMedicalRecord.os?.near_cyl) ||
+                        checkDiopterVal(currentMedicalRecord.os?.near_axis) ||
+                        checkDiopterVal(currentMedicalRecord.od?.intermediate_sph) ||
+                        checkDiopterVal(currentMedicalRecord.od?.intermediate_cyl) ||
+                        checkDiopterVal(currentMedicalRecord.od?.intermediate_axis) ||
+                        checkDiopterVal(currentMedicalRecord.os?.intermediate_sph) ||
+                        checkDiopterVal(currentMedicalRecord.os?.intermediate_cyl) ||
+                        checkDiopterVal(currentMedicalRecord.os?.intermediate_axis)
                       );
 
+                      const checkDpVal = (v: any) => {
+                        if (v === undefined || v === null) return false;
+                        const s = String(v).trim();
+                        return s !== "" && s !== "-" && s !== "0";
+                      };
+
                       const hasDp = !!(
-                        (currentMedicalRecord.dp && currentMedicalRecord.dp.trim() !== "" && currentMedicalRecord.dp !== "-") ||
-                        (currentMedicalRecord.dp_od && currentMedicalRecord.dp_os && currentMedicalRecord.dp_od.trim() !== "" && currentMedicalRecord.dp_os.trim() !== "") ||
-                        (currentMedicalRecord.dp_aproape && currentMedicalRecord.dp_aproape.trim() !== "" && currentMedicalRecord.dp_aproape !== "-")
+                        checkDpVal(currentMedicalRecord.dp) ||
+                        checkDpVal(currentMedicalRecord.dp_od) ||
+                        checkDpVal(currentMedicalRecord.dp_os) ||
+                        checkDpVal(currentMedicalRecord.dp_aproape) ||
+                        checkDpVal(currentMedicalRecord.dp_aproape_od) ||
+                        checkDpVal(currentMedicalRecord.dp_aproape_os) ||
+                        checkDpVal(currentMedicalRecord.intermediate_dp) ||
+                        checkDpVal(currentMedicalRecord.intermediate_dp_od) ||
+                        checkDpVal(currentMedicalRecord.intermediate_dp_os) ||
+                        checkDpVal(currentMedicalRecord.od?.pd) ||
+                        checkDpVal(currentMedicalRecord.os?.pd)
                       );
 
                       if (hasDiopters && !hasDp) {
-                        setErrorMessage("Atenție: Au fost introduse dioptrii pe fișă, dar distanța interpupilară (DP) nu a fost completată! Vă rugăm să introduceți DP pentru a putea printa fișa.");
+                        setErrorMessage("Atenție: Au fost introduse dioptrii pe fișă (la distanță sau aproape), dar distanța interpupilară (DP) nu a fost completată! Vă rugăm să introduceți DP pentru a putea printa fișa.");
                         return;
                       }
 

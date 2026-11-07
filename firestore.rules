@@ -115,5 +115,10 @@ service cloud.firestore {
       // Allow updates/listing for admin (enforced by UI for now since we use custom login)
       allow read, write: if true; 
     }
+
+    // Slot Locks Collection (Real-time slot reservation)
+    match /slot_locks/{lockId} {
+      allow read, write: if true;
+    }
   }
 }

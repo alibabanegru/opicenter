@@ -1,7 +1,14 @@
-import React from "react";
+import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { MessageSquare, X } from "lucide-react";
+import { MessageSquare, X, Copy, Check, ShieldCheck, AlertCircle } from "lucide-react";
 import { cn } from "../appConstants";
+import {
+  cleanWhatsAppPhone,
+  stripDiacritics,
+  normalizeRomanianDiacritics,
+  buildWhatsAppUrl,
+  openWhatsAppUrl,
+} from "../utils/whatsappUtils";
 
 export interface WhatsAppModalProps {
   isOpen: boolean;
@@ -35,21 +42,60 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({
 }) => {
   if (!recipient) return null;
 
-  const handleSend = () => {
-    let cleanDigits = (recipient.phone || "").replace(/\D/g, "");
-    if (cleanDigits.startsWith("0") && cleanDigits.length === 10) {
-      cleanDigits = "4" + cleanDigits;
-    } else if (!cleanDigits.startsWith("40") && cleanDigits.length === 9) {
-      cleanDigits = "40" + cleanDigits;
+  const [copiedText, setCopiedText] = useState(false);
+  const [stripDiacriticsOption, setStripDiacriticsOption] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("clinic_setting_whatsapp_strip_diacritics") === "true";
+    } catch {
+      return false;
     }
-    const url = `https://wa.me/${cleanDigits}?text=${encodeURIComponent(
-      messageText
-    )}`;
-    window.open(url, "_blank");
+  });
+
+  const phoneValidation = cleanWhatsAppPhone(recipient.phone);
+
+  const handleToggleDiacritics = (checked: boolean) => {
+    setStripDiacriticsOption(checked);
+    try {
+      localStorage.setItem("clinic_setting_whatsapp_strip_diacritics", String(checked));
+    } catch {}
+    if (checked) {
+      setMessageText(stripDiacritics(messageText));
+    }
+  };
+
+  const handleCopyText = async () => {
+    const textToCopy = stripDiacriticsOption
+      ? stripDiacritics(messageText)
+      : normalizeRomanianDiacritics(messageText);
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      setCopiedText(true);
+      setTimeout(() => setCopiedText(false), 2000);
+    } catch (e) {
+      console.warn("Could not copy message text to clipboard:", e);
+    }
+  };
+
+  const handleSend = () => {
+    const { url, cleanPhone, sanitizedMessage } = buildWhatsAppUrl(
+      recipient.phone,
+      messageText,
+      { removeDiacritics: stripDiacriticsOption }
+    );
+
+    const opened = openWhatsAppUrl(url);
+    if (!opened) {
+      // Popup blocked fallback: copy message automatically to clipboard
+      navigator.clipboard?.writeText(sanitizedMessage);
+      alert(
+        "Fereastra pop-up WhatsApp a fost blocată de browser. Mesajul a fost copiat în clipboard! Puteți deschide manual WhatsApp și lipi mesajul (Ctrl+V)."
+      );
+    }
+
     onClose();
     logActivity(
       "Trimitere Notificare WhatsApp",
-      `Mesaj trimis către ${recipient.name} (${recipient.phone})`
+      `Mesaj trimis către ${recipient.name} (${cleanPhone || recipient.phone})`
     );
   };
 
@@ -83,10 +129,22 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({
                   <h3 className="text-lg font-black uppercase tracking-tight flex items-center gap-2">
                     Trimite Notificare WhatsApp
                   </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                    Către: <strong>{recipient.name}</strong> (
-                    {formatPhoneNumber(recipient.phone)})
-                  </p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                      Către: <strong>{recipient.name}</strong> ({formatPhoneNumber(recipient.phone)})
+                    </p>
+                    {phoneValidation.isValid ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
+                        <ShieldCheck className="w-3 h-3" />
+                        +{phoneValidation.cleanPhone}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
+                        <AlertCircle className="w-3 h-3" />
+                        {phoneValidation.error || "Număr neverificat"}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
               <button
@@ -150,10 +208,30 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({
             </div>
 
             {/* Message Textarea */}
-            <div className="mb-5">
-              <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">
-                Conținut Mesaj (Editabil)
-              </label>
+            <div className="mb-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  Conținut Mesaj (Editabil)
+                </label>
+                <button
+                  type="button"
+                  onClick={handleCopyText}
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors cursor-pointer"
+                  title="Copiază conținutul mesajului în clipboard"
+                >
+                  {copiedText ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-500" />
+                      <span className="text-emerald-600 dark:text-emerald-400 font-bold">Copiat!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copiază Text</span>
+                    </>
+                  )}
+                </button>
+              </div>
               <textarea
                 value={messageText}
                 onChange={(e) => setMessageText(e.target.value)}
@@ -166,6 +244,24 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({
                 )}
                 placeholder="Scrieți mesajul pentru WhatsApp..."
               />
+            </div>
+
+            {/* Diacritics compatibility toggle */}
+            <div className="mb-5 flex items-center justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-750">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={stripDiacriticsOption}
+                  onChange={(e) => handleToggleDiacritics(e.target.checked)}
+                  className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                />
+                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Fără diacritice (compatibilitate 100% WhatsApp Desktop & SMS)
+                </span>
+              </label>
+              <span className="text-[10px] text-slate-400 font-medium hidden sm:inline">
+                Previne caracterele corupte
+              </span>
             </div>
 
             {/* Actions */}
