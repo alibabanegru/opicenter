@@ -11324,7 +11324,10 @@ export default function App() {
     setIsBookingModalOpen(true);
   };
 
-  const saveMedicalRecord = async (shouldClose = true): Promise<boolean> => {
+  const saveMedicalRecord = async (
+    shouldClose = true,
+    allowSkipDpCheck = false,
+  ): Promise<boolean> => {
     if (!currentMedicalRecord) return false;
 
     let newHistory = [...(currentMedicalRecord.prescriptionHistory || [])];
@@ -11645,7 +11648,7 @@ export default function App() {
       checkDpVal(currentMedicalRecord.os?.pd)
     );
 
-    if (hasDioptersOnRecord && !hasDpOnRecord) {
+    if (!allowSkipDpCheck && hasDioptersOnRecord && !hasDpOnRecord) {
       const msg = "Atenție: Au fost introduse dioptrii pe fișă (la distanță sau aproape), dar distanța interpupilară (DP) nu a fost completată! Vă rugăm să introduceți DP pentru a putea salva fișa.";
       setBookingError(msg);
       setErrorMessage(msg);
@@ -13899,13 +13902,13 @@ export default function App() {
     return canvas.toDataURL("image/png");
   };
 
-  const triggerPdfPrint = (doc: jsPDF, filename?: string) => {
+  const triggerPdfPrint = (doc: jsPDF, filename?: string, shouldDownload: boolean = false) => {
     try {
       doc.autoPrint();
       const pdfBlob = doc.output("blob");
       const blobUrl = URL.createObjectURL(pdfBlob);
 
-      if (filename) {
+      if (filename && shouldDownload) {
         try {
           doc.save(filename);
         } catch (e) {
@@ -13913,36 +13916,59 @@ export default function App() {
         }
       }
 
-      // Curățare fallback
+      // Curățare fallback timer
       if (printFallbackTimerRef.current) {
         clearTimeout(printFallbackTimerRef.current);
       }
-      // Notificarea persistentă din dreapta a fost eliminată la cererea utilizatorului
 
       const iframe = document.createElement("iframe");
       iframe.style.position = "fixed";
-      iframe.style.left = "-9999px";
-      iframe.style.top = "-9999px";
-      iframe.style.width = "1000px";
-      iframe.style.height = "1000px";
-      iframe.style.border = "0";
+      iframe.style.right = "0";
+      iframe.style.bottom = "0";
+      iframe.style.width = "1px";
+      iframe.style.height = "1px";
+      iframe.style.border = "none";
       iframe.style.opacity = "0.01";
-      iframe.src = blobUrl;
-      document.body.appendChild(iframe);
+      iframe.style.zIndex = "-1";
 
+      let printTriggered = false;
       const runPrint = () => {
+        if (printTriggered) return;
         try {
-          iframe.contentWindow?.focus();
-          iframe.contentWindow?.print();
+          if (iframe.contentWindow) {
+            iframe.contentWindow.focus();
+            iframe.contentWindow.print();
+            printTriggered = true;
+          }
         } catch (err) {
           console.warn("Direct iframe print invocation notice:", err);
+          if (!printTriggered && filename) {
+            printTriggered = true;
+            try {
+              doc.save(filename);
+            } catch {}
+          }
         }
       };
 
       iframe.onload = () => {
         setTimeout(runPrint, 250);
       };
-      setTimeout(runPrint, 800);
+
+      document.body.appendChild(iframe);
+      iframe.src = blobUrl;
+
+      // Backup în cazul în care onload nu este declanșat de pluginul PDF
+      setTimeout(runPrint, 650);
+
+      // Fallback de siguranță dacă dialogul nativ este complet blocat de browser
+      printFallbackTimerRef.current = setTimeout(() => {
+        if (!printTriggered && filename) {
+          try {
+            doc.save(filename);
+          } catch {}
+        }
+      }, 2500);
 
       setTimeout(() => {
         try {
@@ -13962,9 +13988,10 @@ export default function App() {
     }
   };
 
-  const printGlassesOrder = () => {
-    if (!currentMedicalRecord || !currentMedicalRecord.glassesOrder) return;
-    const order = currentMedicalRecord.glassesOrder;
+  const printGlassesOrder = (orderOverride?: any, recordOverride?: any) => {
+    const record = recordOverride || currentMedicalRecord;
+    const order = orderOverride || record?.glassesOrder;
+    if (!record || !order) return;
 
     if (!validateOrderAxisHelper(order)) {
       return;
@@ -14112,14 +14139,14 @@ export default function App() {
     doc.setFontSize(10);
     doc.setTextColor(30, 41, 59);
     doc.setFont(undefined, "bold");
-    doc.text(normalize(currentMedicalRecord.patientName), 45, 48);
+    doc.text(normalize(record.patientName), 45, 48);
     doc.setFontSize(8);
-    const hasPhoneNum = !!(currentMedicalRecord.patientPhone && currentMedicalRecord.patientPhone.trim());
+    const hasPhoneNum = !!(record.patientPhone && record.patientPhone.trim());
     if (hasPhoneNum) {
       doc.setTextColor(30, 41, 59);
       doc.setFont(undefined, "bold");
       doc.text(
-        `TEL: ${formatPhoneNumber(currentMedicalRecord.patientPhone)}`,
+        `TEL: ${formatPhoneNumber(record.patientPhone)}`,
         185,
         48,
         {
@@ -14564,7 +14591,7 @@ export default function App() {
 
     triggerPdfPrint(
       doc,
-      `Comanda_${normalize(order.orderNumber)}_${normalize(currentMedicalRecord.patientName)}.pdf`,
+      `Comanda_${normalize(order.orderNumber)}_${normalize(record.patientName)}.pdf`,
     );
   };
 
@@ -17375,8 +17402,9 @@ export default function App() {
     saveAndSwitchPrescription(null);
   };
 
-  const printPrescription = () => {
-    if (!currentMedicalRecord) return;
+  const printPrescription = (recordOverride?: any) => {
+    ((currentMedicalRecord: any) => {
+      if (!currentMedicalRecord) return;
 
     const checkDiopterVal = (v: any) => {
       if (v === undefined || v === null) return false;
@@ -19719,12 +19747,14 @@ export default function App() {
       doc,
       `Prescriptie_${cleanStr(currentMedicalRecord.patientName).replace(/\s+/g, "_")}.pdf`,
     );
+    })(recordOverride || currentMedicalRecord);
   };
 
   const printTreatment = async () => {
     if (!currentMedicalRecord) return;
 
-    await saveMedicalRecord(false);
+    // Salvează schema de tratament pe fișă în fundal fără a bloca acțiunea directă de tipărire
+    saveMedicalRecord(false, true).catch((e) => console.warn("Save treatment background notice:", e));
 
     const doc = new jsPDF({
       orientation: "portrait",
@@ -22138,7 +22168,11 @@ export default function App() {
       margin: { left: 14, right: 14 },
     });
 
-    const finalY = (doc as any).lastAutoTable.finalY || 205;
+    let sigY = (doc as any).lastAutoTable?.finalY || 205;
+    if (sigY > 255) {
+      doc.addPage();
+      sigY = 20;
+    }
 
     doc.setFont("helvetica", "normal");
 
@@ -22159,19 +22193,19 @@ export default function App() {
       doc.setFontSize(10);
       doc.setFont("helvetica", "bold");
       doc.setTextColor(consultColor[0], consultColor[1], consultColor[2]);
-      doc.text(consultType, 14, finalY + 6);
+      doc.text(consultType, 14, sigY + 6);
       doc.setTextColor(0);
       doc.setFontSize(9);
       doc.setFont("helvetica", "normal");
     }
 
     doc.setFontSize(9);
-    doc.text(`Data:`, 14, finalY + 12);
+    doc.text(`Data:`, 14, sigY + 12);
 
     doc.setLineWidth(0.2);
     doc.setDrawColor(180, 180, 180);
-    doc.line(24, finalY + 20.5, 64, finalY + 20.5);
-    doc.line(pageWidth - 74, finalY + 20.5, pageWidth - 14, finalY + 20.5);
+    doc.line(24, sigY + 20.5, 64, sigY + 20.5);
+    doc.line(pageWidth - 74, sigY + 20.5, pageWidth - 14, sigY + 20.5);
     doc.setLineWidth(1.0);
     doc.setDrawColor(0, 0, 0);
 
@@ -22199,12 +22233,12 @@ export default function App() {
     const dZi = String(
       documentForm.eliberatZi || new Date().getDate(),
     ).padStart(2, "0");
-    doc.text(`${dZi}.${dLunaNumeric}.${dAn}`, 44, finalY + 19.5, {
+    doc.text(`${dZi}.${dLunaNumeric}.${dAn}`, 44, sigY + 19.5, {
       align: "center",
     });
 
     doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, "MEDIC CONSULTANT", pageWidth - 44, finalY + 12, {
+    drawPdfTextWithDiacritics(doc, "MEDIC CONSULTANT", pageWidth - 44, sigY + 12, {
       align: "center",
     });
     doc.setFont("helvetica", "bold");
@@ -22212,7 +22246,7 @@ export default function App() {
       doc,
       documentForm.doctorName || "",
       pageWidth - 44,
-      finalY + 19.5,
+      sigY + 19.5,
       {
         align: "center",
         maxWidth: 58,
@@ -23107,6 +23141,49 @@ export default function App() {
       `Expertiza_Medicala_${cleanStr(documentForm.patientName).replace(/\s+/g, "_")}.pdf`,
     );
     })(formOverride || documentForm, activeRec || {});
+  };
+
+  const handlePrintDoctorDocumentDirect = (docRec: any) => {
+    if (!docRec) return;
+    const savedValues = docRec.formValues || {};
+    const finalValues = {
+      ...savedValues,
+      documentNumber: docRec.documentNumber || savedValues.documentNumber || "",
+      certificatNumber: docRec.documentNumber || savedValues.certificatNumber || "",
+      patientName: docRec.patientName || savedValues.patientName || "",
+      patientPhone: docRec.patientPhone || savedValues.patientPhone || "",
+    };
+
+    const docName = (docRec.patientName || "").toLowerCase().trim();
+    const docPhone = (docRec.patientPhone || "").trim();
+    const patientRecord = medicalRecords.find(
+      (rec) =>
+        (rec.patientName || "").toLowerCase().trim() === docName &&
+        (!docPhone || (rec.patientPhone || "").trim() === docPhone),
+    ) || medicalRecords.find(
+      (rec) => docName && (rec.patientName || "").toLowerCase().trim() === docName,
+    ) || currentMedicalRecord;
+
+    try {
+      if (docRec.type === "adeverinta") {
+        printAdeverintaMedicala(finalValues, patientRecord);
+      } else if (docRec.type === "referat") {
+        printReferat(finalValues, patientRecord);
+      } else if (docRec.type === "raport") {
+        printRaportMedical(finalValues, patientRecord);
+      } else if (docRec.type === "certificat") {
+        printCertificat(finalValues, patientRecord);
+      } else if (docRec.type === "expertiza") {
+        printExpertiza(finalValues, patientRecord);
+      } else {
+        setErrorMessage("Tipul de document nu este recunoscut pentru tipărire directă.");
+        return;
+      }
+      setSuccessMessage(`Documentul ${docRec.documentNumber || ""} a fost trimis la tipărire!`);
+    } catch (err) {
+      console.error("Eroare la printarea documentului direct din registru:", err);
+      setErrorMessage("Eroare la tipărirea documentului: " + (err instanceof Error ? err.message : String(err)));
+    }
   };
 
   const openBookingModal = (
@@ -29551,6 +29628,7 @@ export default function App() {
         setBulkSoftDeleteMode={setBulkSoftDeleteMode}
         bulkDeleteMode={bulkDeleteMode}
         setBulkDeleteMode={setBulkDeleteMode}
+        onPrintOrderDirect={(order, patient) => printGlassesOrder(order, patient)}
       />
 
       {/* Booking Modal */}
@@ -36137,6 +36215,7 @@ export default function App() {
         setRegistrySearchQuery={setRegistrySearchQuery}
         openDoctorDocumentEdit={openDoctorDocumentEdit}
         setSuccessMessage={setSuccessMessage}
+        onPrintDocument={handlePrintDoctorDocumentDirect}
         onDeleteDocument={async (docId) => {
           try {
             setMedicalDocuments((prev) => prev.filter((d) => d.id !== docId));

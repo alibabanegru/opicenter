@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ClipboardList, X, Search, Pencil, Trash2, Loader2 } from "lucide-react";
+import { ClipboardList, X, Search, Pencil, Trash2, Loader2, Printer } from "lucide-react";
 import { format } from "date-fns";
 import { ro } from "date-fns/locale";
 import { doc, deleteDoc } from "firebase/firestore";
@@ -17,6 +17,7 @@ export interface MedicalRegistryModalProps {
   openDoctorDocumentEdit: (docRec: any) => void;
   setSuccessMessage: (msg: string) => void;
   onDeleteDocument?: (docId: string) => Promise<void> | void;
+  onPrintDocument?: (docRec: any) => void;
 }
 
 export const MedicalRegistryModal: React.FC<MedicalRegistryModalProps> = ({
@@ -29,6 +30,7 @@ export const MedicalRegistryModal: React.FC<MedicalRegistryModalProps> = ({
   openDoctorDocumentEdit,
   setSuccessMessage,
   onDeleteDocument,
+  onPrintDocument,
 }) => {
   const [docToDelete, setDocToDelete] = useState<any | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -125,7 +127,7 @@ export const MedicalRegistryModal: React.FC<MedicalRegistryModalProps> = ({
                       );
                     }
 
-                    return filteredDocs.map((docRec) => {
+                    return filteredDocs.map((docRec, idx) => {
                       const docLabels: Record<string, string> = {
                         adeverinta: "Adeverință Medicală",
                         referat: "Referat Medical",
@@ -151,6 +153,9 @@ export const MedicalRegistryModal: React.FC<MedicalRegistryModalProps> = ({
                           key={docRec.id}
                           className={cn(
                             "transition-all hover:bg-slate-500/5",
+                            idx % 2 === 1
+                              ? (darkMode ? "bg-slate-800/40" : "bg-slate-50/70")
+                              : "",
                             darkMode ? "text-slate-200" : "text-slate-800"
                           )}
                         >
@@ -188,6 +193,20 @@ export const MedicalRegistryModal: React.FC<MedicalRegistryModalProps> = ({
                           </td>
                           <td className="p-4 text-right whitespace-nowrap">
                             <div className="flex items-center justify-end gap-2">
+                              {onPrintDocument && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onPrintDocument(docRec);
+                                  }}
+                                  className="p-1 px-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-bold tracking-wider uppercase text-[10px] cursor-pointer transition-colors active:scale-95"
+                                  title="Printează document direct"
+                                >
+                                  <Printer className="w-3.5 h-3.5" />
+                                  Printează
+                                </button>
+                              )}
                               <button
                                 onClick={() => {
                                   openDoctorDocumentEdit(docRec);

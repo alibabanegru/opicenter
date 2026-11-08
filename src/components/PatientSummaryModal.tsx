@@ -611,7 +611,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
 
   if (!isOpen || !record) return null;
 
-  const handleDownloadPDF = async () => {
+  const handleDownloadOrPrintPDF = async (mode: "download" | "print" = "download") => {
     if (isGeneratingPDF) return;
     setIsGeneratingPDF(true);
 
@@ -743,9 +743,62 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
       const safeYear = (eliberatAn || "").trim() || String(new Date().getFullYear());
       const dateStr = `${safeYear}-${safeMonthNum}-${safeDay}`;
 
-      pdf.save(`Fisa_Medicala_${cleanName}_${dateStr}.pdf`);
-      setPdfNotification(`Fișa pacient PDF a fost descărcată cu succes (Data eliberare: ${formattedReleaseDate})!`);
-      setTimeout(() => setPdfNotification(null), 4000);
+      if (mode === "print") {
+        const blob = pdf.output("blob");
+        const blobUrl = URL.createObjectURL(blob);
+        const iframe = document.createElement("iframe");
+        iframe.style.position = "fixed";
+        iframe.style.right = "0";
+        iframe.style.bottom = "0";
+        iframe.style.width = "1px";
+        iframe.style.height = "1px";
+        iframe.style.border = "none";
+        iframe.style.opacity = "0.01";
+        iframe.style.zIndex = "-1";
+
+        let printed = false;
+        const doPrint = () => {
+          if (printed) return;
+          try {
+            if (iframe.contentWindow) {
+              iframe.contentWindow.focus();
+              iframe.contentWindow.print();
+              printed = true;
+            }
+          } catch (e) {
+            console.warn("Direct iframe print error:", e);
+            if (!printed) {
+              printed = true;
+              pdf.save(`Fisa_Medicala_${cleanName}_${dateStr}.pdf`);
+            }
+          }
+        };
+
+        iframe.onload = () => {
+          setTimeout(doPrint, 250);
+        };
+
+        document.body.appendChild(iframe);
+        iframe.src = blobUrl;
+
+        // Backup timer în caz că onload nu este emis de plugin
+        setTimeout(doPrint, 650);
+
+        setTimeout(() => {
+          try {
+            if (document.body.contains(iframe)) {
+              document.body.removeChild(iframe);
+            }
+            URL.revokeObjectURL(blobUrl);
+          } catch {}
+        }, 120000);
+        setPdfNotification(`Dialogul de imprimare a fost inițiat!`);
+        setTimeout(() => setPdfNotification(null), 4000);
+      } else {
+        pdf.save(`Fisa_Medicala_${cleanName}_${dateStr}.pdf`);
+        setPdfNotification(`Fișa pacient PDF a fost descărcată cu succes (Data eliberare: ${formattedReleaseDate})!`);
+        setTimeout(() => setPdfNotification(null), 4000);
+      }
     } catch (err: any) {
       console.error("Eroare la generarea fișierului PDF:", err);
       setPdfNotification(`A apărut o eroare la generarea PDF: ${err?.message || "Încercați din nou."}`);
@@ -754,6 +807,9 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
       setIsGeneratingPDF(false);
     }
   };
+
+  const handleDownloadPDF = () => handleDownloadOrPrintPDF("download");
+  const handlePrintPDFDirect = () => handleDownloadOrPrintPDF("print");
 
   const hasContactLenses = (cl_od?: any, cl_os?: any) => {
     if (!cl_od && !cl_os) return false;
@@ -1729,6 +1785,21 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
               <span>{isGeneratingPDF ? "Se generează PDF..." : "Descarcă PDF"}</span>
             </button>
 
+            <button
+              type="button"
+              onClick={handlePrintPDFDirect}
+              disabled={isGeneratingPDF}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              title="Tipărește direct fișa pacientului la imprimantă"
+            >
+              {isGeneratingPDF ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Printer className="w-4 h-4" />
+              )}
+              <span>Printează Direct</span>
+            </button>
+
             <span className="text-xs font-bold text-slate-500 dark:text-slate-400 px-2 py-1 rounded-lg bg-slate-200/60 dark:bg-slate-800/80">
               Data eliberare: <strong className="text-slate-900 dark:text-white font-black">{formattedReleaseDate}</strong>
             </span>
@@ -2021,6 +2092,16 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                 >
                   {isGeneratingPDF ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                   <span>Descarcă PDF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePrintPDFDirect}
+                  disabled={isGeneratingPDF}
+                  className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-all shadow-md disabled:opacity-50 cursor-pointer"
+                  title="Tipărește direct fișa pacientului"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Printează Direct</span>
                 </button>
                 <button
                   type="button"

@@ -20,6 +20,7 @@ import {
   CheckCircle2,
   CreditCard,
   X,
+  Printer,
 } from "lucide-react";
 import { ro } from "date-fns/locale";
 import {
@@ -99,6 +100,7 @@ export interface OrdersModalProps {
   setBulkSoftDeleteMode?: React.Dispatch<React.SetStateAction<"selected" | "all" | null>>;
   bulkDeleteMode?: "selected" | "all" | null;
   setBulkDeleteMode?: React.Dispatch<React.SetStateAction<"selected" | "all" | null>>;
+  onPrintOrderDirect?: (order: any, patient: any) => void;
 }
 
 export const OrdersModal: React.FC<OrdersModalProps> = ({
@@ -125,6 +127,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   setOrderToDelete,
   setIsOrderDeleteConfirmOpen,
   setIsPermanentDelete,
+  onPrintOrderDirect,
   availableUsers = [],
   handleExportData: propHandleExportData,
   handleImportData: propHandleImportData,
@@ -1840,8 +1843,8 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                             : isStatsDueToday
                                               ? "animate-pulse-soft-orange border-amber-300 dark:border-amber-600/80"
                                               : darkMode
-                                              ? "bg-slate-800 border-slate-700"
-                                              : "bg-white border-slate-100 shadow-sm",
+                                              ? (oIdx % 2 === 1 ? "bg-slate-850/80 border-slate-700/80" : "bg-slate-800 border-slate-700")
+                                              : (oIdx % 2 === 1 ? "bg-slate-50/90 border-slate-200/80 shadow-xs" : "bg-white border-slate-100 shadow-sm"),
                                         )}
                                       >
                                         <div className="flex items-center gap-3">
@@ -1940,6 +1943,20 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                             <span className="text-xs">💬</span>
                                             <span className="hidden sm:inline">SMS</span>
                                           </button>
+                                          {onPrintOrderDirect && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                onPrintOrderDirect(order, patient);
+                                              }}
+                                              className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
+                                              title="Printează fișa comenzii direct"
+                                            >
+                                              <Printer className="w-3 h-3 text-white" />
+                                              <span className="hidden sm:inline">Print</span>
+                                            </button>
+                                          )}
                                           {(profile?.role === "admin" ||
                                             profile?.role === "frontdesk" ||
                                             profile?.role === "seller") && (
@@ -2273,10 +2290,14 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                 : darkMode
                                   ? order.isUrgent
                                     ? "bg-rose-900/20 border-rose-500/50 hover:bg-rose-900/30"
-                                    : "bg-slate-800 border-slate-700 hover:bg-slate-700"
+                                    : (idx % 2 === 1
+                                      ? "bg-slate-800/80 border-slate-700/70 hover:bg-slate-700"
+                                      : "bg-slate-800 border-slate-700 hover:bg-slate-700")
                                   : order.isUrgent
                                     ? "bg-rose-50 border-rose-200 hover:border-rose-300 hover:bg-rose-100/50"
-                                    : "bg-white border-slate-200 hover:border-amber-300 hover:bg-amber-50/30",
+                                    : (idx % 2 === 1
+                                      ? "bg-slate-50/80 border-slate-200/80 hover:border-amber-300 hover:bg-amber-50/40"
+                                      : "bg-white border-slate-200 hover:border-amber-300 hover:bg-amber-50/30"),
                           )}
                         >
                           <div className="flex items-center gap-4">
@@ -2655,7 +2676,20 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                               )}
                             </div>
                           )}
-                            <div className="flex items-center gap-6">
+                            <div className="flex items-center gap-4 sm:gap-6">
+                              {onPrintOrderDirect && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onPrintOrderDirect(order, { id: order.patientId, patientName: order.patientName, patientPhone: order.patientPhone });
+                                  }}
+                                  className="p-2 text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40 rounded-lg transition-all group/print cursor-pointer"
+                                  title="Printează fișa comenzii direct"
+                                >
+                                  <Printer className="w-5 h-5 text-indigo-500 group-hover/print:text-indigo-600 transition-colors" />
+                                </button>
+                              )}
                               {(profile?.role === "admin" ||
                                 profile?.role === "frontdesk" ||
                                 profile?.role === "seller") && (

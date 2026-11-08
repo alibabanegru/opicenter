@@ -476,7 +476,7 @@ export const AppointmentHistoryModal: React.FC<
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredAppointmentHistory.map((app) => {
+                      {filteredAppointmentHistory.map((app, idx) => {
                         const patientRecordForToday = medicalRecords.find(
                           (r) =>
                             r.patientName === app.patientName &&
@@ -556,9 +556,12 @@ export const AppointmentHistoryModal: React.FC<
                             key={app.id}
                             className={cn(
                               "border-b transition-colors group",
+                              idx % 2 === 1
+                                ? (darkMode ? "bg-slate-850/40" : "bg-slate-50/75")
+                                : "",
                               darkMode
-                                ? "border-slate-800/50 hover:bg-slate-800/30"
-                                : "border-slate-50 hover:bg-slate-50"
+                                ? "border-slate-800/50 hover:bg-slate-800/40"
+                                : "border-slate-50 hover:bg-slate-100/60"
                             )}
                           >
                             <td className="py-4 px-4">

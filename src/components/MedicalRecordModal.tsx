@@ -12,6 +12,7 @@ import {
   CircleDot,
   Download,
   Droplet,
+  Loader2,
   DropletOff,
   Eye,
   FileText,
@@ -292,7 +293,7 @@ export interface MedicalRecordModalProps {
   categoryOrderState: string[];
   setErrorMessage: (msg: string | null) => void;
   setSuccessMessage: (msg: string | null) => void;
-  printPrescription: () => void;
+  printPrescription: (recordOverride?: any) => void;
   printTreatment: () => Promise<void>;
   isDoctor: boolean;
   canManageOrders: boolean;
@@ -466,6 +467,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
   } = props;
 
   const isMedicalRecordModalOpen = isOpen;
+  const [isSavingAndPrinting, setIsSavingAndPrinting] = useState(false);
 
   if (!isOpen || !currentMedicalRecord) return null;
 
@@ -7739,7 +7741,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           className="ml-auto flex items-center gap-1 px-2 py-1 text-[10px] font-black bg-emerald-50 border border-emerald-100 dark:bg-emerald-950/30 dark:border-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-lg hover:bg-emerald-100 transition-all uppercase tracking-widest shadow-sm"
                           title="Printează schema de tratament"
                         >
-                          <Download className="w-3 h-3" />
+                          <Printer className="w-3.5 h-3.5" />
                           Printează Tratament
                         </button>
                       </h3>
@@ -8481,6 +8483,9 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                     type="button"
                     id="save-and-print-medical-record-btn"
                     onClick={async () => {
+                      if (isSavingAndPrinting || loading) return;
+                      setIsSavingAndPrinting(true);
+                      try {
                       const checkDiopterVal = (v: any) => {
                         if (v === undefined || v === null) return false;
                         const s = String(v).trim();
@@ -8537,35 +8542,41 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                         return;
                       }
 
-                      // 1. Salvează fișa și sincronizează instantaneu cu baza de date
+                      // 1. Trimite comanda de tipărire imediat (în cadrul acțiunii de click a utilizatorului)
+                      try {
+                        printPrescription(currentMedicalRecord);
+                      } catch (pErr) {
+                        console.error("Print prescription error:", pErr);
+                      }
+
+                      // 2. Salvează fișa și sincronizează instantaneu cu baza de date
                       const success = await saveMedicalRecord(true);
                       if (!success) {
                         return;
                       }
 
-                      // 2. Trimite comanda de printare a prescripției/fișei
-                      try {
-                        printPrescription();
-                      } catch (pErr) {
-                        console.error("Print prescription error:", pErr);
-                      }
-
                       setSuccessMessage("Fișa a fost salvată, trimisă la tipărire și închisă cu succes!");
-                    }}
-                    disabled={loading}
-                    className="flex-1 px-6 py-4 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold rounded-xl transition-all shadow-lg shadow-emerald-900/20 disabled:opacity-50 flex items-center justify-center gap-2 text-center cursor-pointer"
-                  >
-                    {loading ? (
-                      "Se salvează..."
-                    ) : (
-                      <>
-                        <Printer className="w-5 h-5 shrink-0" />
-                        <span className="whitespace-nowrap">
-                          Salvează și Printează
-                        </span>
-                      </>
-                    )}
-                  </button>
+                    } finally {
+                      setIsSavingAndPrinting(false);
+                    }
+                  }}
+                  disabled={loading || isSavingAndPrinting}
+                  className="flex-1 px-6 py-4 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold rounded-xl transition-all shadow-lg shadow-emerald-900/20 disabled:opacity-50 flex items-center justify-center gap-2 text-center cursor-pointer"
+                >
+                  {loading || isSavingAndPrinting ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Se salvează & printează...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Printer className="w-5 h-5 shrink-0" />
+                      <span className="whitespace-nowrap">
+                        Salvează și Printează
+                      </span>
+                    </>
+                  )}
+                </button>
                 </div>
               </div>
             </motion.div>

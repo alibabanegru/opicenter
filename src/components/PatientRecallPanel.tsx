@@ -97,6 +97,21 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
     description: string;
     action: () => Promise<void>;
   } | null>(null);
+  const [panelNotification, setPanelNotification] = useState<{
+    text: string;
+    type: "error" | "success" | "info";
+  } | null>(null);
+
+  const showNotification = (
+    text: string,
+    type: "error" | "success" | "info" = "info",
+    duration = 4500
+  ) => {
+    setPanelNotification({ text, type });
+    setTimeout(() => {
+      setPanelNotification((prev) => (prev?.text === text ? null : prev));
+    }, duration);
+  };
 
   // 1. Analyze and extract all recall candidate patients
   const allRecallItems = useMemo<RecallPatientItem[]>(() => {
@@ -482,13 +497,13 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
   // Trigger WhatsApp sending
   const handleSendWhatsAppNotification = async (item: RecallPatientItem) => {
     if (!item.patientPhone) {
-      alert(`Pacientul ${item.patientName} nu are un număr de telefon înregistrat!`);
+      showNotification(`Pacientul ${item.patientName} nu are un număr de telefon înregistrat!`, "error");
       return;
     }
 
     const { cleanPhone, isValid, error } = cleanWhatsAppPhone(item.patientPhone);
     if (!isValid) {
-      alert(`Numărul de telefon "${item.patientPhone}" nu este valid: ${error}`);
+      showNotification(`Numărul de telefon "${item.patientPhone}" nu este valid: ${error}`, "error");
       return;
     }
 
@@ -523,7 +538,7 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
   const handleQuickDirectWhatsApp = async (item: RecallPatientItem, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!item.patientPhone) {
-      alert(`Pacientul ${item.patientName} nu are un număr de telefon înregistrat!`);
+      showNotification(`Pacientul ${item.patientName} nu are un număr de telefon înregistrat!`, "error");
       return;
     }
 
@@ -531,15 +546,17 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
     const { url, isValidPhone, error } = buildWhatsAppUrl(item.patientPhone, message);
 
     if (!isValidPhone) {
-      alert(`Eroare număr de telefon: ${error}`);
+      showNotification(`Eroare număr de telefon: ${error}`, "error");
       return;
     }
 
     const opened = openWhatsAppUrl(url);
     if (!opened) {
       navigator.clipboard?.writeText(message);
-      alert(
-        "Fereastra pop-up WhatsApp a fost blocată de browser. Mesajul a fost copiat în clipboard! Deschideți WhatsApp și lipiți mesajul (Ctrl+V)."
+      showNotification(
+        "Fereastra pop-up WhatsApp a fost blocată de browser. Mesajul a fost copiat în clipboard! Deschideți WhatsApp și lipiți mesajul (Ctrl+V).",
+        "info",
+        7000
       );
     }
 
@@ -600,7 +617,7 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
         `Eliminat din lista de rechemare: ${item.patientName}`
       );
     } catch (err) {
-      alert("A apărut o eroare la actualizarea fișei.");
+      showNotification("A apărut o eroare la actualizarea fișei.", "error");
       console.error(err);
     }
   };
@@ -631,7 +648,7 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
     }
 
     if (targets.length === 0) {
-      alert("Nu există pacienți care corespund acestui criteriu de eliminare!");
+      showNotification("Nu există pacienți care corespund acestui criteriu de eliminare!", "info");
       return;
     }
 
@@ -674,7 +691,7 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
             `Eliminare în masă: ${targets.length} pacienți (${criteria})`
           );
         } catch (err) {
-          alert("A apărut o problemă în timpul procesării în masă.");
+          showNotification("A apărut o problemă în timpul procesării în masă.", "error");
           console.error(err);
         } finally {
           setIsProcessingBulk(false);
@@ -1230,6 +1247,31 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
       </div>
 
       {/* Confirmation Modal for Bulk Actions */}
+      {/* Floating in-app toast notification */}
+      {panelNotification && (
+        <div
+          className={`fixed bottom-6 right-6 z-50 max-w-md flex items-center gap-3 px-4 py-3 rounded-2xl shadow-2xl border text-xs font-bold transition-all animate-in fade-in slide-in-from-bottom-2 ${
+            panelNotification.type === "error"
+              ? "bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950/95 dark:text-rose-200 dark:border-rose-800"
+              : panelNotification.type === "success"
+              ? "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/95 dark:text-emerald-200 dark:border-emerald-800"
+              : "bg-indigo-50 text-indigo-800 border-indigo-200 dark:bg-indigo-950/95 dark:text-indigo-200 dark:border-indigo-800"
+          }`}
+        >
+          <span className="text-base">
+            {panelNotification.type === "error" ? "⚠️" : panelNotification.type === "success" ? "✓" : "ℹ️"}
+          </span>
+          <span className="flex-1 leading-relaxed">{panelNotification.text}</span>
+          <button
+            type="button"
+            onClick={() => setPanelNotification(null)}
+            className="p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-500 hover:text-slate-800 dark:hover:text-white cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {confirmModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 z-[110]">
           <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl max-w-md w-full space-y-4">
