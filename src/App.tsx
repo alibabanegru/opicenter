@@ -4,30 +4,22 @@ import { AdminStatsPanel } from "./components/AdminStatsPanel";
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import DocumentConfiguratorModal from "./components/DocumentConfiguratorModal";
-import { PatientBirthdayModal } from "./components/PatientBirthdayModal";
 import { PrismModal } from "./components/PrismModal";
-import { ContactLensModal } from "./components/ContactLensModal";
 import { RescheduleInfoModal } from "./components/RescheduleInfoModal";
 import { DeleteConfirmationModals } from "./components/DeleteConfirmationModals";
-import { ExportModal } from "./components/ExportModal";
-import { BNRModal } from "./components/BNRModal";
-import { AppointmentHistoryModal } from "./components/AppointmentHistoryModal";
 import { WhatsAppModal } from "./components/WhatsAppModal";
 import { FrameModal } from "./components/FrameModal";
-import { InventoryView } from "./components/InventoryView";
 import { OrderTypeSelectionModal } from "./components/OrderTypeSelectionModal";
 import { MedicalRegistryModal } from "./components/MedicalRegistryModal";
 import { PhoneEditModal } from "./components/PhoneEditModal";
-import { GlassesOrderModal } from "./components/GlassesOrderModal";
-import { MedicalRecordModal } from "./components/MedicalRecordModal";
-import { PatientRecallPanel } from "./components/PatientRecallPanel";
 import { compressSignatureDataUrl } from "./lib/signatureUtils";
 import React, {
   useState,
   useEffect,
   useMemo,
   useCallback,
+  useDeferredValue,
+  Suspense,
   ChangeEvent,
   useRef,
   Fragment,
@@ -206,13 +198,41 @@ import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
 import MyopiaChart from "./components/MyopiaChart";
-import { PatientSummaryModal } from "./components/PatientSummaryModal";
-import { GDPRModal } from "./components/GDPRModal";
 import { WacomSignaturePad } from "./components/WacomSignaturePad";
-import { WeatherModal } from "./components/WeatherModal";
-import { OrdersModal } from "./components/OrdersModal";
 import { PatientPortal } from "./components/PatientPortal";
 import { FrameConfigurator, FRAME_SHAPES, SHAPE_BOUNDS } from "./components/FrameConfigurator";
+
+// Lazy-loaded heavy modal components (Point 1.A) for optimal bundle splitting and instant initial page load
+const DocumentConfiguratorModal = React.lazy(() => import("./components/DocumentConfiguratorModal"));
+const PatientBirthdayModal = React.lazy(() => import("./components/PatientBirthdayModal").then(m => ({ default: m.PatientBirthdayModal })));
+const ContactLensModal = React.lazy(() => import("./components/ContactLensModal").then(m => ({ default: m.ContactLensModal })));
+const ExportModal = React.lazy(() => import("./components/ExportModal").then(m => ({ default: m.ExportModal })));
+const BNRModal = React.lazy(() => import("./components/BNRModal"));
+const AppointmentHistoryModal = React.lazy(() => import("./components/AppointmentHistoryModal"));
+const InventoryView = React.lazy(() => import("./components/InventoryView").then(m => ({ default: m.InventoryView })));
+const GlassesOrderModal = React.lazy(() => import("./components/GlassesOrderModal").then(m => ({ default: m.GlassesOrderModal })));
+const MedicalRecordModal = React.lazy(() => import("./components/MedicalRecordModal").then(m => ({ default: m.MedicalRecordModal })));
+const PatientRecallPanel = React.lazy(() => import("./components/PatientRecallPanel").then(m => ({ default: m.PatientRecallPanel })));
+const PatientSummaryModal = React.lazy(() => import("./components/PatientSummaryModal"));
+const GDPRModal = React.lazy(() => import("./components/GDPRModal").then(m => ({ default: m.GDPRModal })));
+const WeatherModal = React.lazy(() => import("./components/WeatherModal").then(m => ({ default: m.WeatherModal })));
+const OrdersModal = React.lazy(() => import("./components/OrdersModal").then(m => ({ default: m.OrdersModal })));
+
+import { generateGlassesOrderPdf } from "./services/glassesOrderPdfService";
+import {
+  generateAdeverintaMedicalaPdf,
+  generateReferatPdf,
+  generateRaportMedicalPdf,
+  generateCertificatPdf,
+  generateExpertizaPdf,
+} from "./services/medicalDocumentsPdfService";
+import {
+  cleanStrForMyopia,
+  drawMyopiaGraph,
+  generateMyopiaChartPdf,
+  generateBothMyopiaChartsA4Pdf,
+  getComprehensivePatientAxialData as getComprehensivePatientAxialDataService,
+} from "./services/myopiaPdfService";
 
 import {
   cn,
@@ -2215,13 +2235,17 @@ export default function App() {
   const [searchName, setSearchName] = useState("");
   const [searchPhone, setSearchPhone] = useState("");
   const [universalSearchQuery, setUniversalSearchQuery] = useState("");
+  const deferredUniversalSearchQuery = useDeferredValue(universalSearchQuery);
   const [isOmniboxOpen, setIsOmniboxOpen] = useState(false);
   const universalSearchInputRef = useRef<HTMLInputElement>(null);
   const omniboxRef = useRef<HTMLDivElement>(null);
   const searchedOmniboxQueriesRef = useRef<Set<string>>(new Set());
+  const loadedArchiveMonthsRef = useRef<Set<string>>(new Set());
+  const searchedRegistryQueriesRef = useRef<Set<string>>(new Set());
+  const isSavingMedicalRecordRef = useRef<boolean>(false);
 
   const omniboxMatches = useMemo(() => {
-    const q = universalSearchQuery.trim();
+    const q = deferredUniversalSearchQuery.trim();
     if (q.length < 2) return [];
     const cleanDigits = q.replace(/\D/g, "");
 
@@ -2420,7 +2444,7 @@ export default function App() {
         },
       };
     });
-  }, [universalSearchQuery, appointments, medicalRecords]);
+  }, [deferredUniversalSearchQuery, appointments, medicalRecords]);
 
   const handleUniversalSearch = (queryStr: string) => {
     const q = queryStr.trim();
@@ -2463,22 +2487,23 @@ export default function App() {
   }, [isOmniboxOpen]);
 
   // Smart / Lazy Loading: Căutare automată în arhivă pentru Omnibox (Spotlight)
-  // Optimizat Firebase: nu declanșează citiri dacă pacientul a fost deja găsit în memorie,
+  // Optimizat Firebase (Point 3.C): nu declanșează citiri dacă pacientul a fost deja găsit în memorie,
   // nu re-interoghează medicalRecords (care sunt deja sincronizate integral),
   // și memorează interogările recente pentru a elimina citirile repetitive la tastare.
   useEffect(() => {
-    const q = universalSearchQuery.trim();
+    const q = deferredUniversalSearchQuery.trim();
     if (q.length < 3) return;
+    const qNorm = q.toLowerCase();
 
     // 1. Dacă pacientul există deja în memoria locală, nu mai consumăm citiri Firebase
     if (omniboxMatches.length > 0) return;
 
     // 2. Dacă termenul a fost deja căutat în această sesiune, nu mai re-interogăm
-    if (searchedOmniboxQueriesRef.current.has(q)) return;
+    if (searchedOmniboxQueriesRef.current.has(qNorm)) return;
 
     const timer = setTimeout(async () => {
       try {
-        searchedOmniboxQueriesRef.current.add(q);
+        searchedOmniboxQueriesRef.current.add(qNorm);
         const cleanDigits = q.replace(/\D/g, "");
         const fetchedAppointments: Appointment[] = [];
 
@@ -2508,7 +2533,7 @@ export default function App() {
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [universalSearchQuery, omniboxMatches.length]);
+  }, [deferredUniversalSearchQuery, omniboxMatches.length]);
 
 
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
@@ -2546,11 +2571,16 @@ export default function App() {
     };
   }, []);
 
-  // Smart / Lazy Loading: Descarcă automat programările lunilor trecute dacă medicul/recepția navighează înapoi în calendar
+  // Smart / Lazy Loading (Point 3.C): Descarcă automat programările lunilor trecute dacă medicul/recepția navighează înapoi în calendar
+  // Caching per lună: odată descărcată o lună din arhivă, navigarea între zilele respective nu mai re-descarcă datele
   useEffect(() => {
     if (!profile) return;
     const thirtyDaysAgoDate = subDays(startOfDay(new Date()), 30);
     if (isBefore(selectedDate, thirtyDaysAgoDate)) {
+      const monthKey = `${selectedDate.getFullYear()}_${selectedDate.getMonth()}`;
+      if (loadedArchiveMonthsRef.current.has(monthKey)) return;
+      loadedArchiveMonthsRef.current.add(monthKey);
+
       const monthStart = startOfMonth(selectedDate).toISOString();
       const monthEnd = endOfMonth(selectedDate).toISOString();
       (async () => {
@@ -3438,6 +3468,37 @@ export default function App() {
         );
       });
   }, [medicalDocuments, registrySearchQuery]);
+
+  // Lazy search pentru documente medicale vechi în registru (Point 3.C):
+  // Caută pe server doar dacă nu sunt găsite în memoria locală și memorează termenii pentru a evita re-interogarea
+  useEffect(() => {
+    const q = registrySearchQuery.trim();
+    if (q.length < 3) return;
+    const qNorm = q.toLowerCase();
+    if (searchedRegistryQueriesRef.current.has(qNorm)) return;
+    if (filteredRegistryDocs.length > 0) return;
+
+    searchedRegistryQueriesRef.current.add(qNorm);
+    const timer = setTimeout(async () => {
+      try {
+        const snap = await getDocs(
+          query(collection(db, "medicalDocuments"), where("patientName", "==", q))
+        ).catch(() => null);
+        if (snap && !snap.empty) {
+          const fetched = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })).filter((d: any) => !d.isDeleted);
+          setMedicalDocuments((prev) => {
+            const existingIds = new Set(prev.map((d: any) => d.id));
+            const toAdd = fetched.filter((d: any) => !existingIds.has(d.id));
+            return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+          });
+        }
+      } catch (e) {
+        console.warn("Registry archive search notice:", e);
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [registrySearchQuery, filteredRegistryDocs.length]);
   const [activeDocumentModal, setActiveDocumentModal] = useState<
     "adeverinta" | "referat" | "raport" | "certificat" | "expertiza" | null
   >(null);
@@ -6665,20 +6726,63 @@ export default function App() {
     };
   };
 
-  const logActivity = async (action: string, details: string) => {
+  const pendingActivityLogsRef = useRef<Array<{ action: string; details: string; user: string; timestamp: string }>>([]);
+  const activityLogTimerRef = useRef<any>(null);
+
+  const flushActivityLogs = useCallback(async () => {
+    if (activityLogTimerRef.current) {
+      clearTimeout(activityLogTimerRef.current);
+      activityLogTimerRef.current = null;
+    }
+    const logsToSend = [...pendingActivityLogsRef.current];
+    pendingActivityLogsRef.current = [];
+    if (logsToSend.length === 0) return;
+
+    try {
+      if (logsToSend.length === 1) {
+        await addDoc(collection(db, "activityLogs"), logsToSend[0]);
+      } else {
+        const batch = writeBatch(db);
+        const colRef = collection(db, "activityLogs");
+        logsToSend.forEach((item) => {
+          batch.set(doc(colRef), item);
+        });
+        await batch.commit();
+      }
+    } catch (e) {
+      console.warn("Notice flushing activityLogs:", e);
+    }
+  }, []);
+
+  // Optimizat Firebase (Point 3.B): bufferizare, deduplicare și scriere în loturi (batch) pentru a reduce scrierile redundante
+  const logActivity = useCallback(async (action: string, details: string) => {
     try {
       const username = profile?.displayName || profile?.email || "Utilizator Clinică";
-      const logEntry = {
+      const now = new Date().toISOString();
+
+      // Ignoră logările identice produse la interval de mai puțin de 3 secunde
+      const isDuplicate = pendingActivityLogsRef.current.some(
+        (l) => l.action === action && l.details === details && Date.now() - new Date(l.timestamp).getTime() < 3000
+      );
+      if (isDuplicate) return;
+
+      pendingActivityLogsRef.current.push({
         action,
         details,
         user: username,
-        timestamp: new Date().toISOString(),
-      };
-      await addDoc(collection(db, "activityLogs"), logEntry);
+        timestamp: now,
+      });
+
+      if (activityLogTimerRef.current) {
+        clearTimeout(activityLogTimerRef.current);
+      }
+      activityLogTimerRef.current = setTimeout(() => {
+        flushActivityLogs();
+      }, 1500);
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, "activityLogs");
+      console.warn("Notice logActivity:", e);
     }
-  };
+  }, [profile, flushActivityLogs]);
 
   const handleSaveGdpr = async (cnp: string, signatureInput: string, phoneInput?: string): Promise<string | null> => {
     const signature = signatureInput && signatureInput.length > 8000
@@ -7774,7 +7878,11 @@ export default function App() {
             if (age < 5 * 60 * 1000) {
               locks[d.id] = { ...data, id: d.id };
             } else {
-              deleteDoc(d.ref).catch(() => {});
+              // Optimizat Firebase (Point 3.A): evităm rularea simultană a deleteDoc pe toate tab-urile deschise
+              // Ștergem doar dacă este lock-ul propriu al acestui tab sau curățare rară eșalonată (> 10 min)
+              if (currentSlotLockRef.current === d.id || (age > 10 * 60 * 1000 && Math.random() < 0.2)) {
+                deleteDoc(d.ref).catch(() => {});
+              }
             }
           }
         });
@@ -7786,6 +7894,7 @@ export default function App() {
     );
 
     const handleBeforeUnload = () => {
+      flushActivityLogs();
       if (currentSlotLockRef.current) {
         deleteDoc(doc(db, "slot_locks", currentSlotLockRef.current)).catch(() => {});
       }
@@ -7842,30 +7951,42 @@ export default function App() {
 
   // Sincronizare în timp real (real-time push synchronization) a datelor din Firebase
   useEffect(() => {
-    // 1. Users real-time listener (always active to keep user list clean)
-    const unsubUsers = onSnapshot(
-      collection(db, "users"),
-      (snapshot) => {
-        const dbUsers = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as any[];
-        const cleanUsers = deduplicateUsers(dbUsers);
-        setAvailableUsers(cleanUsers);
-      },
-      (error) => {
+    // 1. Users loader (Point 3.A: Session cache + single fetch - elimină ascultătorul live permanent pentru datele statice ale medicilor/personalului)
+    const loadUsers = async () => {
+      try {
+        const cached = sessionStorage.getItem("clinic_cached_users");
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setAvailableUsers(parsed);
+            }
+          } catch {}
+        }
+        const snap = await getDocs(collection(db, "users")).catch(() => null);
+        if (snap && !snap.empty) {
+          const dbUsers = snap.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          })) as any[];
+          const cleanUsers = deduplicateUsers(dbUsers);
+          setAvailableUsers(cleanUsers);
+          try {
+            sessionStorage.setItem("clinic_cached_users", JSON.stringify(cleanUsers));
+          } catch {}
+        }
+      } catch (error) {
         handleFirestoreError(error, OperationType.GET, "users");
       }
-    );
+    };
+    loadUsers();
 
     if (!profile) {
       setAppointments([]);
       setConfigs([]);
       setMedicalRecords([]);
       setMedicalDocuments([]);
-      return () => {
-        unsubUsers();
-      };
+      return;
     }
 
     // 2. Appointments (Smart / Lazy Loading)
@@ -7964,12 +8085,24 @@ export default function App() {
       }
     );
 
-    // 5. Medical Documents
+    // 5. Medical Documents (Point 3.A: Smart / Lazy Loading - ultimele 90 de zile în loc de întreaga arhivă istorică)
+    const ninetyDaysAgoISO = subDays(startOfDay(new Date()), 90).toISOString();
     const unsubMedicalDocuments = onSnapshot(
-      collection(db, "medicalDocuments"),
+      query(
+        collection(db, "medicalDocuments"),
+        where("date", ">=", ninetyDaysAgoISO),
+      ),
       (snapshot) => {
-        const docs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-        setMedicalDocuments(docs.filter((d: any) => !d.isDeleted));
+        setMedicalDocuments((prev) => {
+          const fresh = snapshot.docs
+            .map((doc) => ({ id: doc.id, ...doc.data() }))
+            .filter((d: any) => !d.isDeleted);
+          const freshIds = new Set(fresh.map((d: any) => d.id));
+          const preservedOlder = prev.filter(
+            (d: any) => !freshIds.has(d.id)
+          );
+          return [...fresh, ...preservedOlder];
+        });
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, "medicalDocuments");
@@ -7992,7 +8125,6 @@ export default function App() {
     );
 
     return () => {
-      unsubUsers();
       unsubAppointments();
       unsubConfigs();
       unsubMedicalRecords();
@@ -9094,569 +9226,23 @@ export default function App() {
     }
   };
 
-  const cleanStrForMyopia = (str: string) => {
-    if (!str) return "";
-    return str
-      .replace(/ă/g, "a")
-      .replace(/Ă/g, "A")
-      .replace(/â/g, "a")
-      .replace(/Â/g, "A")
-      .replace(/î/g, "i")
-      .replace(/Î/g, "I")
-      .replace(/ș/g, "s")
-      .replace(/Ș/g, "S")
-      .replace(/ț/g, "t")
-      .replace(/Ț/g, "T")
-      .replace(/♂/g, "(M)")
-      .replace(/♀/g, "(F)");
-  };
-
-  const drawMyopiaGraph = (
-    doc: jsPDF,
-    startX: number,
-    startY: number,
-    width: number,
-    height: number,
-    sex: "M" | "F",
-    patientData: { age: number; axialLength: number }[],
-    patientDataOs?: { age: number; axialLength: number }[],
-    isCombinedMode?: boolean,
-  ) => {
-    const data = sex === "M" ? MYOPIA_BOYS_DATA : MYOPIA_GIRLS_DATA;
-    const padding = 15;
-    const graphWidth = width - padding * 2;
-    const graphHeight = height - padding * 2;
-
-    const minAge = 5;
-    const maxAge = 22;
-    const minAL = 20;
-    const maxAL = 28;
-
-    const getX = (age: number) =>
-      startX + padding + ((age - minAge) / (maxAge - minAge)) * graphWidth;
-    const getY = (al: number) =>
-      startY +
-      padding +
-      graphHeight -
-      ((al - minAL) / (maxAL - minAL)) * graphHeight;
-
-    const cx = startX + width / 2;
-    const cy = startY + height / 2;
-    const gs = new (doc as any).GState({ opacity: 0.2 });
-    doc.setGState(gs);
-
-    const symbolSize = 30;
-    const symbolColor: [number, number, number] =
-      sex === "M" ? [50, 100, 255] : [255, 50, 100];
-    doc.setDrawColor(symbolColor[0], symbolColor[1], symbolColor[2]);
-    doc.setLineWidth(0.5);
-    const radius = symbolSize / 2;
-    doc.circle(cx, cy, radius, "S");
-
-    if (sex === "M") {
-      const angle = -Math.PI / 4;
-      const x1 = cx + radius * Math.cos(angle);
-      const y1 = cy + radius * Math.sin(angle);
-      const x2 = cx + radius * 1.8 * Math.cos(angle);
-      const y2 = cy + radius * 1.8 * Math.sin(angle);
-      doc.line(x1, y1, x2, y2);
-      const headLen = radius * 0.6;
-      doc.line(
-        x2,
-        y2,
-        x2 - headLen * Math.cos(angle - Math.PI / 6),
-        y2 - headLen * Math.sin(angle - Math.PI / 6),
-      );
-      doc.line(
-        x2,
-        y2,
-        x2 - headLen * Math.cos(angle + Math.PI / 6),
-        y2 - headLen * Math.sin(angle + Math.PI / 6),
-      );
-    } else {
-      const x1 = cx;
-      const y1 = cy + radius;
-      const y2 = cy + radius * 2.2;
-      doc.line(x1, y1, x1, y2);
-      const crossW = radius * 1.2;
-      const crossY = cy + radius * 1.6;
-      doc.line(x1 - crossW / 2, crossY, x1 + crossW / 2, crossY);
-    }
-    doc.setGState(new (doc as any).GState({ opacity: 1 }));
-    doc.setDrawColor(0);
-    doc.setLineWidth(0.1);
-
-    doc.setDrawColor(220);
-    for (let age = minAge; age <= maxAge; age += 1) {
-      const x = getX(age);
-      doc.setLineWidth(age % 5 === 0 ? 0.2 : 0.05);
-      doc.line(x, startY + padding, x, startY + padding + graphHeight);
-      if (age % 5 === 0) {
-        doc.setFontSize(8);
-        doc.text(age.toString(), x, startY + padding + graphHeight + 5, {
-          align: "center",
-        });
-      }
-    }
-    for (let al = minAL; al <= maxAL; al += 0.5) {
-      const y = getY(al);
-      doc.setLineWidth(al % 1 === 0 ? 0.2 : 0.05);
-      doc.line(startX + padding, y, startX + padding + graphWidth, y);
-      if (al % 1 === 0) {
-        doc.setFontSize(8);
-        doc.text(al.toString(), startX + padding - 5, y + 2, {
-          align: "right",
-        });
-      }
-    }
-
-    const percentiles = [2, 5, 10, 25, 50, 75, 90, 95, 98];
-    const colors: Record<number, [number, number, number]> = {
-      2: [21, 128, 61],
-      5: [22, 163, 74],
-      10: [34, 197, 94],
-      25: [132, 204, 22],
-      50: [234, 179, 8],
-      75: [249, 115, 22],
-      90: [234, 88, 12],
-      95: [220, 38, 38],
-      98: [153, 27, 27],
-    };
-
-    percentiles.forEach((p) => {
-      doc.setDrawColor(colors[p][0], colors[p][1], colors[p][2]);
-      doc.setLineWidth(p === 50 ? 0.6 : 0.2);
-      for (let i = 0; i < data.length - 1; i++) {
-        const p1 = (data[i] as any)[`p${p}`];
-        const p2 = (data[i + 1] as any)[`p${p}`];
-        doc.line(
-          getX(data[i].age),
-          getY(p1),
-          getX(data[i + 1].age),
-          getY(p2),
-        );
-      }
-      const lastData = data[data.length - 1];
-      doc.setFontSize(6);
-      doc.text(
-        p.toString(),
-        getX(lastData.age) + 2,
-        getY((lastData as any)[`p${p}`]) + 1,
-      );
-    });
-
-    // Linia OD (Ochi Drept) - În modul combinat: linie mai groasă (1.4) și puncte mai mari (2.4mm) pentru recunoaștere sigură alb-negru
-    if (patientData && patientData.length > 0) {
-      const sorted = [...patientData].sort((a, b) => a.age - b.age);
-      doc.setDrawColor(37, 99, 235);
-      doc.setLineWidth(isCombinedMode ? 1.4 : 1);
-      for (let i = 0; i < sorted.length - 1; i++) {
-        doc.line(
-          getX(sorted[i].age),
-          getY(sorted[i].axialLength),
-          getX(sorted[i + 1].age),
-          getY(sorted[i + 1].axialLength),
-        );
-      }
-      sorted.forEach((p) => {
-        doc.setFillColor(37, 99, 235);
-        // Punct mai gros pentru OD (2.4mm în modul combinat)
-        doc.circle(getX(p.age), getY(p.axialLength), isCombinedMode ? 2.4 : 1.5, "F");
-      });
-    }
-
-    // Linia OS (Ochi Stâng) dacă modul combinat este activat - linie mai subțire (0.6) și punct mai mic (1.2mm)
-    if (isCombinedMode && patientDataOs && patientDataOs.length > 0) {
-      const sortedOs = [...patientDataOs].sort((a, b) => a.age - b.age);
-      doc.setDrawColor(16, 185, 129);
-      doc.setLineWidth(0.6);
-      for (let i = 0; i < sortedOs.length - 1; i++) {
-        doc.line(
-          getX(sortedOs[i].age),
-          getY(sortedOs[i].axialLength),
-          getX(sortedOs[i + 1].age),
-          getY(sortedOs[i + 1].axialLength),
-        );
-      }
-      sortedOs.forEach((p) => {
-        doc.setFillColor(16, 185, 129);
-        // Punct mai mic pentru OS (1.2mm)
-        doc.circle(getX(p.age), getY(p.axialLength), 1.2, "F");
-      });
-
-      // Legendă pe grafic pentru identificare la print alb-negru
-      doc.setFontSize(7.5);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(37, 99, 235);
-      doc.text("--- OD (Punct & Linie Groasa)", startX + padding + 4, startY + padding + 6);
-      doc.setTextColor(16, 185, 129);
-      doc.text("- - OS (Punct & Linie Subtire)", startX + padding + 4, startY + padding + 10);
-      doc.setTextColor(0);
-    }
-
-    doc.setFontSize(8);
-    doc.setFont("helvetica", "italic");
-    doc.text(
-      cleanStrForMyopia(
-        "Analiză risc miopie. Grafice de creștere a lungimii axiale (Tideman et al.)",
-      ),
-      startX + width / 2,
-      startY + height - 5,
-      { align: "center" },
-    );
-  };
-
-  const handlePrintMyopiaChart = () => {
-    if (!currentMedicalRecord) return;
-
-    const doc = new jsPDF({
-      orientation: "landscape",
-      unit: "mm",
-      format: "a5",
-    });
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-
-    doc.setFontSize(14);
-    doc.setFont("helvetica", "bold");
-    doc.text(
-      cleanStrForMyopia(`Management Miopie - ${currentMedicalRecord.patientName}`),
-      pageWidth / 2,
-      15,
-      { align: "center" },
-    );
-    doc.setFontSize(10);
-    const displayAge = currentMedicalRecord.patientBirthDate
-      ? calculateDetailedAge(currentMedicalRecord.patientBirthDate)
-      : `${currentMedicalRecord.patientAge} ani`;
-    doc.text(
-      cleanStrForMyopia(
-        `Sex: ${currentMedicalRecord.patientSex === "M" ? "Masculin" : "Feminin"} | Vârstă: ${displayAge}`,
-      ),
-      pageWidth / 2,
-      22,
-      { align: "center" },
-    );
-    doc.text(
-      cleanStrForMyopia(
-        `Ochi: ${myopiaChartEye} | Data: ${format(getActiveDate(), "dd.MM.yyyy")}`,
-      ),
-      pageWidth / 2,
-      27,
-      { align: "center" },
-    );
-
-    const eye = myopiaChartEye;
-    const history = currentMedicalRecord.prescriptionHistory || [];
-    const patientData = history
-      .filter((item) => item.axialLength?.[eye.toLowerCase() as "od" | "os"])
-      .map((item) => ({
-        age: currentMedicalRecord.patientBirthDate
-          ? calculateAge(
-              currentMedicalRecord.patientBirthDate,
-              new Date(item.date),
-            )
-          : currentMedicalRecord.patientAge,
-        axialLength: parseFloat(
-          item.axialLength?.[eye.toLowerCase() as "od" | "os"] || "0",
-        ),
-      }))
-      .filter((item) => item.axialLength > 0);
-
-    const currentAL =
-      currentMedicalRecord.axialLength?.[eye.toLowerCase() as "od" | "os"];
-    if (currentAL) {
-      const currentAge = currentMedicalRecord.patientBirthDate
-        ? calculateAge(currentMedicalRecord.patientBirthDate)
-        : currentMedicalRecord.patientAge;
-      const currentVal = parseFloat(currentAL);
-      if (currentVal > 0 && !patientData.some((d) => d.age === currentAge)) {
-        patientData.push({ age: currentAge || 0, axialLength: currentVal });
-      }
-    }
-
-    drawMyopiaGraph(
-      doc,
-      10,
-      35,
-      pageWidth - 20,
-      pageHeight - 50,
-      currentMedicalRecord.patientSex || "F",
-      patientData,
-    );
-
-    const riskLabels =
-      currentMedicalRecord.patientSex === "M" ? BOYS_RISK : GIRLS_RISK;
-    const chartD =
-      currentMedicalRecord.patientSex === "M"
-        ? MYOPIA_BOYS_DATA
-        : MYOPIA_GIRLS_DATA;
-    const sortedData = [...patientData].sort((a, b) => a.age - b.age);
-    if (sortedData.length > 0) {
-      const lastM = sortedData[sortedData.length - 1];
-      const agePoint = chartD.reduce((prev, curr) =>
-        Math.abs(curr.age - lastM.age) < Math.abs(prev.age - lastM.age)
-          ? curr
-          : prev,
-      );
-      const percentiles = [98, 95, 90, 75, 50, 25, 10, 5, 2];
-      let closestP = 2;
-      for (const p of percentiles) {
-        if (lastM.axialLength >= (agePoint as any)[`p${p}`]) {
-          closestP = p;
-          break;
-        }
-      }
-      doc.setFontSize(9);
-      doc.setFont("helvetica", "bold");
-      doc.text(
-        cleanStrForMyopia(`Analiză Risc (Percentila ${closestP})`),
-        15,
-        pageHeight - 12,
-      );
-      doc.setFont("helvetica", "normal");
-      doc.text(cleanStrForMyopia(riskLabels[`p${closestP}`]), 15, pageHeight - 7);
-    }
-
-    doc.save(
-      `Miopie_${currentMedicalRecord.patientName.replace(/\s+/g, "_")}_${myopiaChartEye}.pdf`,
-    );
-  };
-
   const getComprehensivePatientAxialData = (
     eye: "OD" | "OS",
     recordToUse?: MedicalRecord | null
-  ) => {
-    const record = recordToUse || currentMedicalRecord;
-    if (!record) return [];
-
-    const eyeLower = eye.toLowerCase() as "od" | "os";
-    const eyeUpper = eye.toUpperCase();
-    const patientClean = (record.patientName || "").toLowerCase().trim();
-    const birthDateStr = record.patientBirthDate;
-    const fallbackAge = typeof record.patientAge === "number" ? record.patientAge : parseFloat(record.patientAge || "0");
-
-    const parseVal = (v: any): number => {
-      if (typeof v === "number") return isNaN(v) ? 0 : v;
-      if (!v || typeof v !== "string") return 0;
-      const cleaned = v.replace(/,/g, ".").replace(/[^0-9.]/g, "");
-      const parsed = parseFloat(cleaned);
-      return isNaN(parsed) ? 0 : parsed;
-    };
-
-    const parseDateSafe = (dStr: any): Date | null => {
-      if (!dStr) return null;
-      if (dStr instanceof Date) return isNaN(dStr.getTime()) ? null : dStr;
-      if (typeof dStr === "string") {
-        let d = new Date(dStr);
-        if (!isNaN(d.getTime())) return d;
-        const parts = dStr.trim().split(/[./-]/);
-        if (parts.length === 3) {
-          if (parts[0].length === 4) {
-            d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
-            if (!isNaN(d.getTime())) return d;
-          } else {
-            d = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
-            if (!isNaN(d.getTime())) return d;
-          }
-        }
-      }
-      return null;
-    };
-
-    const getDecimalAge = (measDate: Date | null): number => {
-      if (birthDateStr && measDate) {
-        const bDate = parseDateSafe(birthDateStr);
-        if (bDate && !isNaN(bDate.getTime()) && !isNaN(measDate.getTime())) {
-          const diffMs = measDate.getTime() - bDate.getTime();
-          const yrs = diffMs / (365.2425 * 24 * 3600 * 1000);
-          if (yrs >= 0 && yrs <= 120) return Math.round(yrs * 100) / 100;
-        }
-      }
-      return fallbackAge || 0;
-    };
-
-    const results: {
-      date: string;
-      age: number;
-      axialLength: number;
-      isFromHistory: boolean;
-      isFromAxialHistory?: boolean;
-      historyItem: any;
-      historyIndex?: number;
-      eye: "OD" | "OS";
-      sourceRecordId?: string;
-    }[] = [];
-
-    // 1. Current record dedicated axialLengthHistory
-    (record.axialLengthHistory || []).forEach((item, idx) => {
-      const val = parseVal(item[eyeLower]);
-      if (val > 0) {
-        const dObj = parseDateSafe(item.date) || new Date();
-        results.push({
-          date: item.date || dObj.toISOString(),
-          age: getDecimalAge(dObj),
-          axialLength: val,
-          isFromHistory: true,
-          isFromAxialHistory: true,
-          historyItem: item,
-          historyIndex: idx,
-          eye,
-          sourceRecordId: record.id,
-        });
-      }
-    });
-
-    // 2. Current record prescriptionHistory (legacy consults)
-    (record.prescriptionHistory || []).forEach((item, idx) => {
-      const val = parseVal(
-        item.axialLength?.[eyeLower] ??
-        item.axialLength?.[eyeUpper as any] ??
-        (item as any)[`axialLength${eyeUpper}`] ??
-        (item as any)[`axial_length_${eyeLower}`] ??
-        (item as any)[eyeLower]?.axialLength
-      );
-      if (val > 0) {
-        const dObj = parseDateSafe(item.date) || new Date();
-        results.push({
-          date: item.date || dObj.toISOString(),
-          age: getDecimalAge(dObj),
-          axialLength: val,
-          isFromHistory: true,
-          isFromAxialHistory: false,
-          historyItem: item,
-          historyIndex: idx,
-          eye,
-          sourceRecordId: record.id,
-        });
-      }
-    });
-
-    // 3. Active record current axial length
-    const activeVal = parseVal(
-      record.axialLength?.[eyeLower] ??
-      record.axialLength?.[eyeUpper as any] ??
-      (record as any)[`axialLength${eyeUpper}`]
+  ) =>
+    getComprehensivePatientAxialDataService(
+      eye,
+      recordToUse || currentMedicalRecord,
+      medicalRecords,
+      medicalDocuments
     );
-    if (activeVal > 0) {
-      const activeDateObj = parseDateSafe(record.updatedAt) || new Date();
-      results.push({
-        date: record.updatedAt || activeDateObj.toISOString(),
-        age: getDecimalAge(activeDateObj),
-        axialLength: activeVal,
-        isFromHistory: false,
-        isFromAxialHistory: false,
-        historyItem: null,
-        eye,
-        sourceRecordId: record.id,
-      });
-    }
 
-    // 4. Other medical records for the same patient
-    if (medicalRecords && patientClean) {
-      medicalRecords.forEach((otherRec) => {
-        if (otherRec.id !== record.id && (otherRec.patientName || "").toLowerCase().trim() === patientClean) {
-          (otherRec.axialLengthHistory || []).forEach((item, idx) => {
-            const val = parseVal(item[eyeLower]);
-            if (val > 0) {
-              const dObj = parseDateSafe(item.date) || new Date();
-              results.push({
-                date: item.date || dObj.toISOString(),
-                age: getDecimalAge(dObj),
-                axialLength: val,
-                isFromHistory: true,
-                isFromAxialHistory: true,
-                historyItem: item,
-                historyIndex: idx,
-                eye,
-                sourceRecordId: otherRec.id,
-              });
-            }
-          });
-          (otherRec.prescriptionHistory || []).forEach((item, idx) => {
-            const val = parseVal(
-              item.axialLength?.[eyeLower] ??
-              item.axialLength?.[eyeUpper as any] ??
-              (item as any)[`axialLength${eyeUpper}`]
-            );
-            if (val > 0) {
-              const dObj = parseDateSafe(item.date) || new Date();
-              results.push({
-                date: item.date || dObj.toISOString(),
-                age: getDecimalAge(dObj),
-                axialLength: val,
-                isFromHistory: true,
-                isFromAxialHistory: false,
-                historyItem: item,
-                historyIndex: idx,
-                eye,
-                sourceRecordId: otherRec.id,
-              });
-            }
-          });
-          const otherActive = parseVal(otherRec.axialLength?.[eyeLower]);
-          if (otherActive > 0) {
-            const dObj = parseDateSafe(otherRec.updatedAt) || new Date();
-            results.push({
-              date: otherRec.updatedAt || dObj.toISOString(),
-              age: getDecimalAge(dObj),
-              axialLength: otherActive,
-              isFromHistory: true,
-              isFromAxialHistory: false,
-              historyItem: null,
-              eye,
-              sourceRecordId: otherRec.id,
-            });
-          }
-        }
-      });
-    }
-
-    // 4. Check medical documents if any
-    if (medicalDocuments && patientClean) {
-      medicalDocuments.forEach((doc: any) => {
-        const docPatient = (doc.patientName || "").toLowerCase().trim();
-        if (docPatient === patientClean) {
-          const val = parseVal(
-            doc.formValues?.[`axialLength${eyeUpper}`] ??
-            doc.formValues?.axialLength?.[eyeLower] ??
-            doc.axialLength?.[eyeLower] ??
-            doc[`axialLength${eyeUpper}`]
-          );
-          if (val > 0) {
-            const dObj = parseDateSafe(doc.date || doc.createdAt) || new Date();
-            results.push({
-              date: doc.date || doc.createdAt || dObj.toISOString(),
-              age: getDecimalAge(dObj),
-              axialLength: val,
-              isFromHistory: true,
-              historyItem: doc,
-              eye,
-            });
-          }
-        }
-      });
-    }
-
-    // Deduplicate by (eye, day_date, axialLength)
-    const uniqueList: typeof results = [];
-    results.forEach((item) => {
-      const itemDate = parseDateSafe(item.date);
-      const itemDayStr = itemDate ? `${itemDate.getFullYear()}-${itemDate.getMonth() + 1}-${itemDate.getDate()}` : item.date;
-      const isDup = uniqueList.some((existing) => {
-        const exDate = parseDateSafe(existing.date);
-        const exDayStr = exDate ? `${exDate.getFullYear()}-${exDate.getMonth() + 1}-${exDate.getDate()}` : existing.date;
-        return exDayStr === itemDayStr && Math.abs(existing.axialLength - item.axialLength) < 0.05;
-      });
-      if (!isDup) {
-        uniqueList.push(item);
-      }
-    });
-
-    return uniqueList.sort((a, b) => {
-      const timeA = parseDateSafe(a.date)?.getTime() || 0;
-      const timeB = parseDateSafe(b.date)?.getTime() || 0;
-      return timeA - timeB;
+  const handlePrintMyopiaChart = () => {
+    if (!currentMedicalRecord) return;
+    generateMyopiaChartPdf({
+      currentMedicalRecord,
+      myopiaChartEye,
+      getActiveDate,
     });
   };
 
@@ -9665,153 +9251,13 @@ export default function App() {
       ? (recordToUse as MedicalRecord)
       : currentMedicalRecord;
     if (!record) return;
-
-    const doc = new jsPDF({
-      orientation: "landscape",
-      unit: "mm",
-      format: "a4",
+    generateBothMyopiaChartsA4Pdf({
+      record,
+      isMyopiaCombinedView,
+      medicalRecords,
+      medicalDocuments,
+      getActiveDate,
     });
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-
-    doc.setFontSize(14);
-    doc.setFont("helvetica", "bold");
-    doc.text(
-      cleanStrForMyopia(`Management Miopie (Ambii Ochi) - ${record.patientName}`),
-      pageWidth / 2,
-      15,
-      { align: "center" },
-    );
-    doc.setFontSize(10);
-    const displayAge = record.patientBirthDate
-      ? calculateDetailedAge(record.patientBirthDate)
-      : `${record.patientAge} ani`;
-    doc.text(
-      cleanStrForMyopia(
-        `Sex: ${record.patientSex === "M" ? "Masculin" : "Feminin"} | Vârstă: ${displayAge} | Data: ${format(getActiveDate(record), "dd.MM.yyyy")}`,
-      ),
-      pageWidth / 2,
-      22,
-      { align: "center" },
-    );
-
-    const odData = getComprehensivePatientAxialData("OD", record);
-    const osData = getComprehensivePatientAxialData("OS", record);
-
-    if (isMyopiaCombinedView) {
-      // Mod Grafic Combinat A4 (un singur grafic mare cu OD și OS suprapuse)
-      const singleChartWidth = pageWidth - 20;
-      const singleChartHeight = pageHeight - 65;
-
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "bold");
-      doc.text(cleanStrForMyopia("Grafic Comparativ Suprapus (OD & OS)"), pageWidth / 2, 31, { align: "center" });
-
-      drawMyopiaGraph(
-        doc,
-        10,
-        34,
-        singleChartWidth,
-        singleChartHeight,
-        record.patientSex || "F",
-        odData,
-        osData,
-        true,
-      );
-    } else {
-      // Mod Două Grafice Separate A4
-      const chartWidth = (pageWidth - 30) / 2; // ~133.5 mm wide for each eye's chart
-      const chartHeight = pageHeight - 65; // ~145 mm tall
-
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "bold");
-      doc.text(cleanStrForMyopia("Ochi Drept (OD)"), 15 + chartWidth / 2, 31, { align: "center" });
-
-      drawMyopiaGraph(
-        doc,
-        10,
-        34,
-        chartWidth,
-        chartHeight,
-        record.patientSex || "F",
-        odData,
-      );
-
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "bold");
-      doc.text(cleanStrForMyopia("Ochi Stang (OS)"), 20 + chartWidth + chartWidth / 2, 31, { align: "center" });
-
-      drawMyopiaGraph(
-        doc,
-        20 + chartWidth,
-        34,
-        chartWidth,
-        chartHeight,
-        record.patientSex || "F",
-        osData,
-      );
-    }
-
-    const riskLabels = record.patientSex === "M" ? BOYS_RISK : GIRLS_RISK;
-    const chartD = record.patientSex === "M" ? MYOPIA_BOYS_DATA : MYOPIA_GIRLS_DATA;
-
-    let odPercentileStr = "";
-    const sortedOd = [...odData].sort((a, b) => a.age - b.age);
-    if (sortedOd.length > 0) {
-      const lastVal = sortedOd[sortedOd.length - 1];
-      const agePoint = chartD.reduce((prev, curr) =>
-        Math.abs(curr.age - lastVal.age) < Math.abs(prev.age - lastVal.age) ? curr : prev,
-      );
-      const percentilesList = [98, 95, 90, 75, 50, 25, 10, 5, 2];
-      let closestP = 2;
-      for (const p of percentilesList) {
-        if (lastVal.axialLength >= (agePoint as any)[`p${p}`]) {
-          closestP = p;
-          break;
-        }
-      }
-      odPercentileStr = `OD: Percentila ${closestP} (${riskLabels[`p${closestP}`]})`;
-    }
-
-    let osPercentileStr = "";
-    const sortedOs = [...osData].sort((a, b) => a.age - b.age);
-    if (sortedOs.length > 0) {
-      const lastVal = sortedOs[sortedOs.length - 1];
-      const agePoint = chartD.reduce((prev, curr) =>
-        Math.abs(curr.age - lastVal.age) < Math.abs(prev.age - lastVal.age) ? curr : prev,
-      );
-      const percentilesList = [98, 95, 90, 75, 50, 25, 10, 5, 2];
-      let closestP = 2;
-      for (const p of percentilesList) {
-        if (lastVal.axialLength >= (agePoint as any)[`p${p}`]) {
-          closestP = p;
-          break;
-        }
-      }
-      osPercentileStr = `OS: Percentila ${closestP} (${riskLabels[`p${closestP}`]})`;
-    }
-
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "bold");
-    doc.text(cleanStrForMyopia("Analiză Risc de Progresie:"), 15, pageHeight - 12);
-
-    doc.setFont("helvetica", "normal");
-    if (odPercentileStr) {
-      doc.text(cleanStrForMyopia(odPercentileStr), 15, pageHeight - 7);
-    } else {
-      doc.text(cleanStrForMyopia("OD: Nicio informatie disponibila."), 15, pageHeight - 7);
-    }
-
-    const secondColumnX = isMyopiaCombinedView ? pageWidth / 2 + 5 : 20 + ((pageWidth - 30) / 2);
-    if (osPercentileStr) {
-      doc.text(cleanStrForMyopia(osPercentileStr), secondColumnX, pageHeight - 7);
-    } else {
-      doc.text(cleanStrForMyopia("OS: Nicio informatie disponibila."), secondColumnX, pageHeight - 7);
-    }
-
-    doc.save(
-      `Miopie_${record.patientName.replace(/\s+/g, "_")}_Amandoi_Ochii.pdf`,
-    );
   };
 
   const handleAddHistoricalAxialLength = async (eye: "OD" | "OS") => {
@@ -11329,6 +10775,9 @@ export default function App() {
     allowSkipDpCheck = false,
   ): Promise<boolean> => {
     if (!currentMedicalRecord) return false;
+    // Prevenire trimiteri paralele sau dublu-click accidental (Point 3.B)
+    if (isSavingMedicalRecordRef.current) return false;
+    isSavingMedicalRecordRef.current = true;
 
     let newHistory = [...(currentMedicalRecord.prescriptionHistory || [])];
     const now = new Date().toISOString();
@@ -12180,6 +11629,7 @@ export default function App() {
       return false;
     } finally {
       setLoading(false);
+      isSavingMedicalRecordRef.current = false;
     }
   };
 
@@ -13211,696 +12661,6 @@ export default function App() {
     }
   };
 
-  const drawGlassesCanvas = (order: any, isNear: boolean) => {
-    const shapeField = isNear ? "nearFrameShape" : "frameShape";
-    const typeField = isNear ? "nearFrameType" : "frameType";
-    const widthField = isNear ? "nearLensWidth" : "lensWidth";
-    const heightField = isNear ? "nearLensHeight" : "lensHeight";
-    const bridgeField = isNear ? "nearBridgeSize" : "bridgeSize";
-
-    const dpOdField = isNear ? "nearDp_od" : "dp_od";
-    const dpOsField = isNear ? "nearDp_os" : "dp_os";
-    const fitOdField = isNear ? "nearFittingHeight_od" : "fittingHeight_od";
-    const fitOsField = isNear ? "nearFittingHeight_os" : "fittingHeight_os";
-    const diameterField = isNear ? "nearLensDiameter" : "lensDiameter";
-
-    const selectedShape = order[shapeField] as number || 1;
-    const selectedType = order[typeField] || "full";
-    const A_val = parseFloat(order[widthField]) || 50;
-    const B_val = parseFloat(order[heightField]) || 38;
-    const DBL_val = parseFloat(order[bridgeField]) || 16;
-    const lensDiameter_val = parseFloat(order[diameterField]) || 0;
-
-    const DP_OD_val = parseFloat(order[dpOdField]) || 32;
-    const DP_OS_val = parseFloat(order[dpOsField]) || 32;
-    const H_OD_val = parseFloat(order[fitOdField]) || 20;
-    const H_OS_val = parseFloat(order[fitOsField]) || 20;
-
-    const shapeObj = FRAME_SHAPES.find(s => s.id === selectedShape) || FRAME_SHAPES[0];
-    const deformXField = isNear ? "nearFrameDeformX" : "frameDeformX";
-    const deformYField = isNear ? "nearFrameDeformY" : "frameDeformY";
-    const deformAngleField = isNear ? "nearFrameDeformAngle" : "frameDeformAngle";
-    const deformsListField = isNear ? "nearFrameDeformsList" : "frameDeformsList";
-    const rotationField = isNear ? "nearFrameRotation" : "frameRotation";
-    const frameRotation = Number(order[rotationField]) || 0;
-
-    const deformsListStr = (order[deformsListField] || "") as string;
-    const shapePath = deformsListStr
-      ? deformPath(shapeObj.path, deformsListStr, frameRotation)
-      : deformPath(shapeObj.path, parseFloat(order[deformXField]) || 0, parseFloat(order[deformYField]) || 0, parseFloat(order[deformAngleField]) || 0, frameRotation);
-
-    const paddingLeft = 16; // 16mm left padding for B dimension clearance
-    const paddingRight = 12; // 12mm right padding
-    const paddingY = 16; // 16mm top padding for pupil/fitting dimensions
-    const X_OD_start = paddingLeft;
-    const X_OD_end = paddingLeft + A_val;
-
-    const bridgeAngleField = isNear ? "nearBridgeAngle" : "bridgeAngle";
-    const bridgeAngle = Number(order[bridgeAngleField]) || 0;
-    const ptNasal = getPointOnPathAtAngle(shapePath, bridgeAngle);
-
-    const X_OS_start = paddingLeft + A_val + DBL_val;
-    const X_OS_end = X_OS_start + A_val;
-
-    const X_OD_nasal = X_OD_start + (ptNasal.x / 80) * A_val;
-    const X_OS_nasal = X_OS_start + ((80 - ptNasal.x) / 80) * A_val;
-
-    const X_bridge_start = X_OD_nasal;
-    const X_bridge_end = X_OS_nasal;
-    const actualDBL = Math.max(0.1, Math.round((X_bridge_end - X_bridge_start) * 10) / 10);
-
-    const X_bridge_center = paddingLeft + A_val + DBL_val / 2;
-
-    const Y_bridge = paddingY + (ptNasal.y / 50) * B_val;
-
-    const X_pupil_OD = X_bridge_center - DP_OD_val;
-    const X_pupil_OS = X_bridge_center + DP_OS_val;
-
-    const CX_OD = paddingLeft + A_val / 2;
-    const CX_OS = X_OS_start + A_val / 2;
-
-    // Calculate horizontal offset of pupil relative to lens centers in viewBox (0 to 80)
-    const dx_OD = X_pupil_OD - CX_OD;
-    const viewBoxX_OD = 40 + (dx_OD / A_val) * 80;
-
-    const dx_OS = X_pupil_OS - CX_OS;
-    const viewBoxX_OS = 40 + (dx_OS / A_val) * 80;
-    const viewBoxX_OS_mirrored = 80 - viewBoxX_OS;
-
-    // Find the bottom viewBox Y coordinate of the deformed shape at the pupil's horizontal position
-    const viewBoxBottomY_OD = getBottomYAtX(shapePath, viewBoxX_OD);
-    const viewBoxBottomY_OS = getBottomYAtX(shapePath, viewBoxX_OS_mirrored);
-
-    // Convert the viewBox Y coordinates to physical layout coordinates
-    const physicalBottomY_OD = paddingY + (viewBoxBottomY_OD / 50) * B_val;
-    const physicalBottomY_OS = paddingY + (viewBoxBottomY_OS / 50) * B_val;
-
-    // Determine the vertical position of the pupils (optical centers)
-    const Y_pupil_OD = physicalBottomY_OD - H_OD_val;
-    const Y_pupil_OS = physicalBottomY_OS - H_OS_val;
-
-    const drawingWidthMm = 2 * A_val + DBL_val + paddingLeft + paddingRight;
-    const drawingHeightMm = B_val + paddingY + 20; // 20mm safe bottom padding for A and DBL dimensions
-    const scale = 3.78; // pixels per mm for 1:1 scale (96dpi)
-
-    const canvas = document.createElement("canvas");
-    canvas.width = drawingWidthMm * scale;
-    canvas.height = drawingHeightMm * scale;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-
-    // Background - Grid paper (soft warm/white engineering look)
-    ctx.fillStyle = "#fcfdfd";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Grid lines (1mm)
-    ctx.strokeStyle = "rgba(0,0,0,0.03)";
-    ctx.lineWidth = 0.5;
-    for (let x = 0; x < canvas.width; x += scale) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, canvas.height);
-      ctx.stroke();
-    }
-    for (let y = 0; y < canvas.height; y += scale) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(canvas.width, y);
-      ctx.stroke();
-    }
-
-    // Draw 5mm major grid lines
-    ctx.strokeStyle = "rgba(0,0,0,0.06)";
-    ctx.lineWidth = 0.8;
-    for (let x = 0; x < canvas.width; x += scale * 5) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, canvas.height);
-      ctx.stroke();
-    }
-    for (let y = 0; y < canvas.height; y += scale * 5) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(canvas.width, y);
-      ctx.stroke();
-    }
-
-    // Draw bridge axis (dashed line)
-    ctx.strokeStyle = "rgba(100, 116, 139, 0.2)";
-    ctx.setLineDash([4, 4]);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(X_bridge_center * scale, 5 * scale);
-    ctx.lineTo(X_bridge_center * scale, (drawingHeightMm - 5) * scale);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Draw outer boxes (casetat bounds)
-    ctx.strokeStyle = "rgba(100, 116, 139, 0.15)";
-    ctx.lineWidth = 0.75;
-    ctx.setLineDash([2, 2]);
-    ctx.strokeRect(X_OD_start * scale, paddingY * scale, A_val * scale, B_val * scale);
-    ctx.strokeRect(X_OS_start * scale, paddingY * scale, A_val * scale, B_val * scale);
-    ctx.setLineDash([]);
-
-    // Setup Path2D
-    const path2d = new Path2D(shapePath);
-
-    // Draw OD Lens
-    ctx.save();
-    ctx.translate(X_OD_start * scale, paddingY * scale);
-    ctx.scale((A_val / 80) * scale, (B_val / 50) * scale);
-    ctx.fillStyle = "rgba(240, 240, 240, 0.15)";
-    ctx.fill(path2d);
-
-    const strokeColor = isNear ? "#10b981" : "#3b82f6";
-    if (selectedType === "groove") {
-      ctx.save();
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = 1.2 / scale;
-      ctx.setLineDash([1.5 * scale, 1.5 * scale]);
-      ctx.stroke(path2d);
-      ctx.restore();
-
-      ctx.save();
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = 3.5 / scale;
-      ctx.beginPath();
-      ctx.rect(-10, -10, 100, 35); // Clip top half
-      ctx.clip();
-      ctx.stroke(path2d);
-      ctx.restore();
-    } else if (selectedType === "drill") {
-      ctx.save();
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = 0.8 / scale;
-      ctx.setLineDash([2 * scale, 2 * scale]);
-      ctx.stroke(path2d);
-      ctx.restore();
-
-      const ptNasal = getPointOnPathAtAngle(shapePath, bridgeAngle);
-      const ptTemporal = getPointOnPathAtAngle(shapePath, Math.PI);
-
-      const holes = [
-        { x: ptNasal.x - 4.5, y: ptNasal.y },
-        { x: ptNasal.x - 8.5, y: ptNasal.y },
-        { x: ptTemporal.x + 4.5, y: ptTemporal.y },
-        { x: ptTemporal.x + 8.5, y: ptTemporal.y }
-      ];
-      holes.forEach(hole => {
-        ctx.beginPath();
-        ctx.arc(hole.x, hole.y, 1.0, 0, 2 * Math.PI);
-        ctx.fillStyle = "#334155";
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.arc(hole.x, hole.y, 2.0, 0, 2 * Math.PI);
-        ctx.strokeStyle = "rgba(148, 163, 184, 0.8)";
-        ctx.lineWidth = 0.5;
-        ctx.stroke();
-      });
-    } else {
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = 3.5 / scale;
-      ctx.stroke(path2d);
-    }
-    ctx.restore();
-
-    // Draw OS Lens (mirrored)
-    ctx.save();
-    ctx.translate(X_OS_start * scale, paddingY * scale);
-    ctx.scale((A_val / 80) * scale, (B_val / 50) * scale);
-    ctx.translate(80, 0);
-    ctx.scale(-1, 1);
-    ctx.fillStyle = "rgba(240, 240, 240, 0.15)";
-    ctx.fill(path2d);
-
-    if (selectedType === "groove") {
-      ctx.save();
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = 1.2 / scale;
-      ctx.setLineDash([1.5 * scale, 1.5 * scale]);
-      ctx.stroke(path2d);
-      ctx.restore();
-
-      ctx.save();
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = 3.5 / scale;
-      ctx.beginPath();
-      ctx.rect(-10, -10, 100, 35); // Clip top half
-      ctx.clip();
-      ctx.stroke(path2d);
-      ctx.restore();
-    } else if (selectedType === "drill") {
-      ctx.save();
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = 0.8 / scale;
-      ctx.setLineDash([2 * scale, 2 * scale]);
-      ctx.stroke(path2d);
-      ctx.restore();
-
-      const ptNasal = getPointOnPathAtAngle(shapePath, bridgeAngle);
-      const ptTemporal = getPointOnPathAtAngle(shapePath, Math.PI);
-
-      const holes = [
-        { x: ptNasal.x - 4.5, y: ptNasal.y },
-        { x: ptNasal.x - 8.5, y: ptNasal.y },
-        { x: ptTemporal.x + 4.5, y: ptTemporal.y },
-        { x: ptTemporal.x + 8.5, y: ptTemporal.y }
-      ];
-      holes.forEach(hole => {
-        ctx.beginPath();
-        ctx.arc(hole.x, hole.y, 1.0, 0, 2 * Math.PI);
-        ctx.fillStyle = "#334155";
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.arc(hole.x, hole.y, 2.0, 0, 2 * Math.PI);
-        ctx.strokeStyle = "rgba(148, 163, 184, 0.8)";
-        ctx.lineWidth = 0.5;
-        ctx.stroke();
-      });
-    } else {
-      ctx.strokeStyle = strokeColor;
-      ctx.lineWidth = 3.5 / scale;
-      ctx.stroke(path2d);
-    }
-    ctx.restore();
-
-    // Draw Bridge Arc perfectly connecting the lenses (with overlap)
-    const Y_bridge_mid = Y_bridge - 3;
-
-    ctx.strokeStyle = isNear ? "#10b981" : "#3b82f6";
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo((X_bridge_start - 1.5) * scale, Y_bridge * scale);
-    ctx.quadraticCurveTo(
-      X_bridge_center * scale,
-      Y_bridge_mid * scale,
-      (X_bridge_end + 1.5) * scale,
-      Y_bridge * scale
-    );
-    ctx.stroke();
-
-    // Draw Nose Pads
-    ctx.strokeStyle = "#94a3b8";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.ellipse((X_bridge_start - 0.5) * scale, (Y_bridge + 3) * scale, 1 * scale, 2.5 * scale, 0, 0, 2 * Math.PI);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.ellipse((X_bridge_end + 0.5) * scale, (Y_bridge + 3) * scale, 1 * scale, 2.5 * scale, 0, 0, 2 * Math.PI);
-    ctx.stroke();
-
-    // Centration Crosshairs
-    ctx.strokeStyle = isNear ? "#10b981" : "#3b82f6";
-    ctx.fillStyle = isNear ? "#10b981" : "#3b82f6";
-
-    // OD Pupil
-    ctx.lineWidth = 1.25;
-    ctx.beginPath();
-    ctx.arc(X_pupil_OD * scale, Y_pupil_OD * scale, 2.5 * scale, 0, 2 * Math.PI);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(X_pupil_OD * scale, Y_pupil_OD * scale, 0.6 * scale, 0, 2 * Math.PI);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo((X_pupil_OD - 5) * scale, Y_pupil_OD * scale);
-    ctx.lineTo((X_pupil_OD + 5) * scale, Y_pupil_OD * scale);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(X_pupil_OD * scale, (Y_pupil_OD - 5) * scale);
-    ctx.lineTo(X_pupil_OD * scale, (Y_pupil_OD + 5) * scale);
-    ctx.stroke();
-
-    // OS Pupil
-    ctx.beginPath();
-    ctx.arc(X_pupil_OS * scale, Y_pupil_OS * scale, 2.5 * scale, 0, 2 * Math.PI);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(X_pupil_OS * scale, Y_pupil_OS * scale, 0.6 * scale, 0, 2 * Math.PI);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo((X_pupil_OS - 5) * scale, Y_pupil_OS * scale);
-    ctx.lineTo((X_pupil_OS + 5) * scale, Y_pupil_OS * scale);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(X_pupil_OS * scale, (Y_pupil_OS - 5) * scale);
-    ctx.lineTo(X_pupil_OS * scale, (Y_pupil_OS + 5) * scale);
-    ctx.stroke();
-
-    // Draw lens design markings (Bifocal pastille or Progressive corridor)
-    const lensStyleField = isNear ? "nearLensStyle" : "lensStyle";
-    const selectedLensStyle = order[lensStyleField] || "";
-
-    if (selectedLensStyle === "bifocal") {
-      ctx.save();
-      ctx.strokeStyle = isNear ? "rgba(16,185,129,0.75)" : "rgba(59,130,246,0.75)";
-      ctx.fillStyle = isNear ? "rgba(16,185,129,0.06)" : "rgba(59,130,246,0.06)";
-      ctx.lineWidth = 1.25;
-
-      // OD Bifocal Segment
-      const X_c_OD = X_pupil_OD + 1.5;
-      const Y_top_OD = Y_pupil_OD + 2.5;
-      ctx.beginPath();
-      ctx.moveTo((X_c_OD + 11) * scale, Y_top_OD * scale);
-      ctx.ellipse(X_c_OD * scale, Y_top_OD * scale, 11 * scale, 10 * scale, 0, 0, Math.PI, false);
-      ctx.closePath();
-      ctx.stroke();
-      ctx.fill();
-
-      // OS Bifocal Segment
-      const X_c_OS = X_pupil_OS - 1.5;
-      const Y_top_OS = Y_pupil_OS + 2.5;
-      ctx.beginPath();
-      ctx.moveTo((X_c_OS + 11) * scale, Y_top_OS * scale);
-      ctx.ellipse(X_c_OS * scale, Y_top_OS * scale, 11 * scale, 10 * scale, 0, 0, Math.PI, false);
-      ctx.closePath();
-      ctx.stroke();
-      ctx.fill();
-
-      ctx.restore();
-    } else if (selectedLensStyle === "progressive") {
-      ctx.save();
-      ctx.strokeStyle = isNear ? "rgba(16,185,129,0.75)" : "rgba(59,130,246,0.75)";
-      ctx.lineWidth = 0.75;
-
-      // Draw OD Progressive
-      const nearX_OD = X_pupil_OD + 1.5;
-      const nearY_OD = Y_pupil_OD + 11;
-
-      // Corridor boundaries OD
-      ctx.strokeStyle = isNear ? "rgba(16,185,129,0.5)" : "rgba(59,130,246,0.5)";
-      ctx.setLineDash([1.5, 3]);
-      ctx.beginPath();
-      ctx.moveTo((X_pupil_OD - 3.5) * scale, Y_pupil_OD * scale);
-      ctx.quadraticCurveTo((X_pupil_OD - 2.5) * scale, (Y_pupil_OD + 5) * scale, (X_pupil_OD - 2) * scale, nearY_OD * scale);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo((X_pupil_OD + 3.5) * scale, Y_pupil_OD * scale);
-      ctx.quadraticCurveTo((X_pupil_OD + 2.5) * scale, (Y_pupil_OD + 5) * scale, (X_pupil_OD + 0.5) * scale, nearY_OD * scale);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Micro-engravings OD
-      ctx.strokeStyle = isNear ? "rgba(16,185,129,0.75)" : "rgba(59,130,246,0.75)";
-      ctx.beginPath();
-      ctx.arc((X_pupil_OD - 17) * scale, Y_pupil_OD * scale, 0.6 * scale, 0, 2 * Math.PI);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc((X_pupil_OD + 17) * scale, Y_pupil_OD * scale, 0.6 * scale, 0, 2 * Math.PI);
-      ctx.stroke();
-
-
-      // Draw OS Progressive
-      const nearX_OS = X_pupil_OS - 1.5;
-      const nearY_OS = Y_pupil_OS + 11;
-
-      // Corridor boundaries OS
-      ctx.strokeStyle = isNear ? "rgba(16,185,129,0.5)" : "rgba(59,130,246,0.5)";
-      ctx.setLineDash([1.5, 3]);
-      ctx.beginPath();
-      ctx.moveTo((X_pupil_OS - 3.5) * scale, Y_pupil_OS * scale);
-      ctx.quadraticCurveTo((X_pupil_OS - 2.5) * scale, (Y_pupil_OS + 5) * scale, (X_pupil_OS - 0.5) * scale, nearY_OS * scale);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo((X_pupil_OS + 3.5) * scale, Y_pupil_OS * scale);
-      ctx.quadraticCurveTo((X_pupil_OS + 2.5) * scale, (Y_pupil_OS + 5) * scale, (X_pupil_OS + 2) * scale, nearY_OS * scale);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Micro-engravings OS
-      ctx.strokeStyle = isNear ? "rgba(16,185,129,0.75)" : "rgba(59,130,246,0.75)";
-      ctx.beginPath();
-      ctx.arc((X_pupil_OS - 17) * scale, Y_pupil_OS * scale, 0.6 * scale, 0, 2 * Math.PI);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc((X_pupil_OS + 17) * scale, Y_pupil_OS * scale, 0.6 * scale, 0, 2 * Math.PI);
-      ctx.stroke();
-
-      ctx.restore();
-    }
-
-    // Dimension lines and technical text
-    ctx.strokeStyle = "#64748b";
-    ctx.fillStyle = "#475569";
-    ctx.lineWidth = 0.8;
-    ctx.font = `${Math.round(6.5 * scale)}px sans-serif`;
-
-    // Arrow helper
-    const drawArrow = (x1: number, y1: number, x2: number, y2: number) => {
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
-      const angle = Math.atan2(y2 - y1, x2 - x1);
-      const size = 1.8 * scale;
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x1 + size * Math.cos(angle + Math.PI/6), y1 + size * Math.sin(angle + Math.PI/6));
-      ctx.lineTo(x1 + size * Math.cos(angle - Math.PI/6), y1 + size * Math.sin(angle - Math.PI/6));
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.moveTo(x2, y2);
-      ctx.lineTo(x2 - size * Math.cos(angle + Math.PI/6), y2 - size * Math.sin(angle + Math.PI/6));
-      ctx.lineTo(x2 - size * Math.cos(angle - Math.PI/6), y2 - size * Math.sin(angle - Math.PI/6));
-      ctx.fill();
-    };
-
-    // Text drawing helper with white halo for high contrast/readability and customizable alignment
-    const drawTextWithHalo = (text: string, x: number, y: number, align: CanvasTextAlign = "center") => {
-      ctx.save();
-      ctx.textAlign = align;
-      ctx.lineWidth = 2.5 * scale;
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineJoin = "round";
-      ctx.strokeText(text, x, y);
-      ctx.fillStyle = "#475569";
-      ctx.fillText(text, x, y);
-      ctx.restore();
-    };
-
-    const drawColoredTextWithHalo = (text: string, x: number, y: number, color: string, align: CanvasTextAlign = "center") => {
-      ctx.save();
-      ctx.textAlign = align;
-      ctx.lineWidth = 2.5 * scale;
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineJoin = "round";
-      ctx.strokeText(text, x, y);
-      ctx.fillStyle = color;
-      ctx.fillText(text, x, y);
-      ctx.restore();
-    };
-
-    // Labels for Lenses (OD in top-left corner, OS in top-right corner)
-    ctx.save();
-    ctx.font = `bold ${Math.round(6.5 * scale)}px sans-serif`;
-    const labelColor = isNear ? "#047857" : "#1d4ed8";
-    drawColoredTextWithHalo("OD", 4 * scale, 7 * scale, labelColor, "left");
-    drawColoredTextWithHalo("OS", (drawingWidthMm - 4) * scale, 7 * scale, labelColor, "right");
-    ctx.restore();
-
-    // -------------------------------------------------------------------------
-    // Uncut Lens Blank Diameter (Ø Montaj) Overlay (if lens diameter is specified)
-    // -------------------------------------------------------------------------
-    if (lensDiameter_val > 0) {
-      ctx.save();
-      ctx.strokeStyle = "#d97706"; // Amber technical circle
-      ctx.fillStyle = "rgba(245, 158, 11, 0.04)";
-      ctx.lineWidth = 0.9 * scale;
-      ctx.setLineDash([3 * scale, 2 * scale]);
-
-      const radiusPx = (lensDiameter_val / 2) * scale;
-
-      // Right Eye (OD) Lens Blank Circle
-      ctx.beginPath();
-      ctx.arc(X_pupil_OD * scale, Y_pupil_OD * scale, radiusPx, 0, 2 * Math.PI);
-      ctx.fill();
-      ctx.stroke();
-
-      // Left Eye (OS) Lens Blank Circle
-      ctx.beginPath();
-      ctx.arc(X_pupil_OS * scale, Y_pupil_OS * scale, radiusPx, 0, 2 * Math.PI);
-      ctx.fill();
-      ctx.stroke();
-
-      // Diameter text labels (font size 1.5x smaller, positioned inside top of circle to avoid overflowing canvas)
-      ctx.setLineDash([]);
-      const diamFontSize = (4.8 / 1.5 * scale).toFixed(1);
-      ctx.font = `bold ${diamFontSize}px sans-serif`;
-
-      const diamY_OD = Math.max(16 * scale, Y_pupil_OD * scale - radiusPx + 3.2 * scale);
-      const diamY_OS = Math.max(16 * scale, Y_pupil_OS * scale - radiusPx + 3.2 * scale);
-
-      drawTextWithHalo(`Ø ${lensDiameter_val} mm`, X_pupil_OD * scale, diamY_OD, "center");
-      drawTextWithHalo(`Ø ${lensDiameter_val} mm`, X_pupil_OS * scale, diamY_OS, "center");
-
-      ctx.restore();
-    }
-
-    // -------------------------------------------------------------------------
-    // Individual DP (PD) and H (fitting height) dimension segments on the drawing
-    // -------------------------------------------------------------------------
-    ctx.save();
-    ctx.strokeStyle = isNear ? "#10b981" : "#3b82f6";
-    ctx.fillStyle = isNear ? "#047857" : "#1d4ed8";
-    ctx.lineWidth = 0.8 * scale;
-    // DP text font size 1.3x smaller (5.5 / 1.3 = ~4.23)
-    const dpFontSize = (5.5 / 1.3 * scale).toFixed(1);
-    ctx.font = `bold ${dpFontSize}px sans-serif`;
-
-    // 1. Horizontal Individual DP measurements at Y = 11.5mm
-    const dpY = 11.5;
-    ctx.setLineDash([1.5 * scale, 1.5 * scale]);
-    ctx.beginPath();
-    ctx.moveTo(X_pupil_OD * scale, Y_pupil_OD * scale);
-    ctx.lineTo(X_pupil_OD * scale, dpY * scale);
-    ctx.moveTo(X_pupil_OS * scale, Y_pupil_OS * scale);
-    ctx.lineTo(X_pupil_OS * scale, dpY * scale);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // OD DP arrow & text
-    drawArrow(X_pupil_OD * scale, dpY * scale, X_bridge_center * scale, dpY * scale);
-    drawTextWithHalo(`DP = ${DP_OD_val} mm`, ((X_pupil_OD + X_bridge_center) / 2) * scale, (dpY - 2.5) * scale, "center");
-
-    // OS DP arrow & text
-    drawArrow(X_bridge_center * scale, dpY * scale, X_pupil_OS * scale, dpY * scale);
-    drawTextWithHalo(`DP = ${DP_OS_val} mm`, ((X_bridge_center + X_pupil_OS) / 2) * scale, (dpY - 2.5) * scale, "center");
-
-    // 2. Vertical H (fitting height) measurements
-    // For OD (on the left side, we place H line at X_pupil_OD - 5 mm)
-    const hOD_X = X_pupil_OD - 5;
-    ctx.setLineDash([1.5 * scale, 1.5 * scale]);
-    ctx.beginPath();
-    ctx.moveTo(X_pupil_OD * scale, Y_pupil_OD * scale);
-    ctx.lineTo(hOD_X * scale, Y_pupil_OD * scale);
-    ctx.moveTo(X_pupil_OD * scale, physicalBottomY_OD * scale);
-    ctx.lineTo(hOD_X * scale, physicalBottomY_OD * scale);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    drawArrow(hOD_X * scale, physicalBottomY_OD * scale, hOD_X * scale, Y_pupil_OD * scale);
-    drawTextWithHalo(`H = ${H_OD_val} mm`, (hOD_X - 1.5) * scale, ((Y_pupil_OD + physicalBottomY_OD) / 2) * scale + 1.5 * scale, "right");
-
-    // For OS (on the right side, we place H line at X_pupil_OS + 5 mm)
-    const hOS_X = X_pupil_OS + 5;
-    ctx.setLineDash([1.5 * scale, 1.5 * scale]);
-    ctx.beginPath();
-    ctx.moveTo(X_pupil_OS * scale, Y_pupil_OS * scale);
-    ctx.lineTo(hOS_X * scale, Y_pupil_OS * scale);
-    ctx.moveTo(X_pupil_OS * scale, physicalBottomY_OS * scale);
-    ctx.lineTo(hOS_X * scale, physicalBottomY_OS * scale);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    drawArrow(hOS_X * scale, physicalBottomY_OS * scale, hOS_X * scale, Y_pupil_OS * scale);
-    drawTextWithHalo(`H = ${H_OS_val} mm`, (hOS_X + 1.5) * scale, ((Y_pupil_OS + physicalBottomY_OS) / 2) * scale + 1.5 * scale, "left");
-
-    ctx.restore();
-
-    // Reset styles for regular dimension lines
-    ctx.strokeStyle = "#64748b";
-    ctx.fillStyle = "#475569";
-    ctx.lineWidth = 0.8;
-    ctx.font = `${Math.round(6.5 * scale)}px sans-serif`;
-
-    // Dimension projection lines (dashed)
-    ctx.save();
-    ctx.strokeStyle = "rgba(100, 116, 139, 0.4)";
-    ctx.lineWidth = 0.5 * scale;
-    ctx.setLineDash([1.5 * scale, 1.5 * scale]);
-    ctx.beginPath();
-    // OD projection lines
-    ctx.moveTo(X_OD_start * scale, (paddingY + B_val + 1) * scale);
-    ctx.lineTo(X_OD_start * scale, (paddingY + B_val + 7) * scale);
-    ctx.moveTo(X_OD_end * scale, (paddingY + B_val + 1) * scale);
-    ctx.lineTo(X_OD_end * scale, (paddingY + B_val + 7) * scale);
-    // DBL projection lines from nasal points
-    ctx.moveTo(X_bridge_start * scale, (paddingY + B_val + 1) * scale);
-    ctx.lineTo(X_bridge_start * scale, (paddingY + B_val + 7) * scale);
-    ctx.moveTo(X_bridge_end * scale, (paddingY + B_val + 1) * scale);
-    ctx.lineTo(X_bridge_end * scale, (paddingY + B_val + 7) * scale);
-    // B projection lines
-    ctx.moveTo((X_OD_start - 1) * scale, paddingY * scale);
-    ctx.lineTo((X_OD_start - 7) * scale, paddingY * scale);
-    ctx.moveTo((X_OD_start - 1) * scale, (paddingY + B_val) * scale);
-    ctx.lineTo((X_OD_start - 7) * scale, (paddingY + B_val) * scale);
-    ctx.stroke();
-    ctx.restore();
-
-    // Dimension A
-    drawArrow(X_OD_start * scale, (paddingY + B_val + 5) * scale, X_OD_end * scale, (paddingY + B_val + 5) * scale);
-    drawTextWithHalo(`A = ${A_val} mm`, ((X_OD_start + X_OD_end) / 2) * scale, (paddingY + B_val + 10) * scale, "center");
-
-    // Dimension DBL (from OD nasal to OS nasal)
-    drawArrow(X_bridge_start * scale, (paddingY + B_val + 5) * scale, X_bridge_end * scale, (paddingY + B_val + 5) * scale);
-    
-    // Draw vertical pointer from DBL arrow down to DBL text to make it extremely clear
-    ctx.save();
-    ctx.strokeStyle = "rgba(100, 116, 139, 0.5)";
-    ctx.lineWidth = 0.5 * scale;
-    ctx.setLineDash([1 * scale, 1 * scale]);
-    ctx.beginPath();
-    ctx.moveTo(X_bridge_center * scale, (paddingY + B_val + 6) * scale);
-    ctx.lineTo(X_bridge_center * scale, (paddingY + B_val + 9.5) * scale);
-    ctx.stroke();
-    ctx.restore();
-
-    ctx.save();
-    ctx.font = `${Math.round((6.5 / 1.5) * scale)}px sans-serif`;
-    drawTextWithHalo(`DBL = ${actualDBL} mm`, X_bridge_center * scale, (paddingY + B_val + 11.5) * scale, "center");
-    ctx.restore();
-
-    // Dimension B
-    drawArrow((X_OD_start - 6) * scale, paddingY * scale, (X_OD_start - 6) * scale, (paddingY + B_val) * scale);
-    ctx.save();
-    ctx.textAlign = "center";
-    ctx.translate((X_OD_start - 10) * scale, (paddingY + B_val / 2) * scale);
-    ctx.rotate(-Math.PI / 2);
-    // Draw rotated text with halo
-    ctx.lineWidth = 2.5 * scale;
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineJoin = "round";
-    ctx.strokeText(`B = ${B_val} mm`, 0, 0);
-    ctx.fillStyle = "#475569";
-    ctx.fillText(`B = ${B_val} mm`, 0, 0);
-    ctx.restore();
-
-    // Scale Calibration Bar (10mm) and Scară 1:1 text (positioned in bottom-right corner)
-    ctx.save();
-    const barLengthMm = 10;
-    const barXEnd = (drawingWidthMm - 4) * scale;
-    const barXStart = barXEnd - barLengthMm * scale;
-    const barY = (drawingHeightMm - 7) * scale;
-    
-    ctx.strokeStyle = "#475569";
-    ctx.lineWidth = 0.4 * scale;
-    ctx.beginPath();
-    ctx.moveTo(barXStart, barY);
-    ctx.lineTo(barXEnd, barY);
-    ctx.stroke();
-    
-    ctx.lineWidth = 0.35 * scale;
-    ctx.beginPath();
-    // Start tick
-    ctx.moveTo(barXStart, barY - 0.7 * scale);
-    ctx.lineTo(barXStart, barY + 0.7 * scale);
-    // Mid tick
-    ctx.moveTo(barXStart + (barLengthMm / 2) * scale, barY - 0.5 * scale);
-    ctx.lineTo(barXStart + (barLengthMm / 2) * scale, barY + 0.5 * scale);
-    // End tick
-    ctx.moveTo(barXEnd, barY - 0.7 * scale);
-    ctx.lineTo(barXEnd, barY + 0.7 * scale);
-    ctx.stroke();
-    
-    ctx.font = `${Math.round(3.8 * scale)}px sans-serif`;
-    drawTextWithHalo("Etalon 10 mm (Scară 1:1)", barXEnd, barY + 3.5 * scale, "right");
-    ctx.restore();
-
-    return canvas.toDataURL("image/png");
-  };
 
   const triggerPdfPrint = (doc: jsPDF, filename?: string, shouldDownload: boolean = false) => {
     try {
@@ -13997,602 +12757,12 @@ export default function App() {
       return;
     }
 
-    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const pageWidth = doc.internal.pageSize.getWidth();
-
-    // 1. Logo principal stânga (garantat cu cache fallback)
-    const effectiveLogoUrl = clinicConfig?.logoUrl || (() => {
-      try {
-        const c = localStorage.getItem("clinic_config_cache") || localStorage.getItem("opticenter_clinic_config");
-        return c ? JSON.parse(c)?.logoUrl : "";
-      } catch { return ""; }
-    })();
-
-    const effectiveSecondaryLogoUrl = clinicConfig?.secondaryLogoUrl || (() => {
-      try {
-        const c = localStorage.getItem("clinic_config_cache") || localStorage.getItem("opticenter_clinic_config");
-        return c ? JSON.parse(c)?.secondaryLogoUrl : "";
-      } catch { return ""; }
-    })();
-
-    if (effectiveLogoUrl) {
-      try {
-        const fmt = getImageFormatForPdf(effectiveLogoUrl);
-        doc.addImage(effectiveLogoUrl, fmt, 12, 4, 28, 18);
-      } catch (e) {
-        console.error("Could not load logo in glasses order PDF", e);
-      }
-    }
-
-    // QR Code Recenzii & Servicii
-    try {
-      doc.addImage(QR_CODE_REVIEW_BASE64, "JPEG", 44, 4, 18, 18);
-    } catch (e) {
-      console.error("Could not load QR image in order PDF", e);
-    }
-
-    // 2. Logo secundar dreapta
-    if (effectiveSecondaryLogoUrl) {
-      try {
-        const fmt = getImageFormatForPdf(effectiveSecondaryLogoUrl);
-        doc.addImage(effectiveSecondaryLogoUrl, fmt, pageWidth - 42, 4, 28, 18);
-      } catch (e) {
-        console.error("Could not load secondary logo in order PDF", e);
-      }
-    }
-
-    const normalize = (text: string | undefined): string => {
-      return normalizeForPDF(text).toUpperCase();
-    };
-
-    doc.setFontSize(16);
-    doc.setTextColor(30, 41, 59);
-    doc.setFont("helvetica", "bold");
-    doc.text("CLINICA NEGREANU", 105, 10, { align: "center" });
-
-    doc.setFontSize(8);
-    doc.setTextColor(100);
-    doc.setFont("helvetica", "normal");
-    doc.text("CLINICA OFTALMOLOGICA SI OPTOMETRICA", 105, 15, {
-      align: "center",
+    generateGlassesOrderPdf({
+      record,
+      order,
+      clinicConfig,
+      triggerPdfPrint,
     });
-    doc.text("PITESTI, STR. MIHAI EMINESCU, BL. 30, SC. A, AP. 2", 105, 19, {
-      align: "center",
-    });
-    doc.text("TELEFON: 0248 223 162", 105, 23, { align: "center" });
-
-    doc.setDrawColor(200);
-    doc.line(20, 26, 190, 26);
-
-    doc.setFontSize(12);
-    doc.setTextColor(30, 41, 59);
-    doc.text(`COMANDA OCHELARI NR. ${normalize(order.orderNumber)}`, 20, 32);
-
-    if (order.isUrgent || order.nearIsUrgent) {
-      doc.setFontSize(36);
-      doc.setTextColor(220, 38, 38);
-      doc.text("URGENT", 190, 32, { align: "right" });
-      doc.setFontSize(8);
-    }
-
-    doc.setFontSize(8);
-    doc.setTextColor(100);
-    let orderPlacementDateStr = "";
-    try {
-      const rawDate = order.createdAt || (order as any).orderDate;
-      if (rawDate) {
-        const d = new Date(rawDate);
-        if (!isNaN(d.getTime())) {
-          orderPlacementDateStr = format(d, "dd.MM.yyyy");
-          const hours = d.getHours();
-          const mins = d.getMinutes();
-          if (hours !== 0 || mins !== 0) {
-            orderPlacementDateStr += ` ${format(d, "HH:mm")}`;
-          }
-        }
-      }
-    } catch {}
-    if (!orderPlacementDateStr) {
-      orderPlacementDateStr = format(new Date(), "dd.MM.yyyy");
-    }
-    doc.text(
-      `DATA PLASARE: ${orderPlacementDateStr}`,
-      20,
-      37,
-    );
-    doc.setTextColor(30, 41, 59);
-    doc.setFont(undefined, "bold");
-    if (
-      order.orderType === "both" &&
-      order.nearDeliveryDate &&
-      order.nearDeliveryDate !== order.deliveryDate
-    ) {
-      doc.text(
-        `RIDICARE DISTANTA: ${format(new Date(order.deliveryDate), "dd.MM.yyyy")}`,
-        190,
-        37,
-        { align: "right" },
-      );
-      doc.setFontSize(7);
-      doc.text(
-        `RIDICARE APROAPE: ${format(new Date(order.nearDeliveryDate), "dd.MM.yyyy")}`,
-        190,
-        41,
-        { align: "right" },
-      );
-      doc.setFontSize(8);
-    } else {
-      doc.text(
-        `RIDICARE ESTIMATA: ${format(new Date(order.deliveryDate), "dd.MM.yyyy")}`,
-        190,
-        37,
-        { align: "right" },
-      );
-    }
-    doc.setFont(undefined, "normal");
-
-    doc.setFillColor(248, 250, 252);
-    doc.rect(20, 42, 170, 10, "F");
-    doc.setFontSize(8);
-    doc.setTextColor(100);
-    doc.text("PACIENT:", 25, 48);
-    doc.setFontSize(10);
-    doc.setTextColor(30, 41, 59);
-    doc.setFont(undefined, "bold");
-    doc.text(normalize(record.patientName), 45, 48);
-    doc.setFontSize(8);
-    const hasPhoneNum = !!(record.patientPhone && record.patientPhone.trim());
-    if (hasPhoneNum) {
-      doc.setTextColor(30, 41, 59);
-      doc.setFont(undefined, "bold");
-      doc.text(
-        `TEL: ${formatPhoneNumber(record.patientPhone)}`,
-        185,
-        48,
-        {
-          align: "right",
-        },
-      );
-    } else {
-      doc.setTextColor(220, 38, 38);
-      doc.setFont(undefined, "bold");
-      doc.text(
-        "NR DE TELEFON INDISPONIBIL",
-        185,
-        48,
-        {
-          align: "right",
-        },
-      );
-    }
-    doc.setFont(undefined, "normal");
-
-    doc.setFontSize(8);
-    doc.setTextColor(100);
-
-    if (order.orderType === "contact_lens") {
-      doc.text("DETALII PRESCRIPTIE LENTILE CONTACT:", 20, 56);
-
-      const clRows = [
-        [
-          "OD (Drept)",
-          order.cl_od?.sph || "",
-          order.cl_od?.cyl || "",
-          order.cl_od?.axis || "",
-          order.cl_od?.base || "",
-          order.cl_od?.radius || "",
-          normalize(order.lensRightName || ""),
-        ],
-        [
-          "OS (Stâng)",
-          order.cl_os?.sph || "",
-          order.cl_os?.cyl || "",
-          order.cl_os?.axis || "",
-          order.cl_os?.base || "",
-          order.cl_os?.radius || "",
-          normalize(order.lensLeftName || ""),
-        ],
-      ];
-
-      autoTable(doc, {
-        startY: 58,
-        head: [["Ochi", "Sfera", "Cilindru", "Ax", "Raza (BC)", "Diametru (DIA)", "Tip/Brand"]],
-        body: clRows,
-        theme: "grid",
-        styles: { fontSize: 7, cellPadding: 1 },
-        headStyles: { fillColor: [6, 182, 212] },
-      });
-    } else {
-      doc.text(order.orderType === "progressive_bifocal" ? "DETALII PRESCRIPTIE PROGRESIV / BIFOCAL:" : "DETALII PRESCRIPTIE DISTANTA:", 20, 56);
-
-      const distRows = [];
-      if (order.orderType !== "near") {
-        distRows.push([
-          "OD (Dist)",
-          order.od?.sph || "",
-          order.od?.cyl || "",
-          order.od?.axis || "",
-          order.od?.add || "",
-          order.od?.prism ? `${order.od.prism} ${order.od.base}` : "",
-          order.dp || "",
-        ]);
-        distRows.push([
-          "OS (Dist)",
-          order.os?.sph || "",
-          order.os?.cyl || "",
-          order.os?.axis || "",
-          order.os?.add || "",
-          order.os?.prism ? `${order.os.prism} ${order.os.base}` : "",
-          "",
-        ]);
-      } else {
-        distRows.push(["OD (Dist)", "", "", "", "", "", ""]);
-        distRows.push(["OS (Dist)", "", "", "", "", "", ""]);
-      }
-
-      autoTable(doc, {
-        startY: 58,
-        head: [["Ochi", "Sfera", "Cilindru", "Ax", "Aditie", "Prisma", "DP"]],
-        body: distRows,
-        theme: "grid",
-        styles: { fontSize: 7, cellPadding: 1 },
-        headStyles: { fillColor: [71, 85, 105] },
-      });
-    }
-
-    let currentY = (doc as any).lastAutoTable.finalY + 4;
-
-    if (order.orderType === "both" || order.orderType === "near") {
-      doc.text("DETALII PRESCRIPTIE APROAPE:", 20, currentY);
-      const nearRows = [];
-      const nOd = (order.orderType === "near" ? order.od : order.nearOd) as any;
-      const nOs = (order.orderType === "near" ? order.os : order.nearOs) as any;
-      const nDp = order.orderType === "near" ? order.dp : order.nearDp;
-
-      nearRows.push([
-        "OD (Apr)",
-        nOd?.sph || "",
-        nOd?.cyl || "",
-        nOd?.axis || "",
-        "",
-        "", // Prism not allowed for near vision section
-        nDp || "",
-      ]);
-      nearRows.push([
-        "OS (Apr)",
-        nOs?.sph || "",
-        nOs?.cyl || "",
-        nOs?.axis || "",
-        "",
-        "", // Prism not allowed for near vision section
-        "",
-      ]);
-
-      autoTable(doc, {
-        startY: currentY + 1.5,
-        head: [["Ochi", "Sfera", "Cilindru", "Ax", "Aditie", "Prisma", "DP"]],
-        body: nearRows,
-        theme: "grid",
-        styles: { fontSize: 7, cellPadding: 1 },
-        headStyles: { fillColor: [71, 85, 105] },
-      });
-      currentY = (doc as any).lastAutoTable.finalY + 4;
-    }
-
-    doc.setFontSize(9);
-    doc.setTextColor(100);
-    if (order.orderType === "contact_lens") {
-      doc.text("DETALII PRODUSE LENTILE CONTACT:", 20, currentY);
-    } else if (order.orderType === "progressive_bifocal") {
-      doc.text("OCHELARI PROGRESIV / BIFOCAL:", 20, currentY);
-    } else {
-      doc.text("OCHELARI DISTANTA / PACHET 1:", 20, currentY);
-    }
-
-    const distanceItems = [];
-    if (order.orderType === "contact_lens") {
-      distanceItems.push([
-        "Lentilă OD",
-        normalize(order.lensRightName),
-        `${(order.lensRightPrice || 0).toFixed(2)} RON`,
-      ]);
-      distanceItems.push([
-        "Lentilă OS",
-        normalize(order.lensLeftName),
-        `${(order.lensLeftPrice || 0).toFixed(2)} RON`,
-      ]);
-      if (order.laborPrice) {
-        distanceItems.push(["Manopera", "-", `${(order.laborPrice || 0).toFixed(2)} RON`]);
-      }
-    } else {
-      distanceItems.push([
-        "Rama Ochelari",
-        normalize(order.frameCode),
-        `${(order.framePrice || 0).toFixed(2)} RON`,
-      ]);
-      distanceItems.push([
-        "Lentila OD",
-        normalize(order.lensRightName),
-        `${(order.lensRightPrice || 0).toFixed(2)} RON`,
-      ]);
-      distanceItems.push([
-        "Lentila OS",
-        normalize(order.lensLeftName),
-        `${(order.lensLeftPrice || 0).toFixed(2)} RON`,
-      ]);
-      distanceItems.push(["Manopera", "-", `${(order.laborPrice || 0).toFixed(2)} RON`]);
-    }
-
-    if (order.diversePrice) {
-      distanceItems.push([
-        order.diverseName || "Diverse",
-        "-",
-        `${order.diversePrice.toFixed(2)} RON`,
-      ]);
-    }
-
-    autoTable(doc, {
-      startY: currentY + 1.5,
-      head: [["Articol", "Specificatii", "Pret"]],
-      body: distanceItems,
-      theme: "striped",
-      styles: { fontSize: 7.5, cellPadding: 1.2 },
-      headStyles: { fillColor: [30, 41, 59] },
-    });
-
-    if (order.orderType === "both") {
-      doc.setFontSize(8);
-      doc.setTextColor(100);
-      doc.text(
-        "OCHELARI APROAPE / PACHET 2:",
-        20,
-        (doc as any).lastAutoTable.finalY + 4,
-      );
-
-      const nearItems = [
-        [
-          "Rama Ochelari (Aproape)",
-          normalize(order.nearFrameCode),
-          `${(order.nearFramePrice || 0).toFixed(2)} RON`,
-        ],
-        [
-          "Lentila OD (Aproape)",
-          normalize(order.nearLensRightName),
-          `${(order.nearLensRightPrice || 0).toFixed(2)} RON`,
-        ],
-        [
-          "Lentila OS (Aproape)",
-          normalize(order.nearLensLeftName),
-          `${(order.nearLensLeftPrice || 0).toFixed(2)} RON`,
-        ],
-        [
-          "Manopera (Aproape)",
-          "-",
-          `${(order.nearLaborPrice || 0).toFixed(2)} RON`,
-        ],
-      ];
-
-      autoTable(doc, {
-        startY: (doc as any).lastAutoTable.finalY + 5.5,
-        head: [["Articol", "Specificatii", "Pret"]],
-        body: nearItems,
-        theme: "striped",
-        styles: { fontSize: 7.5, cellPadding: 1 },
-        headStyles: { fillColor: [22, 163, 74] },
-      });
-    }
-
-    let finalY = (doc as any).lastAutoTable.finalY + 6;
-
-    if (finalY > 240) {
-      doc.addPage();
-      finalY = 20;
-    }
-
-    doc.setDrawColor(200);
-    doc.line(110, finalY - 4, 190, finalY - 4);
-
-    doc.setFontSize(11);
-    doc.setTextColor(30, 41, 59);
-    doc.text("TOTAL GENERAL:", 120, finalY);
-    doc.setFont(undefined, "bold");
-    doc.text(`${(order.total || 0).toFixed(2)} RON`, 190, finalY, {
-      align: "right",
-    });
-
-    doc.setFontSize(9);
-    doc.setFont(undefined, "normal");
-    doc.text("AVANS PLATIT:", 120, finalY + 6);
-    doc.setTextColor(22, 163, 74);
-    doc.text(`${(order.advance || 0).toFixed(2)} RON`, 190, finalY + 6, {
-      align: "right",
-    });
-
-    doc.setTextColor(30, 41, 59);
-    doc.setFontSize(12);
-    doc.text("REST DE PLATA:", 110, finalY + 12);
-    doc.setTextColor(220, 38, 38);
-    doc.setFont(undefined, "bold");
-    doc.text(`${(order.balance || 0).toFixed(2)} RON`, 190, finalY + 12, {
-      align: "right",
-    });
-
-    let notesY = finalY + 14;
-    let splitNotes: string[] = [];
-    if (order.note) {
-      doc.setFontSize(8);
-      doc.setTextColor(100);
-      doc.setFont(undefined, "italic");
-      doc.text("OBSERVATII:", 20, notesY);
-      doc.setFont(undefined, "normal");
-      splitNotes = doc.splitTextToSize(normalize(order.note), 170);
-      doc.text(splitNotes, 20, notesY + 3.5);
-    }
-
-    let drawStartY = Math.max(finalY + 18, order.note ? (notesY + 3.5 + splitNotes.length * 4 + 4) : finalY + 18);
-
-    // Secțiunea cu desenul ramei și parametrii detaliați de montaj apare doar dacă utilizatorul a ales explicit o formă de ramă (Mod Montaj)
-    const hasFrameConfig = Boolean(
-      order.frameShape ||
-      (order.fittingHeight_od && order.fittingHeight_od.trim() !== "") ||
-      (order.fittingHeight_os && order.fittingHeight_os.trim() !== "")
-    );
-
-    const hasNearFrameConfig = Boolean(
-      order.nearFrameShape ||
-      (order.nearFittingHeight_od && order.nearFittingHeight_od.trim() !== "") ||
-      (order.nearFittingHeight_os && order.nearFittingHeight_os.trim() !== "")
-    );
-
-    if (hasFrameConfig || hasNearFrameConfig) {
-      if (drawStartY > 210) {
-        doc.addPage();
-        drawStartY = 20;
-      }
-      doc.setFontSize(9);
-      doc.setTextColor(30, 41, 59);
-      doc.setFont(undefined, "bold");
-      doc.text("PARAMETRI DETALIATI RAMA SI MONTAJ / SPECIFICATII:", 20, drawStartY);
-      doc.setDrawColor(220);
-      doc.line(20, drawStartY + 1.5, 190, drawStartY + 1.5);
-      drawStartY += 6;
-
-      doc.setFontSize(7.5);
-      doc.setFont(undefined, "normal");
-      doc.setTextColor(80);
-
-      if (hasFrameConfig) {
-        const lines: string[] = [];
-        const frameTypeVal = order.frameType || "full";
-        const typeMap = { full: "Anou Complet", groove: "Rama pe fir", drill: "Rama pe capse/surub" };
-
-        const A_val = parseFloat(order.lensWidth) || 50;
-        const B_val = parseFloat(order.lensHeight) || 38;
-        const DBL_val = parseFloat(order.bridgeSize) || 16;
-        const ED_val = Math.sqrt(A_val * A_val + B_val * B_val);
-
-        let row1 = `DISTANTA: `;
-        if (order.frameShape) row1 += `Forma #${order.frameShape}  |  `;
-        row1 += `Tip Montură: ${typeMap[frameTypeVal as keyof typeof typeMap] || frameTypeVal}`;
-        const distanceDesignMap = { bifocal: "BIFOCAL", progressive: "PROGRESIV", "": "MONOFOCAL" };
-        const distanceDesignVal = order.lensStyle || "";
-        row1 += `  |  Design Lentilă: ${distanceDesignMap[distanceDesignVal as keyof typeof distanceDesignMap] || distanceDesignVal.toUpperCase() || "MONOFOCAL"}`;
-        lines.push(normalize(row1));
-
-        let row2 = "";
-        if (order.lensWidth || order.lensHeight || order.bridgeSize) {
-          row2 += `Casetat: ${order.lensWidth || "?"}x${order.lensHeight || "?"} [] ${order.bridgeSize || "?"} mm`;
-        }
-        if (row2) row2 += `  |  `;
-        row2 += `Diagonala Lentilă (ED): ${ED_val.toFixed(1)} mm`;
-
-        if (order.lensDiameter) {
-          row2 += `  |  Diametru: Ø${order.lensDiameter} mm`;
-        }
-        if (order.dp_od || order.fittingHeight_od || order.dp_os || order.fittingHeight_os) {
-          if (row2) row2 += `  |  `;
-          row2 += `Montaj: OD(DP:${order.dp_od || "?"}, H:${order.fittingHeight_od || "?"}) OS(DP:${order.dp_os || "?"}, H:${order.fittingHeight_os || "?"})`;
-        }
-        if (row2) {
-          lines.push(normalize(row2));
-        }
-
-        const drawingHeightMm = B_val + 36;
-
-        // Page break check for both text and drawing together
-        const totalDistanceHeight = (lines.length * 4) + drawingHeightMm + 10;
-        if (drawStartY + totalDistanceHeight > 275) {
-          doc.addPage();
-          drawStartY = 20;
-        }
-
-        doc.text(lines, 20, drawStartY);
-        drawStartY += lines.length * 4 + 2;
-
-        // Render 1:1 scale drawing for Distance Frame
-        const imgData = drawGlassesCanvas(order, false);
-        if (imgData) {
-          const drawingWidthMm = 2 * A_val + DBL_val + 28;
-          const drawStartX = (210 - drawingWidthMm) / 2;
-          doc.addImage(imgData, "PNG", drawStartX, drawStartY, drawingWidthMm, drawingHeightMm);
-          drawStartY += drawingHeightMm + 5;
-        }
-      }
-
-      if (hasNearFrameConfig) {
-        const lines: string[] = [];
-        const nearFrameTypeVal = order.nearFrameType || "full";
-        const typeMap = { full: "Anou Complet", groove: "Rama pe fir", drill: "Rama pe capse/surub" };
-
-        const A_val = parseFloat(order.nearLensWidth) || 50;
-        const B_val = parseFloat(order.nearLensHeight) || 38;
-        const DBL_val = parseFloat(order.nearBridgeSize) || 16;
-        const ED_val = Math.sqrt(A_val * A_val + B_val * B_val);
-
-        let row1 = `APROAPE: `;
-        if (order.nearFrameShape) row1 += `Forma #${order.nearFrameShape}  |  `;
-        row1 += `Tip Montură: ${typeMap[nearFrameTypeVal as keyof typeof typeMap] || nearFrameTypeVal}`;
-        const nearDesignMap = { bifocal: "BIFOCAL", progressive: "PROGRESIV", "": "MONOFOCAL" };
-        const nearDesignVal = order.nearLensStyle || "";
-        row1 += `  |  Design Lentilă: ${nearDesignMap[nearDesignVal as keyof typeof nearDesignMap] || nearDesignVal.toUpperCase() || "MONOFOCAL"}`;
-        lines.push(normalize(row1));
-
-        let row2 = "";
-        if (order.nearLensWidth || order.nearLensHeight || order.nearBridgeSize) {
-          row2 += `Casetat: ${order.nearLensWidth || "?"}x${order.nearLensHeight || "?"} [] ${order.nearBridgeSize || "?"} mm`;
-        }
-        if (row2) row2 += `  |  `;
-        row2 += `Diagonala Lentilă (ED): ${ED_val.toFixed(1)} mm`;
-
-        if (order.nearLensDiameter) {
-          row2 += `  |  Diametru: Ø${order.nearLensDiameter} mm`;
-        }
-        if (order.nearDp_od || order.nearFittingHeight_od || order.nearDp_os || order.nearFittingHeight_os) {
-          if (row2) row2 += `  |  `;
-          row2 += `Montaj: OD(DP:${order.nearDp_od || "?"}, H:${order.nearFittingHeight_od || "?"}) OS(DP:${order.nearDp_os || "?"}, H:${order.nearFittingHeight_os || "?"})`;
-        }
-        if (row2) {
-          lines.push(normalize(row2));
-        }
-
-        const drawingHeightMm = B_val + 36;
-
-        // Page break check for both near text and drawing together
-        const totalNearHeight = (lines.length * 4) + drawingHeightMm + 10;
-        if (drawStartY + totalNearHeight > 275) {
-          doc.addPage();
-          drawStartY = 20;
-        }
-
-        doc.text(lines, 20, drawStartY);
-        drawStartY += lines.length * 4 + 2;
-
-        // Render 1:1 scale drawing for Near Frame
-        const imgData = drawGlassesCanvas(order, true);
-        if (imgData) {
-          const drawingWidthMm = 2 * A_val + DBL_val + 28;
-          const drawStartX = (210 - drawingWidthMm) / 2;
-          doc.addImage(imgData, "PNG", drawStartX, drawStartY, drawingWidthMm, drawingHeightMm);
-          drawStartY += drawingHeightMm + 5;
-        }
-      }
-    }
-
-    doc.setFontSize(7.5);
-    doc.setTextColor(100);
-    doc.setFont(undefined, "italic");
-    const footerNote =
-      "Nota: Avansul achitat nu poate fi returnat dupa un interval mai mare de 24 de ore de la plasarea comenzii, deoarece lentilele intra in procesul de prelucrare/comanda.";
-    doc.text(doc.splitTextToSize(footerNote, 170), 20, 272);
-
-    doc.setFont(undefined, "bold");
-    doc.text("SEMNATURA OPTICIAN", 40, 285);
-    doc.text("SEMNATURA CLIENT", 150, 285);
-
-    triggerPdfPrint(
-      doc,
-      `Comanda_${normalize(order.orderNumber)}_${normalize(record.patientName)}.pdf`,
-    );
   };
 
   const saveAndPrintGlassesOrder = async () => {
@@ -21053,2094 +19223,48 @@ export default function App() {
   };
 
   const printAdeverintaMedicala = (formOverride?: any, _overrideRecord?: any) => {
-    ((documentForm: any) => {
-      const doc = new jsPDF({
-        orientation: "landscape",
-        unit: "mm",
-        format: "a5",
-      });
-
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "normal");
-
-    doc.setFontSize(7);
-    doc.text(
-      `S.C. Optinoe Oftalmo Negreanu S.R.L. Cui 39902033 J3/1880/2018`,
-      10,
-      6,
+    generateAdeverintaMedicalaPdf(
+      formOverride || documentForm,
+      _overrideRecord || currentMedicalRecord,
+      { triggerPdfPrint }
     );
-    doc.text(`Judetul unitatii: Arges`, 10, 10);
-    doc.text(
-      `Localitate unitate: Pitesti, Str. Calea Bucuresti, bl.30, sc. A, ap.2`,
-      10,
-      14,
-    );
-
-    doc.setFontSize(8);
-    doc.text(`Nr. fisa / registru de consultatii`, pageWidth - 70, 7);
-    doc.setFont("helvetica", "bold");
-    doc.text(
-      `${cleanStr(documentForm.documentNumber || "")}`,
-      pageWidth - 70,
-      11,
-    );
-    doc.setFont("helvetica", "normal");
-    doc.text(
-      `................................................................`,
-      pageWidth - 70,
-      13,
-    );
-
-    doc.setFontSize(9);
-    doc.text(`CNP`, pageWidth - 100, 18);
-    const cnpStr = documentForm.patientCnp || "";
-    const boxSize = 5;
-    const startX = pageWidth - 90;
-    const startY = 13.5;
-    for (let i = 0; i < 13; i++) {
-      doc.rect(startX + i * boxSize, startY, boxSize, boxSize);
-      if (cnpStr[i]) {
-        doc.setFont("helvetica", "bold");
-        doc.text(cnpStr[i], startX + i * boxSize + 1.5, startY + 4);
-        doc.setFont("helvetica", "normal");
-      }
-    }
-
-    doc.setFontSize(14);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, "ADEVERINȚĂ MEDICALĂ", pageWidth / 2, 28, { align: "center" });
-
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-
-    let y = 42;
-    const lineSpacing = 8;
-
-    drawPdfTextWithDiacritics(doc, "Se adeverește că:", 10, y);
-    doc.line(40, y + 1.5, 150, y + 1.5);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.patientName || "", 42, y, { maxWidth: 106 });
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, `Sexul: ${documentForm.patientSex || "M / F"}`, pageWidth - 40, y);
-    doc.setFontSize(7);
-    drawPdfTextWithDiacritics(doc, "numele și prenumele", 65, y + 4);
-    doc.setFontSize(10);
-
-    y += lineSpacing + 4;
-    drawPdfTextWithDiacritics(doc, "cu domiciliul în: județul", 10, y);
-    doc.line(46, y + 1.5, 78, y + 1.5);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.patientJudet || "", 48, y, { maxWidth: 29 });
-    doc.setFont("helvetica", "normal");
-
-    drawPdfTextWithDiacritics(doc, "localitatea", 80, y);
-    doc.line(100, y + 1.5, 140, y + 1.5);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.patientLocalitate || "", 100, y, { maxWidth: 39 });
-    doc.setFont("helvetica", "normal");
-
-    drawPdfTextWithDiacritics(doc, "str.", 142, y);
-    doc.line(148, y + 1.5, pageWidth - 10, y + 1.5);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.patientStrada || "", 148, y, { maxWidth: pageWidth - 10 - 150 });
-    doc.setFont("helvetica", "normal");
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "nr.", 10, y);
-    doc.line(16, y + 1.5, 30, y + 1.5);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.patientStreetNumber || "", 17, y, { maxWidth: 13 });
-    doc.setFont("helvetica", "normal");
-
-    drawPdfTextWithDiacritics(doc, "bl.", 32, y);
-    doc.line(37, y + 1.5, 50, y + 1.5);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.patientBloc || "", 38, y, { maxWidth: 12 });
-    doc.setFont("helvetica", "normal");
-
-    drawPdfTextWithDiacritics(doc, "ap.", 52, y);
-    doc.line(57, y + 1.5, 70, y + 1.5);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.patientApartament || "", 58, y, { maxWidth: 12 });
-    doc.setFont("helvetica", "normal");
-
-    drawPdfTextWithDiacritics(doc, "sect. ....; având ocupația de:", 72, y);
-    doc.line(125, y + 1.5, pageWidth - 10, y + 1.5);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.occupation || "", 125, y, { maxWidth: pageWidth - 10 - 126 });
-    doc.setFont("helvetica", "normal");
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "la", 10, y);
-    doc.line(14, y + 1.5, pageWidth - 10, y + 1.5);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.institution || "", 15, y, { maxWidth: pageWidth - 10 - 16 });
-    doc.setFont("helvetica", "normal");
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "Este suferind de:", 10, y);
-    doc.line(38, y + 1.5, pageWidth - 10, y + 1.5);
-    const diagnostic = documentForm.diagnostic || "";
-    const splitDiag = doc.splitTextToSize(cleanStrExceptTAndS(diagnostic), pageWidth - 60).slice(0, 2);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, splitDiag[0] || "", 40, y, { maxWidth: pageWidth - 10 - 41 });
-    doc.setFont("helvetica", "normal");
-
-    for (let i = 1; i < splitDiag.length; i++) {
-      y += lineSpacing;
-      doc.setFont("helvetica", "bold");
-      drawPdfTextWithDiacritics(doc, splitDiag[i], 10, y, { maxWidth: pageWidth - 20 });
-      doc.setFont("helvetica", "normal");
-      doc.line(10, y + 1.5, pageWidth - 10, y + 1.5);
-    }
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "Se recomandă:", 10, y);
-    const treatmentRecs = (documentForm.treatment || "")
-      .split("\n")
-      .filter(
-        (l: string) => l.trim() && !l.includes("Medicamentele se utilizeaza"),
-      )
-      .join(", ");
-    const scutire = documentForm.scutire || "";
-    const recomandari = scutire
-      ? treatmentRecs
-        ? `${scutire}, ${treatmentRecs}`
-        : scutire
-      : treatmentRecs;
-
-    const splitRec = doc.splitTextToSize(cleanStrExceptTAndS(recomandari), pageWidth - 45).slice(0, 2);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, splitRec[0] || "", 40, y, { maxWidth: pageWidth - 10 - 41 });
-    doc.setFont("helvetica", "normal");
-    doc.line(38, y + 1.5, pageWidth - 10, y + 1.5);
-
-    if (splitRec.length > 1) {
-      y += lineSpacing;
-      doc.setFont("helvetica", "bold");
-      drawPdfTextWithDiacritics(doc, splitRec[1], 10, y, { maxWidth: pageWidth - 20 });
-      doc.setFont("helvetica", "normal");
-      doc.line(10, y + 1.5, pageWidth - 10, y + 1.5);
-    }
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "S-a eliberat prezenta spre a-i servi la:", 10, y);
-    y += lineSpacing;
-    const servila = documentForm.servesTo;
-    if (servila) {
-      doc.setFont("helvetica", "bold");
-      drawPdfTextWithDiacritics(doc, servila, 10, y, { maxWidth: pageWidth - 20 });
-      doc.setFont("helvetica", "normal");
-    }
-    doc.line(10, y + 1.5, pageWidth - 10, y + 1.5);
-
-    y += lineSpacing * 2 - 10;
-    drawPdfTextWithDiacritics(doc, "Data eliberării:", 10, y);
-    drawPdfTextWithDiacritics(
-      doc,
-      `anul ${documentForm.eliberatAn || new Date().getFullYear()} luna ${documentForm.eliberatLuna || "Ianuarie"} ziua ${documentForm.eliberatZi || new Date().getDate()}`,
-      10,
-      y + 6,
-    );
-
-    doc.text(`L. S.`, pageWidth / 2 - 10, y + 6);
-
-    drawPdfTextWithDiacritics(doc, "Semnătura și parafa medicului,", pageWidth - 70, y);
-    const doctorName = documentForm.doctorName || "";
-    if (doctorName) {
-      doc.setFont("helvetica", "bold");
-      drawPdfTextWithDiacritics(doc, doctorName, pageWidth - 70, y + 6, { maxWidth: 60 });
-      doc.setFont("helvetica", "normal");
-    } else {
-      doc.text(
-        `.......................................................`,
-        pageWidth - 70,
-        y + 6,
-      );
-    }
-
-    triggerPdfPrint(
-      doc,
-      `Adeverinta_${cleanStr(documentForm.patientName).replace(/\s+/g, "_")}.pdf`,
-    );
-    })(formOverride || documentForm);
   };
 
   const printReferat = (formOverride?: any, overrideRecord?: any) => {
-    const activeRec = overrideRecord || currentMedicalRecord;
-    ((documentForm: any, currentMedicalRecord: any) => {
-      const doc = new jsPDF();
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-
-    doc.setFontSize(8);
-    doc.setFont("helvetica", "normal");
-    doc.text(
-      `S.C. Optinoe Oftalmo Negreanu S.R.L. Cui 39902033 J3/1880/2018`,
-      14,
-      15,
+    generateReferatPdf(
+      formOverride || documentForm,
+      overrideRecord || currentMedicalRecord,
+      { triggerPdfPrint }
     );
-    doc.text(`Judetul unitatii: Arges`, 14, 20);
-    doc.text(
-      `Localitate unitate: Pitesti, Str. Calea Bucuresti, bl.30, sc. A, ap.2`,
-      14,
-      25,
-    );
-
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "bold");
-    doc.text(
-      `NR. ${documentForm.documentNumber || "..................................../......................"}`,
-      pageWidth - 80,
-      15,
-    );
-    doc.setFont("helvetica", "normal");
-    doc.text(
-      `................................................................................................................................................................`,
-      14,
-      32,
-    );
-    doc.text(
-      `................................................................................................................................................................`,
-      14,
-      49,
-    );
-
-    doc.setFontSize(16);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, "REFERAT MEDICAL", pageWidth / 2, 55, {
-      align: "center",
-    });
-    doc.line(pageWidth / 2 - 35, 57, pageWidth / 2 + 35, 57);
-
-    doc.setFontSize(11);
-    doc.setFont("helvetica", "normal");
-
-    let y = 85;
-    const lineSpacing = 8;
-
-    const drawDottedLine = (startX: number, endX: number, yPos: number) => {
-      const dots = ".".repeat(Math.floor((endX - startX) / 1.5));
-      doc.text(dots, startX, yPos);
-    };
-
-    const checkY = (increment: number) => {
-      if (y + increment > pageHeight - 45) {
-        doc.addPage();
-        y = 25;
-      }
-    };
-
-    drawPdfTextWithDiacritics(doc, "Privind situația pacientului", 14, y);
-    drawDottedLine(60, pageWidth - 30, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(
-      doc,
-      documentForm.patientName || "",
-      (60 + pageWidth - 30) / 2,
-      y - 1,
-      { align: "center", maxWidth: pageWidth - 30 - 64 },
-    );
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, "posesor al", pageWidth - 28, y);
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "B.I./C.I.:", 14, y);
-    drawDottedLine(32, 60, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.patientSeries || "", 46, y - 1, {
-      align: "center",
-      maxWidth: 26,
-    });
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, "/", 62, y);
-    drawDottedLine(65, 100, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.patientNumber || "", 82.5, y - 1, {
-      align: "center",
-      maxWidth: 33,
-    });
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, "CNP", 102, y);
-    drawDottedLine(112, pageWidth - 45, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.patientCnp || "", (112 + pageWidth - 45) / 2, y - 1, {
-      align: "center",
-      maxWidth: pageWidth - 45 - 114,
-    });
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, ", cu domiciliul în", pageWidth - 43, y);
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "localitatea", 14, y);
-    drawDottedLine(35, 100, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.patientLocalitate || "", 67.5, y - 1, {
-      align: "center",
-      maxWidth: 63,
-    });
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, "județul", 102, y);
-    drawDottedLine(118, pageWidth - 14, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(
-      doc,
-      documentForm.patientJudet || "",
-      (118 + pageWidth - 14) / 2,
-      y - 1,
-      { align: "center", maxWidth: pageWidth - 14 - 120 },
-    );
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "str./sat", 14, y);
-    drawDottedLine(30, 90, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.patientStrada || "", 60, y - 1, {
-      align: "center",
-      maxWidth: 58,
-    });
-    doc.setFont("helvetica", "normal");
-    doc.text(`bl`, 92, y);
-    drawDottedLine(97, 115, y);
-    doc.setFont("helvetica", "bold");
-    doc.text(documentForm.patientBloc || "", 106, y - 1, {
-      align: "center",
-    });
-    doc.setFont("helvetica", "normal");
-    doc.text(`sc`, 117, y);
-    drawDottedLine(122, 140, y);
-    doc.setFont("helvetica", "bold");
-    doc.text(documentForm.patientScara || "", 131, y - 1, {
-      align: "center",
-    });
-    doc.setFont("helvetica", "normal");
-    doc.text(`ap`, 142, y);
-    drawDottedLine(147, 165, y);
-    doc.setFont("helvetica", "bold");
-    doc.text(documentForm.patientApartament || "", 156, y - 1, {
-      align: "center",
-    });
-    doc.setFont("helvetica", "normal");
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, ".......Fișa de dispensarizare", 14, y);
-    drawDottedLine(65, 110, y);
-    drawPdfTextWithDiacritics(doc, "data întocmirii", 112, y);
-    drawDottedLine(140, pageWidth - 14, y);
-    doc.setFont("helvetica", "bold");
-    const dAn = documentForm.eliberatAn || new Date().getFullYear().toString();
-    const dLunaNumeric =
-      (
-        [
-          "Ianuarie",
-          "Februarie",
-          "Martie",
-          "Aprilie",
-          "Mai",
-          "Iunie",
-          "Iulie",
-          "August",
-          "Septembrie",
-          "Octombrie",
-          "Noiembrie",
-          "Decembrie",
-        ].indexOf(documentForm.eliberatLuna) + 1
-      )
-        .toString()
-        .padStart(2, "0") || "01";
-    const dZi = String(
-      documentForm.eliberatZi || new Date().getDate(),
-    ).padStart(2, "0");
-    doc.text(
-      `${dZi}.${dLunaNumeric}.${dAn}`,
-      (140 + pageWidth - 14) / 2,
-      y - 1,
-      { align: "center" },
-    );
-    doc.setFont("helvetica", "normal");
-
-    y += 12;
-    checkY(20);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, "Antecedente privind afecțiunea", 14, y);
-    doc.line(14, y + 1, 70, y + 1);
-    y += lineSpacing;
-    doc.setFont("helvetica", "normal");
-    const history = cleanStr(documentForm.history) || "";
-    const splitHistory = doc.splitTextToSize(history, pageWidth - 28);
-    checkY(splitHistory.length * 5);
-    doc.text(splitHistory, 14, y);
-    y += Math.max(splitHistory.length * 5, 8);
-
-    checkY(20);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, "Debutul și evoluția bolii", 14, y);
-    doc.line(14, y + 1, 58, y + 1);
-    y += lineSpacing;
-    doc.setFont("helvetica", "normal");
-    const onsetVal = cleanStr(documentForm.onsetAndEvolution || "");
-    if (onsetVal) {
-      const splitOnset = doc.splitTextToSize(onsetVal, pageWidth - 28);
-      checkY(splitOnset.length * 5);
-      doc.text(splitOnset, 14, y);
-      y += Math.max(splitOnset.length * 5, 8);
-    } else {
-      checkY(lineSpacing * 5);
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-    }
-
-    checkY(20);
-    y += 10;
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, "Ultimele internări în spital", 14, y);
-    doc.line(14, y + 1, 62, y + 1);
-    y += lineSpacing;
-    doc.setFont("helvetica", "normal");
-    const hospVal = cleanStr(documentForm.recentHospitalizations || "");
-    if (hospVal) {
-      const splitHosp = doc.splitTextToSize(hospVal, pageWidth - 28);
-      checkY(splitHosp.length * 5);
-      doc.text(splitHosp, 14, y);
-      y += Math.max(splitHosp.length * 5, 8);
-    } else {
-      checkY(lineSpacing * 3);
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-    }
-
-    checkY(20);
-    y += 10;
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, "Diagnostic clinic", 14, y);
-    doc.line(14, y + 1, 45, y + 1);
-    y += lineSpacing;
-    doc.setFont("helvetica", "normal");
-    const diagText = cleanStr(documentForm.diagnostic) || "";
-    const splitDiag = doc.splitTextToSize(diagText, pageWidth - 28);
-    checkY(splitDiag.length * 5);
-    doc.text(splitDiag, 14, y);
-    y += Math.max(splitDiag.length * 5, 10);
-
-    checkY(25);
-    y += 10;
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, "Diagnostic vizual", 14, y);
-    doc.line(14, y + 1, 44, y + 1);
-    y += lineSpacing;
-    doc.setFont("helvetica", "normal");
-
-    const od_desc = `OD: SPH [ ${currentMedicalRecord.od.sph || "---"} ] CYL [ ${currentMedicalRecord.od.cyl || "---"} ] AXIS [ ${currentMedicalRecord.od.axis || "---"} ] ADD [ ${currentMedicalRecord.od.add || "---"} ] | AV f.c. [ ${currentMedicalRecord.od.va_without || "---"} ] AV c.c. [ ${documentForm.vaWithOd || "---"} ]`;
-    const os_desc = `OS: SPH [ ${currentMedicalRecord.os.sph || "---"} ] CYL [ ${currentMedicalRecord.os.cyl || "---"} ] AXIS [ ${currentMedicalRecord.os.axis || "---"} ] ADD [ ${currentMedicalRecord.os.add || "---"} ] | AV f.c. [ ${currentMedicalRecord.os.va_without || "---"} ] AV c.c. [ ${documentForm.vaWithOs || "---"} ]`;
-
-    const od_lines = doc.splitTextToSize(cleanStr(od_desc), pageWidth - 28);
-    const os_lines = doc.splitTextToSize(cleanStr(os_desc), pageWidth - 28);
-
-    checkY((od_lines.length + os_lines.length) * 5 + 5);
-    doc.text(od_lines, 14, y);
-    y += od_lines.length * 5;
-    doc.text(os_lines, 14, y);
-    y += os_lines.length * 5 + 4;
-
-    checkY(20);
-    y += 10;
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, "Tratament clinic (simptomatic, curativ)", 14, y);
-    doc.line(14, y + 1, 85, y + 1);
-    y += lineSpacing;
-    doc.setFont("helvetica", "normal");
-    const treatment = cleanStr(documentForm.clinicalTreatment) || "";
-    if (treatment) {
-      const splitTreatment = doc.splitTextToSize(treatment, pageWidth - 28);
-      checkY(splitTreatment.length * 5);
-      doc.text(splitTreatment, 14, y);
-      y += Math.max(splitTreatment.length * 5, 10);
-    } else {
-      checkY(lineSpacing * 2);
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-    }
-
-    checkY(20);
-    y += 10;
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, "Dependent sau parțial dependent de altă persoană", 14, y);
-    doc.line(14, y + 1, 105, y + 1);
-    y += lineSpacing;
-    doc.setFont("helvetica", "normal");
-    const depVal = cleanStr(documentForm.dependencyStatus || "");
-    if (depVal) {
-      const splitDep = doc.splitTextToSize(depVal, pageWidth - 28);
-      checkY(splitDep.length * 5);
-      doc.text(splitDep, 14, y);
-      y += Math.max(splitDep.length * 5, 10);
-    } else {
-      checkY(lineSpacing * 2);
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-    }
-
-    checkY(25);
-    y += 10;
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(
-      doc,
-      "Deplasabilă (singur, cu ajutor uni/bilateral. Fotoliu rulant, baston, cadru etc.) sau nedeplasabilă",
-      14,
-      y,
-    );
-    doc.line(14, y + 1, 185, y + 1);
-    y += lineSpacing;
-    doc.setFont("helvetica", "normal");
-    const mobVal = cleanStr(documentForm.mobilityStatus || "");
-    if (mobVal) {
-      const splitMob = doc.splitTextToSize(mobVal, pageWidth - 28);
-      checkY(splitMob.length * 5);
-      doc.text(splitMob, 14, y);
-      y += Math.max(splitMob.length * 5, 10);
-    } else {
-      checkY(lineSpacing * 2);
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-    }
-
-    checkY(20);
-    y += 10;
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, "Plan de recuperare", 14, y);
-    doc.line(14, y + 1, 48, y + 1);
-    y += lineSpacing;
-    doc.setFont("helvetica", "normal");
-    const recVal = cleanStr(documentForm.recoveryPlan || "");
-    if (recVal) {
-      const splitRec = doc.splitTextToSize(recVal, pageWidth - 28);
-      checkY(splitRec.length * 5);
-      doc.text(splitRec, 14, y);
-      y += Math.max(splitRec.length * 5, 10);
-    } else {
-      checkY(lineSpacing * 2);
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-    }
-
-    checkY(20);
-    y += 10;
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, "Prognostic recuperator", 14, y);
-    doc.line(14, y + 1, 55, y + 1);
-    y += lineSpacing;
-    doc.setFont("helvetica", "normal");
-    const progVal = cleanStr(documentForm.recoveryPrognosis || "");
-    if (progVal) {
-      const splitProg = doc.splitTextToSize(progVal, pageWidth - 28);
-      checkY(splitProg.length * 5);
-      doc.text(splitProg, 14, y);
-      y += Math.max(splitProg.length * 5, 10);
-    } else {
-      checkY(lineSpacing * 2);
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-      doc.text(
-        "................................................................................................................................................................",
-        14,
-        y,
-      );
-      y += lineSpacing;
-    }
-
-    checkY(35);
-    y += 10;
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, "S-a eliberat spre a-i servi la", 14, y);
-    y += lineSpacing;
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(
-      doc,
-      cleanStr(
-        documentForm.servesTo ||
-          "Serviciul de Evaluare Complexa a Persoanelor Adulte cu Handicap - D.G.A.S.P.C.-Arges",
-      ),
-      14,
-      y,
-      { maxWidth: pageWidth - 28 },
-    );
-
-    y += 15;
-    drawPdfTextWithDiacritics(doc, "Semnătura și parafa medicului specialist", 14, y);
-    y += lineSpacing;
-    doc.text(
-      "........................................................................",
-      14,
-      y,
-    );
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, cleanStr(documentForm.doctorName || ""), 49, y - 1, {
-      align: "center",
-      maxWidth: 60,
-    });
-    doc.setFont("helvetica", "normal");
-
-    doc.setFontSize(8);
-    doc.text("pag 2/2", pageWidth / 2, pageHeight - 10, { align: "center" });
-
-    triggerPdfPrint(
-      doc,
-      `Referat_Medical_${cleanStr(documentForm.patientName).replace(/\s+/g, "_")}.pdf`,
-    );
-    })(formOverride || documentForm, activeRec || { od: {}, os: {} });
   };
 
   const printRaportMedical = (formOverride?: any, overrideRecord?: any) => {
-    const activeRec = overrideRecord || currentMedicalRecord;
-    ((documentForm: any, currentMedicalRecord: any) => {
-      const doc = new jsPDF();
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-
-    const drawDottedLine = (startX: number, endX: number, yPos: number) => {
-      const dots = ".".repeat(Math.floor((endX - startX) / 1.5));
-      doc.text(dots, startX, yPos);
-    };
-
-    const truncateToWidth = (text: string, maxWidth: number): string => {
-      if (!text) return "";
-      const lines = doc.splitTextToSize(text, maxWidth);
-      if (lines.length > 1) {
-        let candidate = lines[0];
-        while (
-          candidate.length > 0 &&
-          doc.getTextWidth(candidate + "...") > maxWidth
-        ) {
-          candidate = candidate.slice(0, -1);
-        }
-        return candidate.trim() + "...";
+    generateRaportMedicalPdf(
+      formOverride || documentForm,
+      overrideRecord || currentMedicalRecord,
+      {
+        triggerPdfPrint,
+        getComprehensivePatientAxialData: (eye: "OD" | "OS", rec: any) =>
+          getComprehensivePatientAxialData(eye, rec),
+        isMyopiaCombinedView,
       }
-      return lines[0];
-    };
-
-    doc.setFontSize(7.5);
-    doc.setFont("helvetica", "normal");
-    doc.text(
-      `S.C. Optinoe Oftalmo Negreanu S.R.L. Cui 39902033 J3/1880/2018`,
-      14,
-      11,
     );
-    doc.text(`Judetul unitatii: Arges`, 14, 15);
-    doc.text(
-      `Localitate unitate: Pitesti, Str. Calea Bucuresti, bl.30, sc. A, ap.2`,
-      14,
-      19,
-    );
-
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "bold");
-    doc.text(
-      `Nr. fisa / registru: ${documentForm.documentNumber || ""}`,
-      pageWidth - 14,
-      11,
-      { align: "right" },
-    );
-
-    doc.setFontSize(18);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, "RAPORT MEDICAL", pageWidth / 2, 32, { align: "center" });
-
-    const activeTypesForRaport: string[] = [];
-    if (documentForm.isConsultComplet) activeTypesForRaport.push("Consult Complet");
-    if (documentForm.isControl) activeTypesForRaport.push("Revenire / Control");
-    if (documentForm.isGratis) activeTypesForRaport.push("Gratis");
-
-    if (activeTypesForRaport.length > 0) {
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      let consultColor: [number, number, number] = [37, 99, 235]; // Blue 600
-      if (documentForm.isConsultComplet && !documentForm.isControl && !documentForm.isGratis) {
-        consultColor = [37, 99, 235];
-      } else if (documentForm.isControl && !documentForm.isConsultComplet && !documentForm.isGratis) {
-        consultColor = [217, 119, 6]; // Amber 600
-      } else if (documentForm.isGratis && !documentForm.isConsultComplet && !documentForm.isControl) {
-        consultColor = [22, 163, 74]; // Green 600
-      }
-      doc.setTextColor(consultColor[0], consultColor[1], consultColor[2]);
-      const activeTypesText = activeTypesForRaport.join(" | ");
-      doc.text(cleanStr(activeTypesText.toUpperCase()), pageWidth - 14, 32, { align: "right" });
-      doc.setTextColor(0);
-    }
-
-    doc.setFontSize(9.5);
-    doc.setFont("helvetica", "normal");
-
-    let y = 44;
-    const lineSpacing = 6.5;
-
-    // Rând 1: Nume, Prenume, Vârstă, CNP
-    drawPdfTextWithDiacritics(doc, "Nume:", 14, y);
-    if (documentForm.lastName) {
-      doc.setFont("helvetica", "bold");
-      drawPdfTextWithDiacritics(doc, documentForm.lastName, 28, y, { maxWidth: 40 });
-      doc.setFont("helvetica", "normal");
-    }
-
-    drawPdfTextWithDiacritics(doc, "Prenume:", 70, y);
-    if (documentForm.firstName) {
-      doc.setFont("helvetica", "bold");
-      drawPdfTextWithDiacritics(doc, documentForm.firstName, 87, y, { maxWidth: 40 });
-      doc.setFont("helvetica", "normal");
-    }
-
-    drawPdfTextWithDiacritics(doc, "Vârstă:", 130, y);
-    if (documentForm.ageSimple) {
-      doc.setFont("helvetica", "bold");
-      doc.text(String(documentForm.ageSimple), 143, y);
-      doc.setFont("helvetica", "normal");
-    }
-
-    doc.text(`CNP:`, 159, y);
-    if (documentForm.patientCnp) {
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8.5);
-      doc.text(cleanStr(documentForm.patientCnp), 169, y);
-      doc.setFontSize(9.5);
-      doc.setFont("helvetica", "normal");
-    }
-
-    // Rând 2: Simptome
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "Simptome:", 14, y);
-    if (documentForm.symptoms && documentForm.symptoms.trim()) {
-      doc.setFont("helvetica", "bold");
-      drawPdfTextWithDiacritics(
-        doc,
-        documentForm.symptoms.trim(),
-        35,
-        y,
-        { maxWidth: pageWidth - 14 - 36 }
-      );
-      doc.setFont("helvetica", "normal");
-    }
-
-    // Rând 3: Alte boli oculare
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "Alte boli oculare:", 14, y);
-    if (documentForm.otherEyeDiseases && documentForm.otherEyeDiseases.trim()) {
-      doc.setFont("helvetica", "bold");
-      drawPdfTextWithDiacritics(
-        doc,
-        documentForm.otherEyeDiseases.trim(),
-        45,
-        y,
-        { maxWidth: pageWidth - 14 - 46 }
-      );
-      doc.setFont("helvetica", "normal");
-    }
-
-    // Rând 4: Antecedente personale
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "Antecedente personale:", 14, y);
-    if (documentForm.history && documentForm.history.trim()) {
-      doc.setFont("helvetica", "bold");
-      drawPdfTextWithDiacritics(
-        doc,
-        documentForm.history.trim(),
-        58,
-        y,
-        { maxWidth: pageWidth - 14 - 59 }
-      );
-      doc.setFont("helvetica", "normal");
-    }
-
-    // Rând 5: Medicamente folosite
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "Medicamente folosite:", 14, y);
-    if (documentForm.medications && documentForm.medications.trim()) {
-      doc.setFont("helvetica", "bold");
-      drawPdfTextWithDiacritics(
-        doc,
-        documentForm.medications.trim(),
-        55,
-        y,
-        { maxWidth: pageWidth - 14 - 56 }
-      );
-      doc.setFont("helvetica", "normal");
-    }
-
-    y += 10;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    drawPdfTextWithDiacritics(doc, "EXAMEN OBIECTIV", pageWidth / 2, y, { align: "center" });
-
-    const cl_od_desc =
-      documentForm.clOdSph || documentForm.clOdCyl
-        ? `SF: ${documentForm.clOdSph || "0"} / CYL: ${documentForm.clOdCyl || "0"} / AX: ${documentForm.clOdAxis || "0"} / BC: ${documentForm.clOdBase || "-"} / DIA: ${documentForm.clOdRadius || "-"} / ${documentForm.clOdBrand || ""}`
-        : "-";
-    const cl_os_desc =
-      documentForm.clOsSph || documentForm.clOsCyl
-        ? `SF: ${documentForm.clOsSph || "0"} / CYL: ${documentForm.clOsCyl || "0"} / AX: ${documentForm.clOsAxis || "0"} / BC: ${documentForm.clOsBase || "-"} / DIA: ${documentForm.clOsRadius || "-"} / ${documentForm.clOsBrand || ""}`
-        : "-";
-
-    const tableData = [
-      {
-        include: true,
-        data: ["", "OD", "OS"]
-      },
-      {
-        include: !!(documentForm.avFaraCorectieOd || documentForm.avFaraCorectieOs),
-        data: [
-          normalizeForPDF("AV FĂRĂ CORECȚIE"),
-          documentForm.avFaraCorectieOd || "",
-          documentForm.avFaraCorectieOs || "",
-        ]
-      },
-      {
-        include: !!(documentForm.vaWithOd || documentForm.vaWithOs),
-        data: [
-          normalizeForPDF("AV CU CORECȚIE"),
-          documentForm.vaWithOd || "",
-          documentForm.vaWithOs || "",
-        ]
-      },
-      {
-        include: !!(documentForm.iopOd || documentForm.iopOs),
-        data: [
-          "TENSIUNE OCULARA",
-          documentForm.iopOd ? `${documentForm.iopOd} mmHg` : "",
-          documentForm.iopOs ? `${documentForm.iopOs} mmHg` : "",
-        ]
-      },
-      {
-        include: !!(documentForm.pachymetryOd || documentForm.pachymetryOs),
-        data: [
-          "PAHIMETRIE",
-          documentForm.pachymetryOd ? `${documentForm.pachymetryOd} µm` : "",
-          documentForm.pachymetryOs ? `${documentForm.pachymetryOs} µm` : "",
-        ]
-      },
-      {
-        include: !!(documentForm.correctedIopOd || documentForm.correctedIopOs),
-        data: [
-          normalizeForPDF("TENSIUNE CORECTATĂ"),
-          documentForm.correctedIopOd
-            ? `${documentForm.correctedIopOd} mmHg`
-            : "",
-          documentForm.correctedIopOs
-            ? `${documentForm.correctedIopOs} mmHg`
-            : "",
-        ]
-      },
-      {
-        include: !!(documentForm.keratometryOd || documentForm.keratometryOs),
-        data: [
-          "KERATOMETRIE",
-          documentForm.keratometryOd || "",
-          documentForm.keratometryOs || "",
-        ]
-      },
-      {
-        include: !!(documentForm.axialLengthOd || documentForm.axialLengthOs),
-        data: [
-          "LUNGIME AXIALA",
-          documentForm.axialLengthOd || "",
-          documentForm.axialLengthOs || "",
-        ]
-      },
-      {
-        include: !!(documentForm.refractieOd || documentForm.refractieOs),
-        data: [
-          normalizeForPDF("REFRACȚIE OCHELARI"),
-          documentForm.refractieOd || "-",
-          documentForm.refractieOs || "-",
-        ]
-      },
-      {
-        include: !!(documentForm.refractieCicloOd || documentForm.refractieCicloOs),
-        data: [
-          {
-            content: normalizeForPDF("REFRACȚIE OBIECTIVĂ (CICLOPLEGIE)"),
-            styles: { fontSize: 7, fontStyle: "bold" as const, lineHeightFactor: 0.9, cellPadding: 1 } as any,
-          },
-          {
-            content: normalizeForPDF(documentForm.refractieCicloOd || "-"),
-            styles: { fontSize: 6.5, lineHeightFactor: 0.85, cellPadding: 1 } as any,
-          },
-          {
-            content: normalizeForPDF(documentForm.refractieCicloOs || "-"),
-            styles: { fontSize: 6.5, lineHeightFactor: 0.85, cellPadding: 1 } as any,
-          },
-        ]
-      },
-      {
-        include: !!(documentForm.anteriorSegmentOd || documentForm.anteriorSegmentOs),
-        data: documentForm.anteriorSegmentAo ? [
-          { content: "POL ANTERIOR", styles: { fontSize: 10, fontStyle: "bold" as const, lineHeightFactor: 0.2 } as any },
-          { content: documentForm.anteriorSegmentOd || "", colSpan: 2, styles: { fontSize: 10, lineHeightFactor: 0.2 } as any }
-        ] : [
-          { content: "POL ANTERIOR", styles: { fontSize: 10, fontStyle: "bold" as const, lineHeightFactor: 0.2 } as any },
-          { content: documentForm.anteriorSegmentOd || "", styles: { fontSize: 10, lineHeightFactor: 0.2 } as any },
-          { content: documentForm.anteriorSegmentOs || "", styles: { fontSize: 10, lineHeightFactor: 0.2 } as any },
-        ]
-      },
-      {
-        include: !!(documentForm.posteriorSegmentOd || documentForm.posteriorSegmentOs),
-        data: documentForm.posteriorSegmentAo ? [
-          { content: "POL POSTERIOR (EXAMEN FUND DE OCHI)", styles: { fontSize: 10, fontStyle: "bold" as const, lineHeightFactor: 0.85 } as any },
-          { content: documentForm.posteriorSegmentOd || "", colSpan: 2, styles: { fontSize: 10, lineHeightFactor: 0.85 } as any }
-        ] : [
-          { content: "POL POSTERIOR (EXAMEN FUND DE OCHI)", styles: { fontSize: 10, fontStyle: "bold" as const, lineHeightFactor: 0.85 } as any },
-          { content: documentForm.posteriorSegmentOd || "", styles: { fontSize: 10, lineHeightFactor: 0.85 } as any },
-          { content: documentForm.posteriorSegmentOs || "", styles: { fontSize: 10, lineHeightFactor: 0.85 } as any },
-        ]
-      },
-      {
-        include: !!(documentForm.diagnostic),
-        data: [
-          { content: "DIAGNOSTIC", styles: { fontStyle: "bold" as const, fontSize: 12.3 } },
-          {
-            content: cleanStr(documentForm.diagnostic) || "",
-            colSpan: 2,
-          },
-        ]
-      },
-      {
-        include: !!(documentForm.contrastSensitivity || currentMedicalRecord?.contrastSensitivity),
-        data: [
-          { content: "SENSIBILITATE CONTRAST", styles: { fontStyle: "bold" as const, fontSize: 11 } },
-          {
-            content: cleanStr(documentForm.contrastSensitivity || currentMedicalRecord?.contrastSensitivity || ""),
-            colSpan: 2,
-          },
-        ]
-      },
-      {
-        include: !!(documentForm.colorVision || currentMedicalRecord?.colorVision),
-        data: [
-          { content: "SIMT CROMATIC", styles: { fontStyle: "bold" as const, fontSize: 11 } },
-          {
-            content: cleanStr(documentForm.colorVision || currentMedicalRecord?.colorVision || ""),
-            colSpan: 2,
-          },
-        ]
-      },
-      {
-        include: !!(documentForm.binocularVision || currentMedicalRecord?.binocularVision),
-        data: [
-          { content: "VEDERE BINOCULARA", styles: { fontStyle: "bold" as const, fontSize: 11 } },
-          {
-            content: cleanStr(documentForm.binocularVision || currentMedicalRecord?.binocularVision || ""),
-            colSpan: 2,
-          },
-        ]
-      },
-      {
-        include: !!(documentForm.treatment),
-        data: [
-          { content: "TRATAMENT", styles: { fontStyle: "bold" as const, fontSize: 12.3 } },
-          { content: cleanStr(documentForm.treatment) || "", colSpan: 2 },
-        ]
-      },
-      {
-        include: !!(documentForm.examinationInterpretation),
-        data: [
-          {
-            content: "INTERPRETARE EXAM.",
-            styles: { fontStyle: "bold" as const, fontSize: 12.3 },
-          },
-          {
-            content: cleanStr(documentForm.examinationInterpretation) || "",
-            colSpan: 2,
-          },
-        ]
-      },
-      {
-        include: !!(documentForm.recoveryPlan),
-        data: [
-          {
-            content: "PLAN DE RECUPERARE",
-            styles: { fontStyle: "bold" as const, fontSize: 12.3 },
-          },
-          {
-            content: cleanStr(documentForm.recoveryPlan) || "",
-            colSpan: 2,
-          },
-        ]
-      }
-    ].filter(row => row.include).map(row => row.data);
-
-    autoTable(doc, {
-      startY: y + 3,
-      body: tableData,
-      theme: "grid",
-      styles: { fontSize: 12.3, cellPadding: 2.2, overflow: "linebreak" },
-      columnStyles: {
-        0: { fontStyle: "bold", cellWidth: 50 },
-        1: { cellWidth: 126 / 2 },
-      },
-      margin: { left: 14, right: 14 },
-    });
-
-    let sigY = (doc as any).lastAutoTable?.finalY || 205;
-    if (sigY > 255) {
-      doc.addPage();
-      sigY = 20;
-    }
-
-    doc.setFont("helvetica", "normal");
-
-    let consultType = "";
-    let consultColor: [number, number, number] = [0, 0, 0];
-    if (documentForm.isConsultComplet) {
-      consultType = "CONSULT COMPLET";
-      consultColor = [37, 99, 235]; // Blue 600
-    } else if (documentForm.isControl) {
-      consultType = "REVENIRE";
-      consultColor = [217, 119, 6]; // Amber 600/Orange
-    } else if (documentForm.isGratis) {
-      consultType = "GRATIS";
-      consultColor = [22, 163, 74]; // Green 600
-    }
-
-    if (consultType) {
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(consultColor[0], consultColor[1], consultColor[2]);
-      doc.text(consultType, 14, sigY + 6);
-      doc.setTextColor(0);
-      doc.setFontSize(9);
-      doc.setFont("helvetica", "normal");
-    }
-
-    doc.setFontSize(9);
-    doc.text(`Data:`, 14, sigY + 12);
-
-    doc.setLineWidth(0.2);
-    doc.setDrawColor(180, 180, 180);
-    doc.line(24, sigY + 20.5, 64, sigY + 20.5);
-    doc.line(pageWidth - 74, sigY + 20.5, pageWidth - 14, sigY + 20.5);
-    doc.setLineWidth(1.0);
-    doc.setDrawColor(0, 0, 0);
-
-    doc.setFont("helvetica", "bold");
-    const dAn = documentForm.eliberatAn || new Date().getFullYear().toString();
-    const dLunaNumeric =
-      (
-        [
-          "Ianuarie",
-          "Februarie",
-          "Martie",
-          "Aprilie",
-          "Mai",
-          "Iunie",
-          "Iulie",
-          "August",
-          "Septembrie",
-          "Octombrie",
-          "Noiembrie",
-          "Decembrie",
-        ].indexOf(documentForm.eliberatLuna) + 1
-      )
-        .toString()
-        .padStart(2, "0") || "01";
-    const dZi = String(
-      documentForm.eliberatZi || new Date().getDate(),
-    ).padStart(2, "0");
-    doc.text(`${dZi}.${dLunaNumeric}.${dAn}`, 44, sigY + 19.5, {
-      align: "center",
-    });
-
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, "MEDIC CONSULTANT", pageWidth - 44, sigY + 12, {
-      align: "center",
-    });
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(
-      doc,
-      documentForm.doctorName || "",
-      pageWidth - 44,
-      sigY + 19.5,
-      {
-        align: "center",
-        maxWidth: 58,
-      },
-    );
-    doc.setFont("helvetica", "normal");
-
-    // Check if axial length values were entered in the form or exist in the patient's record / history
-    const parseAxialNum = (v: any): number => {
-      if (typeof v === "number") return isNaN(v) ? 0 : v;
-      if (!v || typeof v !== "string") return 0;
-      const parsed = parseFloat(v.replace(/,/g, ".").replace(/[^0-9.]/g, ""));
-      return isNaN(parsed) ? 0 : parsed;
-    };
-
-    const formAxialOd = (documentForm.axialLengthOd || "").trim();
-    const formAxialOs = (documentForm.axialLengthOs || "").trim();
-    const parsedFormAxialOd = parseAxialNum(formAxialOd);
-    const parsedFormAxialOs = parseAxialNum(formAxialOs);
-
-    const recordAxialOd = currentMedicalRecord?.axialLength?.od || "";
-    const recordAxialOs = currentMedicalRecord?.axialLength?.os || "";
-    const parsedRecordAxialOd = parseAxialNum(recordAxialOd);
-    const parsedRecordAxialOs = parseAxialNum(recordAxialOs);
-
-    const hasAnyAxialData =
-      parsedFormAxialOd > 0 ||
-      parsedFormAxialOs > 0 ||
-      parsedRecordAxialOd > 0 ||
-      parsedRecordAxialOs > 0 ||
-      (currentMedicalRecord?.axialLengthHistory && currentMedicalRecord.axialLengthHistory.length > 0) ||
-      (currentMedicalRecord?.prescriptionHistory &&
-        currentMedicalRecord.prescriptionHistory.some((h: any) =>
-          parseAxialNum(h.axialLength?.od) > 0 || parseAxialNum(h.axialLength?.os) > 0
-        ));
-
-    if (hasAnyAxialData) {
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "normal");
-      doc.text("pag 1/2", pageWidth / 2, pageHeight - 8, { align: "center" });
-
-      doc.addPage("a4", "portrait");
-
-      // Effective record for Myopia charts calculation
-      const effectiveRec: MedicalRecord = {
-        ...(currentMedicalRecord || {}),
-        id: currentMedicalRecord?.id || "temp_rec",
-        patientName:
-          currentMedicalRecord?.patientName ||
-          cleanStr(`${documentForm.lastName || ""} ${documentForm.firstName || ""}`.trim()) ||
-          "Pacient",
-        patientBirthDate: currentMedicalRecord?.patientBirthDate || "",
-        patientAge:
-          currentMedicalRecord?.patientAge ||
-          documentForm.ageSimple ||
-          (documentForm.ageDetailed ? parseInt(documentForm.ageDetailed, 10) : 0),
-        patientSex:
-          currentMedicalRecord?.patientSex ||
-          (documentForm.patientCnp ? getSexFromCNP(documentForm.patientCnp) : null) ||
-          "F",
-        axialLength: {
-          od: formAxialOd || recordAxialOd || "",
-          os: formAxialOs || recordAxialOs || "",
-        },
-      };
-
-      const sex: "M" | "F" = effectiveRec.patientSex === "M" ? "M" : "F";
-      const riskLabels = sex === "M" ? BOYS_RISK : GIRLS_RISK;
-      const chartD = sex === "M" ? MYOPIA_BOYS_DATA : MYOPIA_GIRLS_DATA;
-
-      const odData = getComprehensivePatientAxialData("OD", effectiveRec);
-      const osData = getComprehensivePatientAxialData("OS", effectiveRec);
-
-      const parseDateSafeLocal = (dStr: any): Date | null => {
-        if (!dStr) return null;
-        if (dStr instanceof Date) return isNaN(dStr.getTime()) ? null : dStr;
-        if (typeof dStr === "string") {
-          let d = new Date(dStr);
-          if (!isNaN(d.getTime())) return d;
-        }
-        return null;
-      };
-
-      const docDate = new Date();
-      const bDate = parseDateSafeLocal(effectiveRec.patientBirthDate);
-      let calculatedAge =
-        typeof effectiveRec.patientAge === "number"
-          ? effectiveRec.patientAge
-          : parseFloat(effectiveRec.patientAge || "0");
-      if (bDate) {
-        const diffY = (docDate.getTime() - bDate.getTime()) / (365.2425 * 86400000);
-        if (diffY >= 0 && diffY <= 120) calculatedAge = Math.round(diffY * 100) / 100;
-      }
-
-      if (parsedFormAxialOd > 0 && !odData.some((d) => Math.abs(d.axialLength - parsedFormAxialOd) < 0.01)) {
-        odData.push({
-          date: docDate.toISOString(),
-          age: calculatedAge,
-          axialLength: parsedFormAxialOd,
-          isFromHistory: false,
-          historyItem: null,
-          eye: "OD",
-        });
-      }
-
-      if (parsedFormAxialOs > 0 && !osData.some((d) => Math.abs(d.axialLength - parsedFormAxialOs) < 0.01)) {
-        osData.push({
-          date: docDate.toISOString(),
-          age: calculatedAge,
-          axialLength: parsedFormAxialOs,
-          isFromHistory: false,
-          historyItem: null,
-          eye: "OS",
-        });
-      }
-
-      const sortedOd = [...odData].sort((a, b) => a.age - b.age);
-      const sortedOs = [...osData].sort((a, b) => a.age - b.age);
-
-      let odPercentileStr = "";
-      if (sortedOd.length > 0) {
-        const lastVal = sortedOd[sortedOd.length - 1];
-        const agePoint = chartD.reduce((prev, curr) =>
-          Math.abs(curr.age - lastVal.age) < Math.abs(prev.age - lastVal.age) ? curr : prev,
-        );
-        const percentilesList = [98, 95, 90, 75, 50, 25, 10, 5, 2];
-        let closestP = 2;
-        for (const p of percentilesList) {
-          if (lastVal.axialLength >= (agePoint as any)[`p${p}`]) {
-            closestP = p;
-            break;
-          }
-        }
-        odPercentileStr = `Percentila ${closestP} (${riskLabels[`p${closestP}`]})`;
-      }
-
-      let osPercentileStr = "";
-      if (sortedOs.length > 0) {
-        const lastVal = sortedOs[sortedOs.length - 1];
-        const agePoint = chartD.reduce((prev, curr) =>
-          Math.abs(curr.age - lastVal.age) < Math.abs(prev.age - lastVal.age) ? curr : prev,
-        );
-        const percentilesList = [98, 95, 90, 75, 50, 25, 10, 5, 2];
-        let closestP = 2;
-        for (const p of percentilesList) {
-          if (lastVal.axialLength >= (agePoint as any)[`p${p}`]) {
-            closestP = p;
-            break;
-          }
-        }
-        osPercentileStr = `Percentila ${closestP} (${riskLabels[`p${closestP}`]})`;
-      }
-
-      // Top Clinic Header on Page 2
-      doc.setFontSize(7.5);
-      doc.setFont("helvetica", "normal");
-      doc.text("S.C. Optinoe Oftalmo Negreanu S.R.L. Cui 39902033 J3/1880/2018", 14, 11);
-      doc.text("Judetul: Arges, Pitesti, Str. Calea Bucuresti, bl.30, sc. A, ap.2", 14, 15);
-
-      doc.setFontSize(9);
-      doc.setFont("helvetica", "bold");
-      doc.text(
-        `Nr. fisa / registru: ${documentForm.documentNumber || ""}`,
-        pageWidth - 14,
-        11,
-        { align: "right" },
-      );
-
-      // Page 2 Title
-      doc.setFontSize(13);
-      doc.setFont("helvetica", "bold");
-      doc.text("Management Miopie - Grafic Lungime Axială", pageWidth / 2, 23, { align: "center" });
-
-      // Patient Info Subtitle
-      doc.setFontSize(9);
-      doc.setFont("helvetica", "normal");
-      const sexDisplay = sex === "M" ? "Masculin (Băiat)" : "Feminin (Fată)";
-      const displayAge = effectiveRec.patientBirthDate
-        ? calculateDetailedAge(effectiveRec.patientBirthDate)
-        : (documentForm.ageDetailed || documentForm.ageSimple || `${effectiveRec.patientAge || ""} ani`);
-      const dateFormatted = `${dZi}.${dLunaNumeric}.${dAn}`;
-      doc.text(
-        cleanStrForMyopia(
-          `Pacient: ${cleanStr(effectiveRec.patientName)} | Sex: ${sexDisplay} | Vârstă: ${displayAge} | Data: ${dateFormatted}`,
-        ),
-        pageWidth / 2,
-        28.5,
-        { align: "center" },
-      );
-
-      // Graph Dimensions
-      const chartWidth = 182;
-      const chartHeight = 92;
-      const chartStartX = 14;
-
-      if (isMyopiaCombinedView) {
-        // Mod Combinat: un singur grafic mare cu OD și OS suprapuse pe Pagina 2
-        const combinedChartHeight = 180;
-        doc.setFontSize(11);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(30, 41, 59);
-        doc.text(cleanStrForMyopia("Grafic Comparativ Suprapus (OD & OS)"), 14, 35);
-
-        const latestOd = sortedOd.length > 0 ? sortedOd[sortedOd.length - 1] : null;
-        const latestOs = sortedOs.length > 0 ? sortedOs[sortedOs.length - 1] : null;
-        let summaryText = "";
-        if (latestOd) summaryText += `OD: ${latestOd.axialLength.toFixed(2)} mm   `;
-        if (latestOs) summaryText += `OS: ${latestOs.axialLength.toFixed(2)} mm`;
-        if (summaryText) {
-          doc.setFontSize(8.5);
-          doc.setFont("helvetica", "bold");
-          doc.setTextColor(37, 99, 235);
-          doc.text(summaryText, pageWidth - 14, 35, { align: "right" });
-          doc.setTextColor(0);
-        }
-
-        drawMyopiaGraph(doc, chartStartX, 38, chartWidth, combinedChartHeight, sex, sortedOd, sortedOs, true);
-
-        doc.setFontSize(8.5);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(37, 99, 235);
-        doc.text(
-          cleanStrForMyopia(`Analiză Risc OD: ${odPercentileStr || "Nicio valoare înregistrată."}`),
-          14,
-          225,
-        );
-        doc.setTextColor(16, 185, 129);
-        doc.text(
-          cleanStrForMyopia(`Analiză Risc OS: ${osPercentileStr || "Nicio valoare înregistrată."}`),
-          14,
-          232,
-        );
-        doc.setTextColor(0);
-      } else {
-        // OD Section
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(37, 99, 235);
-        doc.text(cleanStrForMyopia("Ochi Drept (OD)"), 14, 35);
-        doc.setTextColor(0);
-
-        const latestOd = sortedOd.length > 0 ? sortedOd[sortedOd.length - 1] : null;
-        if (latestOd) {
-          doc.setFontSize(8.5);
-          doc.setFont("helvetica", "bold");
-          doc.setTextColor(37, 99, 235);
-          doc.text(
-            `Valoare măsurată: ${latestOd.axialLength.toFixed(2)} mm (vârstă: ${latestOd.age.toFixed(1)} ani)`,
-            pageWidth - 14,
-            35,
-            { align: "right" },
-          );
-          doc.setTextColor(0);
-        }
-
-        drawMyopiaGraph(doc, chartStartX, 37, chartWidth, chartHeight, sex, sortedOd);
-
-        doc.setFontSize(8);
-        doc.setFont("helvetica", "bold");
-        doc.text(
-          cleanStrForMyopia(`Analiză Risc OD: ${odPercentileStr || "Nicio valoare înregistrată."}`),
-          14,
-          133.5,
-        );
-
-        // OS Section
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(16, 185, 129);
-        doc.text(cleanStrForMyopia("Ochi Stâng (OS)"), 14, 142);
-        doc.setTextColor(0);
-
-        const latestOs = sortedOs.length > 0 ? sortedOs[sortedOs.length - 1] : null;
-        if (latestOs) {
-          doc.setFontSize(8.5);
-          doc.setFont("helvetica", "bold");
-          doc.setTextColor(16, 185, 129);
-          doc.text(
-            `Valoare măsurată: ${latestOs.axialLength.toFixed(2)} mm (vârstă: ${latestOs.age.toFixed(1)} ani)`,
-            pageWidth - 14,
-            142,
-            { align: "right" },
-          );
-          doc.setTextColor(0);
-        }
-
-        drawMyopiaGraph(doc, chartStartX, 144, chartWidth, chartHeight, sex, sortedOs);
-
-        doc.setFontSize(8);
-        doc.setFont("helvetica", "bold");
-        doc.text(
-          cleanStrForMyopia(`Analiză Risc OS: ${osPercentileStr || "Nicio valoare înregistrată."}`),
-          14,
-          240.5,
-        );
-      }
-
-      // Bottom Section on Page 2
-      doc.setLineWidth(0.2);
-      doc.setDrawColor(200, 200, 200);
-      doc.line(14, 246, pageWidth - 14, 246);
-      doc.setDrawColor(0, 0, 0);
-
-      doc.setFontSize(7);
-      doc.setFont("helvetica", "italic");
-      doc.text(
-        cleanStrForMyopia(
-          "Protocol clinic de urmărire a alungirii axiale conform curbelor de percentilă (Tideman et al., Erasmus University).",
-        ),
-        pageWidth / 2,
-        251,
-        { align: "center" },
-      );
-
-      // Date & Medic
-      doc.setFontSize(8.5);
-      doc.setFont("helvetica", "normal");
-      doc.text("Data:", 14, 261);
-      doc.setLineWidth(0.2);
-      doc.setDrawColor(180, 180, 180);
-      doc.line(24, 269.5, 64, 269.5);
-      doc.line(pageWidth - 74, 269.5, pageWidth - 14, 269.5);
-      doc.setLineWidth(1.0);
-      doc.setDrawColor(0, 0, 0);
-
-      doc.setFont("helvetica", "bold");
-      doc.text(`${dZi}.${dLunaNumeric}.${dAn}`, 44, 268.5, { align: "center" });
-
-      doc.setFont("helvetica", "normal");
-      doc.text("MEDIC CONSULTANT", pageWidth - 44, 261, { align: "center" });
-      doc.setFont("helvetica", "bold");
-      doc.text(cleanStr(documentForm.doctorName || ""), pageWidth - 44, 268.5, { align: "center" });
-
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "normal");
-      doc.text("pag 2/2", pageWidth / 2, pageHeight - 8, { align: "center" });
-    } else {
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "normal");
-      doc.text("pag 1/1", pageWidth / 2, pageHeight - 8, { align: "center" });
-    }
-
-    const pdfName =
-      `Raport_Medical_${cleanStr(documentForm.lastName || "")}_${cleanStr(documentForm.firstName || "")}`
-        .replace(/_+/g, "_")
-        .replace(/_$/, "");
-    triggerPdfPrint(doc, `${pdfName || "Raport_Medical"}.pdf`);
-    })(formOverride || documentForm, activeRec || {});
   };
 
   const printCertificat = (formOverride?: any, overrideRecord?: any) => {
-    const activeRec = overrideRecord || currentMedicalRecord;
-    ((documentForm: any, currentMedicalRecord: any) => {
-      const doc = new jsPDF({
-        orientation: "p",
-        unit: "mm",
-        format: "a4",
-      });
-    try {
-      doc.viewerPreferences({
-        PickTrayByPDFSize: true,
-        PrintScaling: "None"
-      });
-    } catch (e) {
-      console.warn("Could not set viewer preferences:", e);
-    }
-    const pageWidth = 148;
-    const pageHeight = 210;
-
-    const drawDottedLine = (startX: number, endX: number, yPos: number) => {
-      const dots = ".".repeat(Math.floor((endX - startX) / 1.2));
-      doc.text(dots, startX, yPos);
-    };
-
-    doc.setLineWidth(0.5);
-    doc.rect(5, 5, pageWidth - 10, pageHeight - 10);
-
-    doc.setFontSize(7);
-    doc.setFont("helvetica", "normal");
-    doc.text(
-      `S.C. Optinoe Oftalmo Negreanu S.R.L. Cui 39902033 J3/1880/2018`,
-      10,
-      14,
+    generateCertificatPdf(
+      formOverride || documentForm,
+      overrideRecord || currentMedicalRecord,
+      { triggerPdfPrint }
     );
-    doc.text(`Judetul unitatii: Arges`, 10, 18);
-    doc.text(
-      `Localitate unitate: Pitesti, Str. Calea Bucuresti, bl.30, sc. A, ap.2`,
-      10,
-      22,
-    );
-    doc.setFontSize(8);
-
-    doc.rect(pageWidth - 45, 10, 35, 35);
-    doc.text("timbru fiscal", pageWidth - 42, 18);
-
-    doc.setFontSize(14);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, "CERTIFICAT MEDICAL Nr. ", 10, 45);
-    const certTitleWidth = doc.getTextWidth("CERTIFICAT MEDICAL Nr. ");
-    doc.setFontSize(10);
-    doc.text(documentForm.documentNumber || "...........", 10 + certTitleWidth, 45);
-    doc.setFontSize(10);
-    const dAn = documentForm.eliberatAn || new Date().getFullYear().toString();
-    const dLunaNumeric =
-      (
-        [
-          "Ianuarie",
-          "Februarie",
-          "Martie",
-          "Aprilie",
-          "Mai",
-          "Iunie",
-          "Iulie",
-          "August",
-          "Septembrie",
-          "Octombrie",
-          "Noiembrie",
-          "Decembrie",
-        ].indexOf(documentForm.eliberatLuna) + 1
-      )
-        .toString()
-        .padStart(2, "0") || "01";
-    const dZi = String(
-      documentForm.eliberatZi || new Date().getDate(),
-    ).padStart(2, "0");
-    drawPdfTextWithDiacritics(doc, `anul ${dAn} luna ${dLunaNumeric} ziua ${dZi}`, 10, 52);
-
-    doc.setFont("helvetica", "normal");
-    let y = 65;
-    const lineSpacing = 8;
-
-    drawPdfTextWithDiacritics(doc, "În baza referatului Dr.", 10, y);
-    drawDottedLine(45, pageWidth - 10, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(
-      doc,
-      documentForm.doctorName || "",
-      (45 + pageWidth - 10) / 2,
-      y - 2,
-      {
-        align: "center",
-        maxWidth: pageWidth - 10 - 48,
-      },
-    );
-    doc.setFont("helvetica", "normal");
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "În calitate de", 10, y);
-    drawDottedLine(30, pageWidth - 10, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(
-      doc,
-      "medic specialist oftalmologie",
-      (30 + pageWidth - 10) / 2,
-      y - 2,
-      { align: "center" },
-    );
-    doc.setFont("helvetica", "normal");
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "Se certifică de noi că:", 10, y);
-    drawDottedLine(45, pageWidth - 10, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(
-      doc,
-      documentForm.patientName || "",
-      (45 + pageWidth - 10) / 2,
-      y - 2,
-      { align: "center", maxWidth: pageWidth - 10 - 48 },
-    );
-    doc.setFont("helvetica", "normal");
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "Codul numeric personal", 10, y);
-    const cnp = documentForm.patientCnp || "";
-    const boxWidth = 5;
-    const boxHeight = 7;
-    const boxSpacing = 5.5;
-    const startX = 55;
-    for (let i = 0; i < 13; i++) {
-      doc.rect(startX + i * boxSpacing, y - 5, boxWidth, boxHeight);
-      if (cnp[i]) {
-        doc.setFontSize(11);
-        doc.text(cnp[i], startX + i * boxSpacing + boxWidth / 2, y, {
-          align: "center",
-        });
-        doc.setFontSize(10);
-      }
-    }
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "în vârstă de", 10, y);
-    drawDottedLine(30, 45, y);
-    doc.setFont("helvetica", "bold");
-    doc.text(documentForm.ageSimple || "", (30 + 45) / 2, y - 2, {
-      align: "center",
-    });
-    doc.setFont("helvetica", "normal");
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "sexul", 60, y);
-    drawDottedLine(72, 85, y);
-    if (documentForm.patientSex) {
-      doc.setFont("helvetica", "bold");
-      doc.text(documentForm.patientSex, 78.5, y - 2, {
-        align: "center",
-      });
-      doc.setFont("helvetica", "normal");
-    }
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "Domiciliat în: jud. /sect.", 10, y);
-    drawDottedLine(48, 80, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.patientJudet || "", 64, y - 2, {
-      align: "center",
-      maxWidth: 30,
-    });
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, "loc.", 82, y);
-    drawDottedLine(90, pageWidth - 10, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(
-      doc,
-      documentForm.patientLocalitate || "",
-      (90 + pageWidth - 10) / 2,
-      y - 2,
-      { align: "center", maxWidth: pageWidth - 10 - 92 },
-    );
-    doc.setFont("helvetica", "normal");
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "str.", 10, y);
-    drawDottedLine(18, 55, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.patientStrada || "", 36.5, y - 2, {
-      align: "center",
-      maxWidth: 35,
-    });
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, "nr.", 57, y);
-    drawDottedLine(63, 80, y);
-    drawPdfTextWithDiacritics(doc, "bl.", 82, y);
-    drawDottedLine(87, 105, y);
-    doc.setFont("helvetica", "bold");
-    doc.text(documentForm.patientBloc || "", 96, y - 2, {
-      align: "center",
-    });
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, "sc.", 107, y);
-    drawDottedLine(113, 125, y);
-    doc.setFont("helvetica", "bold");
-    doc.text(documentForm.patientScara || "", 119, y - 2, {
-      align: "center",
-    });
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, "ap.", 127, y);
-    drawDottedLine(133, pageWidth - 10, y);
-    doc.setFont("helvetica", "bold");
-    doc.text(
-      documentForm.patientApartament || "",
-      (133 + pageWidth - 10) / 2,
-      y - 2,
-      { align: "center" },
-    );
-    doc.setFont("helvetica", "normal");
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "B.I./C.I. seria", 10, y);
-    drawDottedLine(32, 50, y);
-    doc.text(documentForm.patientSeries || "", 34, y - 2);
-    drawPdfTextWithDiacritics(doc, "nr.", 52, y);
-    drawDottedLine(57, 77, y);
-    doc.text(documentForm.patientNumber || "", 59, y - 2);
-    drawPdfTextWithDiacritics(doc, "având ocupația de:", 79, y);
-    drawDottedLine(108, pageWidth - 10, y);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8.5);
-    drawPdfTextWithDiacritics(
-      doc,
-      documentForm.ocupatie || "",
-      (108 + pageWidth - 10) / 2,
-      y - 2,
-      { align: "center", maxWidth: pageWidth - 10 - 110 },
-    );
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "la", 10, y);
-    drawDottedLine(15, pageWidth - 10, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.lucru || "", (15 + pageWidth - 10) / 2, y - 2, {
-      align: "center",
-      maxWidth: pageWidth - 10 - 18,
-    });
-    doc.setFont("helvetica", "normal");
-
-    y += lineSpacing;
-    drawPdfTextWithDiacritics(doc, "Este suferind de:", 10, y);
-    drawDottedLine(38, pageWidth - 10, y);
-    const diagText = cleanStr(documentForm.diagnostic) || "";
-    const diagLines = doc.splitTextToSize(diagText, pageWidth - 50);
-    doc.setFont("helvetica", "bold");
-    doc.text(diagLines, 40, y - 2);
-    doc.setFont("helvetica", "normal");
-
-    if (diagLines.length > 1) {
-      y += (diagLines.length - 1) * 5;
-    }
-
-    y += 15;
-    drawPdfTextWithDiacritics(doc, "S-a eliberat prezentul spre a-i servi la:", 10, y);
-    drawDottedLine(75, pageWidth - 10, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(
-      doc,
-      documentForm.servesTo || "",
-      (75 + pageWidth - 10) / 2,
-      y - 2,
-      { align: "center", maxWidth: pageWidth - 10 - 78 },
-    );
-    doc.setFont("helvetica", "normal");
-
-    y += 25;
-    drawPdfTextWithDiacritics(doc, "Medic director,", pageWidth - 60, y);
-    y += 10;
-    drawDottedLine(pageWidth - 65, pageWidth - 10, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.doctorName || "", pageWidth - 37.5, y - 2, {
-      align: "center",
-      maxWidth: 50,
-    });
-    doc.setFont("helvetica", "normal");
-    y += 5;
-    doc.text("L.S.", pageWidth - 40, y);
-
-    triggerPdfPrint(
-      doc,
-      `Certificat_Medical_${cleanStr(documentForm.patientName).replace(/\s+/g, "_")}.pdf`,
-    );
-    })(formOverride || documentForm, activeRec || {});
   };
 
   const printExpertiza = (formOverride?: any, overrideRecord?: any) => {
-    const activeRec = overrideRecord || currentMedicalRecord;
-    ((documentForm: any, currentMedicalRecord: any) => {
-      const doc = new jsPDF({
-        orientation: "p",
-        unit: "mm",
-        format: "a4",
-      });
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-
-    const drawDottedLine = (startX: number, endX: number, yPos: number) => {
-      const dots = ".".repeat(Math.floor((endX - startX) / 1.15));
-      doc.text(dots, startX, yPos);
-    };
-
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "bold");
-    doc.text("Anexa nr. 17", pageWidth - 15, 12, { align: "right" });
-
-    doc.setFontSize(14);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, "EXAMEN OFTALMOLOGIC", pageWidth / 2, 22, { align: "center" });
-    doc.setFontSize(11);
-    drawPdfTextWithDiacritics(
-      doc,
-      "PENTRU EXPERTIZA MEDICALĂ A CAPACITĂȚII DE MUNCĂ",
-      pageWidth / 2,
-      28,
-      { align: "center" },
+    generateExpertizaPdf(
+      formOverride || documentForm,
+      overrideRecord || currentMedicalRecord,
+      { triggerPdfPrint }
     );
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9.5);
-    let y = 40;
-
-    drawPdfTextWithDiacritics(doc, "Nume", 15, y);
-    drawDottedLine(27, 100, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.lastName || "", 63.5, y - 0.5, {
-      align: "center",
-      maxWidth: 70,
-    });
-
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, "Prenume", 105, y);
-    drawDottedLine(121, 195, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.firstName || "", 158, y - 0.5, {
-      align: "center",
-      maxWidth: 70,
-    });
-
-    y += 7;
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, "CNP", 15, y);
-    drawDottedLine(26, 80, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.patientCnp || "", 53, y - 0.5, {
-      align: "center",
-      maxWidth: 52,
-    });
-
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, "Domiciliu", 85, y);
-    drawDottedLine(103, 195, y);
-    doc.setFont("helvetica", "bold");
-    const fullAddr = [documentForm.patientJudet, documentForm.patientLocalitate]
-      .filter(Boolean)
-      .join(", ");
-    drawPdfTextWithDiacritics(doc, fullAddr || "", 149, y - 0.5, { align: "center", maxWidth: 88 });
-
-    y += 7;
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, "Nr. fișă/Reg. cons.", 15, y);
-    drawDottedLine(47, 100, y);
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, documentForm.documentNumber || "", 73.5, y - 0.5, {
-      align: "center",
-      maxWidth: 50,
-    });
-
-    y += 10;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    drawPdfTextWithDiacritics(doc, "1 DIAGNOSTIC CLINIC:", 15, y);
-    y += 5;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    const splitDiag = doc.splitTextToSize(
-      cleanStr(documentForm.diagnostic || ""),
-      180,
-    );
-    doc.text(splitDiag, 15, y);
-    y += Math.max(1, splitDiag.length) * 5;
-
-    y += 2;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    drawPdfTextWithDiacritics(doc, "2 DIAGNOSTIC FUNCȚIONAL/DEFICIENȚĂ VIZUALĂ:", 15, y);
-    y += 5;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    const splitFuncDiag = doc.splitTextToSize(
-      cleanStr(documentForm.diagnosticFunctional || ""),
-      180,
-    );
-    doc.text(splitFuncDiag, 15, y);
-    y += Math.max(1, splitFuncDiag.length) * 5;
-
-    y += 4;
-    const colWidths = [70, 55, 55];
-    const colStarts = [15, 15 + colWidths[0], 15 + colWidths[0] + colWidths[1]];
-
-    doc.setLineWidth(0.2);
-    doc.rect(colStarts[0], y, colWidths[0], 8);
-    doc.rect(colStarts[1], y, colWidths[1], 8);
-    doc.rect(colStarts[2], y, colWidths[2], 8);
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("OD", colStarts[1] + colWidths[1] / 2, y + 5.5, {
-      align: "center",
-    });
-    doc.text("OS", colStarts[2] + colWidths[2] / 2, y + 5.5, {
-      align: "center",
-    });
-
-    let currentY = y + 8;
-    const tableRows = [
-      {
-        label: "3  AV FĂRĂ CORECȚIE",
-        odKey: "avFaraCorectieOd",
-        osKey: "avFaraCorectieOs",
-      },
-      {
-        label: "4  AV CU CORECȚIE",
-        odKey: "avCuCorectieOd",
-        osKey: "avCuCorectieOs",
-      },
-      { label: "5  REFRACȚIE", odKey: "refractieOd", osKey: "refractieOs" },
-      { label: "5b REFRACȚIE OBIECTIVĂ (CICLOPLEGIE)", odKey: "refractieCicloOd", osKey: "refractieCicloOs" },
-      { label: "6  CV MANUAL *", odKey: "cvManualOd", osKey: "cvManualOs" },
-      {
-        label: "7  CV COMPUTER *",
-        odKey: "cvComputerOd",
-        osKey: "cvComputerOs",
-      },
-      { label: "8  TIO", odKey: "tioOd", osKey: "tioOs" },
-      { label: "9  FO", odKey: "foOd", osKey: "foOs" },
-      {
-        label: "10 RAPORT CUPĂ/DISC",
-        odKey: "raportCupaDiscOd",
-        osKey: "raportCupaDiscOs",
-      },
-      {
-        label: "11 TRATAMENT EFECTUAT",
-        odKey: "tratamentEfectuatOd",
-        osKey: "tratamentEfectuatOs",
-      },
-      {
-        label: "12 RECOMANDĂRI: OPTICE, MEDICALE, CHIRURGICALE",
-        odKey: "recomandariOd",
-        osKey: "recomandariOs",
-      },
-    ];
-
-    tableRows.forEach((row) => {
-      const odText = String(documentForm[row.odKey] || "");
-      const osText = String(documentForm[row.osKey] || "");
-
-      const wrappedOd = doc.splitTextToSize(cleanStr(odText), colWidths[1] - 4);
-      const wrappedOs = doc.splitTextToSize(cleanStr(osText), colWidths[2] - 4);
-
-      const linesCount = Math.max(1, wrappedOd.length, wrappedOs.length);
-      const rowHeight = Math.max(10, linesCount * 4.5 + 2);
-
-      doc.rect(colStarts[0], currentY, colWidths[0], rowHeight);
-      doc.rect(colStarts[1], currentY, colWidths[1], rowHeight);
-      doc.rect(colStarts[2], currentY, colWidths[2], rowHeight);
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8.5);
-      const labelLines = doc.splitTextToSize(
-        cleanStr(row.label),
-        colWidths[0] - 4,
-      );
-      doc.text(
-        labelLines,
-        colStarts[0] + 2,
-        currentY + rowHeight / 2 - (labelLines.length - 1) * 2,
-        { baseline: "middle" },
-      );
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8);
-      doc.text(
-        wrappedOd,
-        colStarts[1] + 2,
-        currentY + rowHeight / 2 - (wrappedOd.length - 1) * 2,
-        { baseline: "middle" },
-      );
-      doc.text(
-        wrappedOs,
-        colStarts[2] + 2,
-        currentY + rowHeight / 2 - (wrappedOs.length - 1) * 2,
-        { baseline: "middle" },
-      );
-
-      currentY += rowHeight;
-    });
-
-    y = currentY + 12;
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9.5);
-    drawPdfTextWithDiacritics(doc, "DATA", 15, y);
-    const dAn = documentForm.eliberatAn || new Date().getFullYear().toString();
-    const dLuna = documentForm.eliberatLuna || "01";
-    const dZi = String(
-      documentForm.eliberatZi || new Date().getDate(),
-    ).padStart(2, "0");
-    const dateFormatted = `${dZi} ${dLuna} ${dAn}`;
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, dateFormatted, 30, y);
-    doc.line(28, y + 1, 90, y + 1);
-
-    doc.setFont("helvetica", "bold");
-    drawPdfTextWithDiacritics(doc, "MEDIC OFTALMOLOG,", 110, y);
-    doc.setFont("helvetica", "normal");
-    drawPdfTextWithDiacritics(doc, documentForm.doctorName || "", 110, y + 8, { maxWidth: 80 });
-    doc.line(110, y + 10, 195, y + 10);
-
-    y += 18;
-    doc.setFont("helvetica", "italic");
-    doc.setFontSize(7.5);
-    drawPdfTextWithDiacritics(doc, "TOATE RUBRICILE TREBUIE COMPLETATE", 15, y);
-    y += 4;
-    drawPdfTextWithDiacritics(
-      doc,
-      "* OBLIGATORIU PUNCTUL 4 ȘI 5 CU GRAFIC ANEXAT ȘI INTERPRETARE",
-      15,
-      y,
-    );
-
-    triggerPdfPrint(
-      doc,
-      `Expertiza_Medicala_${cleanStr(documentForm.patientName).replace(/\s+/g, "_")}.pdf`,
-    );
-    })(formOverride || documentForm, activeRec || {});
   };
 
   const handlePrintDoctorDocumentDirect = (docRec: any) => {
@@ -29584,8 +25708,9 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Orders Modal */}
-      <OrdersModal
+      <Suspense fallback={null}>
+        {/* Orders Modal */}
+        <OrdersModal
         isOpen={isOrdersModalOpen}
         onClose={() => setIsOrdersModalOpen(false)}
         initialTab={ordersTab}
@@ -34971,27 +31096,29 @@ export default function App() {
               )}
             </>
           ) : configActiveTab === "frames" ? (
-            <InventoryView
-              darkMode={darkMode}
-              frameStockList={frameStockList}
-              filteredFrameStock={filteredFrameStock}
-              frameSearchQuery={frameSearchQuery}
-              setFrameSearchQuery={setFrameSearchQuery}
-              frameFilterCategory={frameFilterCategory}
-              setFrameFilterCategory={setFrameFilterCategory}
-              frameFilterStatus={frameFilterStatus}
-              setFrameFilterStatus={setFrameFilterStatus}
-              frameFilterMaterial={frameFilterMaterial}
-              setFrameFilterMaterial={setFrameFilterMaterial}
-              frameFilterShape={frameFilterShape}
-              setFrameFilterShape={setFrameFilterShape}
-              frameFilterPriceRange={frameFilterPriceRange}
-              setFrameFilterPriceRange={setFrameFilterPriceRange}
-              handleOpenFrameModal={handleOpenFrameModal}
-              handleQuickStockChange={handleQuickStockChange}
-              handleDeleteFrame={handleDeleteFrame}
-              onClose={() => setIsConfigModalOpen(false)}
-            />
+            <Suspense fallback={null}>
+              <InventoryView
+                darkMode={darkMode}
+                frameStockList={frameStockList}
+                filteredFrameStock={filteredFrameStock}
+                frameSearchQuery={frameSearchQuery}
+                setFrameSearchQuery={setFrameSearchQuery}
+                frameFilterCategory={frameFilterCategory}
+                setFrameFilterCategory={setFrameFilterCategory}
+                frameFilterStatus={frameFilterStatus}
+                setFrameFilterStatus={setFrameFilterStatus}
+                frameFilterMaterial={frameFilterMaterial}
+                setFrameFilterMaterial={setFrameFilterMaterial}
+                frameFilterShape={frameFilterShape}
+                setFrameFilterShape={setFrameFilterShape}
+                frameFilterPriceRange={frameFilterPriceRange}
+                setFrameFilterPriceRange={setFrameFilterPriceRange}
+                handleOpenFrameModal={handleOpenFrameModal}
+                handleQuickStockChange={handleQuickStockChange}
+                handleDeleteFrame={handleDeleteFrame}
+                onClose={() => setIsConfigModalOpen(false)}
+              />
+            </Suspense>
           ) : configActiveTab === "audit" ? (
             <div className="space-y-6">
               {/* Summary row */}
@@ -35708,32 +31835,34 @@ export default function App() {
             </div>
           ) : configActiveTab === "recall" ? (
             /* TAB: ALERTE DE RECHEMARE A PACIENȚILOR (RECALL) */
-            <PatientRecallPanel
-              darkMode={darkMode}
-              medicalRecords={medicalRecords}
-              setMedicalRecords={setMedicalRecords}
-              appointments={appointments}
-              onOpenWhatsApp={(name, phone, message) => {
-                handleOpenWhatsAppModal(name, phone, undefined, message);
-              }}
-              onOpenMedicalRecord={(record) => {
-                setIsConfigModalOpen(false);
-                openMedicalRecord(record as any);
-              }}
-              onQuickSchedule={(name, phone) => {
-                setIsConfigModalOpen(false);
-                setQuickBookingPatient({
-                  name,
-                  phone,
-                  age: "",
-                  birthDate: "",
-                  sex: "",
-                });
-              }}
-              logActivity={logActivity}
-              getDoctorDisplayName={getDoctorDisplayName}
-              onClose={() => setIsConfigModalOpen(false)}
-            />
+            <Suspense fallback={null}>
+              <PatientRecallPanel
+                darkMode={darkMode}
+                medicalRecords={medicalRecords}
+                setMedicalRecords={setMedicalRecords}
+                appointments={appointments}
+                onOpenWhatsApp={(name, phone, message) => {
+                  handleOpenWhatsAppModal(name, phone, undefined, message);
+                }}
+                onOpenMedicalRecord={(record) => {
+                  setIsConfigModalOpen(false);
+                  openMedicalRecord(record as any);
+                }}
+                onQuickSchedule={(name, phone) => {
+                  setIsConfigModalOpen(false);
+                  setQuickBookingPatient({
+                    name,
+                    phone,
+                    age: "",
+                    birthDate: "",
+                    sex: "",
+                  });
+                }}
+                logActivity={logActivity}
+                getDoctorDisplayName={getDoctorDisplayName}
+                onClose={() => setIsConfigModalOpen(false)}
+              />
+            </Suspense>
           ) : (
             /* TAB: SECURITATE & BACKUP DATE (Protejat cu Parolă Admin) */
             <div className="space-y-6">
@@ -37072,6 +33201,7 @@ export default function App() {
         }
         onSave={handleSaveGdpr}
       />
+      </Suspense>
 
       {/* Axial Length Delete Confirmation Modal */}
       {Boolean(axialDeleteConfirm?.isOpen && axialDeleteConfirm?.item) && (

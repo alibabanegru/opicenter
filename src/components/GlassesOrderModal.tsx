@@ -44,6 +44,7 @@ import {
   openWhatsAppUrl,
   buildGlassesReadyMessage,
 } from "../utils/whatsappUtils";
+import { SmsSendModal } from "./SmsSendModal";
 
 export interface GlassesOrderModalProps {
   isOpen: boolean;
@@ -126,6 +127,7 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
   setIsGlassesOrderModalOpen = (open: boolean) => { if (!open) onClose(); },
 }) => {
   const isGlassesOrderModalOpen = isOpen;
+  const [isSmsModalOpen, setIsSmsModalOpen] = React.useState(false);
   if (!currentMedicalRecord) return null;
 
   return (
@@ -3057,7 +3059,7 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                   )}
 
                   <div className="pt-2 flex flex-col gap-3">
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       <button
                         onClick={() => setIsGlassesOrderModalOpen(false)}
                         className="py-4 rounded-2xl bg-rose-600 text-white font-black uppercase tracking-widest hover:bg-rose-700 transition-all shadow-xl"
@@ -3072,10 +3074,19 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                       </button>
                       <button
                         onClick={saveAndPrintGlassesOrder}
-                        className="py-4 rounded-2xl bg-slate-400 text-white font-black uppercase tracking-widest hover:bg-slate-500 transition-all shadow-xl flex items-center justify-center gap-3"
+                        className="py-4 rounded-2xl bg-slate-500 text-white font-black uppercase tracking-widest hover:bg-slate-600 transition-all shadow-xl flex items-center justify-center gap-2"
                       >
                         <Printer className="w-5 h-5" />
-                        Salvează și Printează
+                        Printează
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsSmsModalOpen(true)}
+                        className="py-4 rounded-2xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black uppercase tracking-widest transition-all shadow-xl flex items-center justify-center gap-2 cursor-pointer"
+                        title="Trimite notificare SMS pacient prin telefonul Android (sms-gate.app)"
+                      >
+                        <MessageSquare className="w-5 h-5" />
+                        Trimite SMS
                       </button>
                     </div>
                   </div>
@@ -3205,6 +3216,19 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
               </AnimatePresence>
             </motion.div>
           </motion.div>
+      )}
+      {isSmsModalOpen && currentMedicalRecord && (
+        <SmsSendModal
+          isOpen={isSmsModalOpen}
+          onClose={() => setIsSmsModalOpen(false)}
+          order={{
+            ...currentMedicalRecord.glassesOrder,
+            patientName: currentMedicalRecord.patientName,
+            patientPhone: currentMedicalRecord.patientPhone,
+            patientId: currentMedicalRecord.id,
+          }}
+          darkMode={darkMode}
+        />
       )}
     </AnimatePresence>
   );

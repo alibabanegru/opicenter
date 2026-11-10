@@ -21,6 +21,7 @@ import {
   CreditCard,
   X,
   Printer,
+  Smartphone,
 } from "lucide-react";
 import { ro } from "date-fns/locale";
 import {
@@ -56,6 +57,8 @@ import {
   openWhatsAppUrl,
   buildGlassesReadyMessage,
 } from "../utils/whatsappUtils";
+import { SmsSendModal } from "./SmsSendModal";
+import { checkSmsGateStatus, type SmsGateDevice } from "../services/smsService";
 
 export interface OrdersModalProps {
   isOpen: boolean;
@@ -229,6 +232,25 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
     type: "success" | "error";
   } | null>(null);
 
+  const [selectedSmsOrder, setSelectedSmsOrder] = useState<any | null>(null);
+  const [gatewayDevice, setGatewayDevice] = useState<SmsGateDevice | null>(null);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      checkSmsGateStatus()
+        .then((res) => {
+          if (res.success && res.device) {
+            setGatewayDevice(res.device);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [isOpen]);
+
+  const openSmsModalForOrder = (order: any) => {
+    setSelectedSmsOrder(order);
+  };
+
   const sendWhatsAppNotification = async (order: {
     patientPhone?: string;
     patientName?: string;
@@ -375,48 +397,34 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
     }
   };
 
-  const sendSmsNotification = async (order: {
+  const sendSmsNotification = (order: {
     patientPhone?: string;
     patientName?: string;
     orderNumber?: string;
     patientId?: string;
     [key: string]: any;
   }) => {
-    let rawPhone = (order.patientPhone || "").trim();
-    let cleanDigits = rawPhone.replace(/\D/g, "");
+    openSmsModalForOrder(order);
+  };
 
-    if (!cleanDigits) {
-      const inputPhone = window.prompt(
-        "Introduceți numărul de telefon al pacientului pentru notificarea SMS:",
-        rawPhone
-      );
-      if (!inputPhone) return;
-      cleanDigits = inputPhone.replace(/\D/g, "");
-    }
+  const handleSmsSent = async (info: {
+    orderNumber: string;
+    phone: string;
+    message: string;
+    timestamp: string;
+  }) => {
+    const nowIso = info.timestamp || new Date().toISOString();
+    const notifierName = profile?.displayName || (profile as any)?.name || "Recepție";
 
-    const stripDiacriticsPref = localStorage.getItem("clinic_setting_whatsapp_strip_diacritics") === "true";
-    const message = buildGlassesReadyMessage({
-      patientName: order.patientName,
-      removeDiacritics: stripDiacriticsPref,
-    });
-    
-    // Direct SMS protocol (deschide aplicația nativă de SMS cu destinatar și mesaj precompletat)
-    const smsUrl = `sms:${cleanDigits}?body=${encodeURIComponent(message)}`;
-    window.location.href = smsUrl;
-
-    // Salvare automată confirmare notificare SMS & trecere pe ready_for_pickup
     try {
-      const nowIso = new Date().toISOString();
-      const notifierName = profile?.displayName || (profile as any)?.name || "Recepție";
-
       const targetRecord = (medicalRecords || []).find(
         (r) =>
-          (order.patientId && r.id === order.patientId) ||
-          r.glassesOrder?.orderNumber === order.orderNumber ||
-          (r.orderHistory || []).some((o) => o.orderNumber === order.orderNumber),
+          (selectedSmsOrder?.patientId && r.id === selectedSmsOrder.patientId) ||
+          r.glassesOrder?.orderNumber === info.orderNumber ||
+          (r.orderHistory || []).some((o) => o.orderNumber === info.orderNumber),
       );
 
-      const patientDocId = order.patientId || targetRecord?.id;
+      const patientDocId = selectedSmsOrder?.patientId || targetRecord?.id;
       if (patientDocId) {
         const docRef = doc(db, "medicalRecords", patientDocId);
         const docSnap = await getDoc(docRef);
@@ -424,7 +432,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
           const data = docSnap.data() as MedicalRecord;
           const history = [...(data.orderHistory || [])];
           const orderIdx = history.findIndex(
-            (o) => o.orderNumber === order.orderNumber,
+            (o) => o.orderNumber === info.orderNumber,
           );
 
           let updatedOrder: any = null;
@@ -440,7 +448,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
             history[orderIdx] = updatedOrder;
           }
 
-          const isMainOrder = data.glassesOrder?.orderNumber === order.orderNumber;
+          const isMainOrder = data.glassesOrder?.orderNumber === info.orderNumber;
           let updatedMainGlasses = data.glassesOrder;
           if (isMainOrder && data.glassesOrder) {
             const newStatus = data.glassesOrder.status === "completed" ? "completed" : "ready_for_pickup";
@@ -472,15 +480,44 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
           );
 
           try {
+            const qStandalone = query(
+              collection(db, "glasses_orders"),
+              where("orderNumber", "==", info.orderNumber),
+            );
+            const snapStandalone = await getDocs(qStandalone);
+            if (!snapStandalone.empty) {
+              const batch = writeBatch(db);
+              snapStandalone.docs.forEach((d) => {
+                const cur = d.data();
+                const newStatus = cur.status === "completed" ? "completed" : "ready_for_pickup";
+                batch.update(d.ref, {
+                  status: newStatus,
+                  smsNotifiedAt: nowIso,
+                  smsNotifiedBy: notifierName,
+                });
+              });
+              await batch.commit();
+            }
+          } catch (e) {
+            console.warn("Could not update standalone glasses_orders:", e);
+          }
+
+          try {
             await addDoc(collection(db, "activityLogs"), {
               action: "Trimitere Notificare SMS Comandă Ochelari",
-              details: `Trimis alertă SMS pacient ${order.patientName || data.patientName || ""} (Comanda #${order.orderNumber || "fără număr"}).`,
+              details: `Trimis SMS către ${info.phone} pentru pacient ${selectedSmsOrder?.patientName || data.patientName || ""} (Comanda #${info.orderNumber}). Mesaj: "${info.message.slice(0, 50)}..."`,
               user: notifierName,
               timestamp: nowIso,
             });
           } catch (logErr) {
             console.warn("Log activity error:", logErr);
           }
+
+          setFeedbackBanner({
+            text: `SMS expediat cu succes prin telefonul Android pentru comanda #${info.orderNumber}!`,
+            type: "success",
+          });
+          setTimeout(() => setFeedbackBanner(null), 4000);
         }
       }
     } catch (e) {
@@ -963,6 +1000,17 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                   Gestiune Comenzi de Ochelari
                 </h2>
                 <div className="flex items-center gap-2">
+                  <div
+                    className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-black/25 text-white border border-white/20 rounded-xl text-xs font-bold"
+                    title={gatewayDevice ? `Telefon conectat prin sms-gate.app: ${gatewayDevice.name}` : "SMS Gateway cloud server conectat (api.sms-gate.app)"}
+                  >
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-300 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+                    </span>
+                    <Smartphone className="w-3.5 h-3.5 text-blue-200" />
+                    <span className="text-[11px] opacity-90">SMS Gate: {gatewayDevice?.name || "Xiaomi conectat"}</span>
+                  </div>
                   {!hasLoadedFullArchive && (
                     <button
                       onClick={handleLoadFullArchiveOrders}
@@ -1881,6 +1929,15 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                                 <span>Notificat {format(new Date(order.whatsappNotifiedAt), "dd.MM HH:mm")}</span>
                                               </span>
                                             )}
+                                            {order.smsNotifiedAt && (
+                                              <span
+                                                className="mt-0.5 text-[8px] font-black uppercase tracking-tight text-blue-700 dark:text-blue-300 bg-blue-500/15 border border-blue-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 w-fit"
+                                                title={`Notificare SMS trimisă prin telefon la ${format(new Date(order.smsNotifiedAt), "dd.MM.yyyy HH:mm")}${order.smsNotifiedBy ? ` (${order.smsNotifiedBy})` : ""}`}
+                                              >
+                                                <span>💬</span>
+                                                <span>SMS {format(new Date(order.smsNotifiedAt), "dd.MM HH:mm")}</span>
+                                              </span>
+                                            )}
                                           </div>
                                         </div>
                                         <div className="flex items-center gap-2 sm:gap-3">
@@ -2375,6 +2432,15 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                     <span>Notificat WhatsApp la {format(new Date(order.whatsappNotifiedAt), "dd.MM HH:mm")}</span>
                                   </span>
                                 )}
+                                {order.smsNotifiedAt && (
+                                  <span
+                                    className="text-[9px] font-black uppercase tracking-wider text-blue-800 dark:text-blue-200 bg-blue-500/15 dark:bg-blue-950/40 border border-blue-500/35 px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs"
+                                    title={`Notificare SMS trimisă prin telefon la ${format(new Date(order.smsNotifiedAt), "dd.MM.yyyy HH:mm")}${order.smsNotifiedBy ? ` de către ${order.smsNotifiedBy}` : ""}`}
+                                  >
+                                    <span className="text-blue-600 dark:text-blue-400">💬</span>
+                                    <span>Notificat SMS la {format(new Date(order.smsNotifiedAt), "dd.MM HH:mm")}</span>
+                                  </span>
+                                )}
                                 {order.deliveredAt && (
                                   <span
                                     className="text-[9px] font-black uppercase tracking-wider text-blue-800 dark:text-blue-200 bg-blue-500/15 dark:bg-blue-950/40 border border-blue-500/35 px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs"
@@ -2827,6 +2893,15 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
               </div>
             </motion.div>
           </motion.div>
+      {selectedSmsOrder && (
+        <SmsSendModal
+          isOpen={!!selectedSmsOrder}
+          onClose={() => setSelectedSmsOrder(null)}
+          order={selectedSmsOrder}
+          darkMode={darkMode}
+          onSmsSent={handleSmsSent}
+        />
+      )}
     </AnimatePresence>
   );
 };

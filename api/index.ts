@@ -16,6 +16,8 @@ const KNOWN_API_ENDPOINTS = [
   "/currency-history",
   "/bnr-rates",
   "/verify-recaptcha",
+  "/send-sms",
+  "/sms-status",
 ];
 
 app.use((req, _res, next) => {
@@ -511,6 +513,136 @@ app.post("/api/verify-recaptcha", async (req, res) => {
       valid: true,
       reasons: ["server_error_fallback"],
       error: error.message || "Internal verification error",
+    });
+  }
+});
+
+// ==========================================
+// SMS Gateway for Android (sms-gate.app) API
+// ==========================================
+app.post("/api/send-sms", async (req, res) => {
+  try {
+    const {
+      phone,
+      message,
+      deviceId = process.env.SMSGATE_DEVICE_ID || "pPJGD0r_iQHoyPpFIGRV9",
+      server = process.env.SMSGATE_SERVER || "api.sms-gate.app:443",
+      username = process.env.SMSGATE_USER || "7-6VQI",
+      password = process.env.SMSGATE_PASS || "tjswcokinl5anf",
+      simNumber,
+    } = req.body;
+
+    if (!phone || typeof phone !== "string" || !phone.trim()) {
+      return res.status(400).json({ success: false, error: "Numărul de telefon este obligatoriu." });
+    }
+
+    if (!message || typeof message !== "string" || !message.trim()) {
+      return res.status(400).json({ success: false, error: "Mesajul SMS nu poate fi gol." });
+    }
+
+    // Curățare și formatare conformă E.164 (specific România / internațional)
+    let cleaned = phone.replace(/[^\d+]/g, "");
+    if (cleaned.startsWith("00")) {
+      cleaned = "+" + cleaned.slice(2);
+    } else if (cleaned.startsWith("07") && cleaned.length === 10) {
+      cleaned = "+4" + cleaned; // 0744123456 -> +40744123456
+    } else if (cleaned.startsWith("40") && cleaned.length === 11) {
+      cleaned = "+" + cleaned;
+    } else if (!cleaned.startsWith("+")) {
+      cleaned = "+" + cleaned;
+    }
+
+    const cleanHost = server.replace(/:443$/, "").replace(/^https?:\/\//, "");
+    const apiUrl = `https://${cleanHost}/3rdparty/v1/messages`;
+    const authHeader = "Basic " + Buffer.from(`${username}:${password}`).toString("base64");
+
+    const payload: any = {
+      phoneNumbers: [cleaned],
+      textMessage: {
+        text: message.trim(),
+      },
+    };
+
+    if (deviceId) {
+      payload.deviceId = deviceId;
+    }
+    if (typeof simNumber === "number") {
+      payload.simNumber = simNumber;
+    }
+
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": authHeader,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      const errMsg = data?.message || data?.error || `Eroare server SMS Gate (status ${response.status})`;
+      return res.status(response.status).json({
+        success: false,
+        error: errMsg,
+        data,
+      });
+    }
+
+    return res.json({
+      success: true,
+      recipient: cleaned,
+      result: data,
+    });
+  } catch (err: any) {
+    console.error("Error in /api/send-sms:", err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || "Eroare internă la trimiterea SMS-ului.",
+    });
+  }
+});
+
+app.get("/api/sms-status", async (req, res) => {
+  try {
+    const server = (req.query.server as string) || process.env.SMSGATE_SERVER || "api.sms-gate.app:443";
+    const username = (req.query.username as string) || process.env.SMSGATE_USER || "7-6VQI";
+    const password = (req.query.password as string) || process.env.SMSGATE_PASS || "tjswcokinl5anf";
+    const targetDeviceId = (req.query.deviceId as string) || process.env.SMSGATE_DEVICE_ID || "pPJGD0r_iQHoyPpFIGRV9";
+
+    const cleanHost = server.replace(/:443$/, "").replace(/^https?:\/\//, "");
+    const apiUrl = `https://${cleanHost}/3rdparty/v1/devices`;
+    const authHeader = "Basic " + Buffer.from(`${username}:${password}`).toString("base64");
+
+    const response = await fetch(apiUrl, {
+      method: "GET",
+      headers: {
+        "Authorization": authHeader,
+      },
+    });
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        success: false,
+        error: `Eroare conexiune SMS Gate (status ${response.status})`,
+      });
+    }
+
+    const devices = (await response.json().catch(() => [])) as any[];
+    const targetDevice = devices.find((d) => d.id === targetDeviceId) || devices[0];
+
+    return res.json({
+      success: true,
+      connected: !!targetDevice,
+      device: targetDevice || null,
+      allDevices: devices,
+    });
+  } catch (err: any) {
+    console.error("Error checking SMS status:", err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || "Nu s-a putut verifica starea gateway-ului SMS.",
     });
   }
 });
