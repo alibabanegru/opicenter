@@ -8079,15 +8079,23 @@ export default function App() {
       }
     );
 
-    // 4. Medical Records - Sincronizare Completă în Timp Real (toate fișele se sincronizează instantaneu între toate conturile)
-    const unsubMedicalRecords = onSnapshot(
+    // 4. Medical Records (Smart / Lazy Loading - ultimele 50 de fișe recente)
+    // Încarcă în timp real doar cele mai recente 50 de fișe ordonate după data actualizării (updatedAt).
+    // Fișele mai vechi din arhivă sunt descărcate automat la cerere la căutare sau la deschiderea fișei pacientului.
+    const medicalRecordsQuery = query(
       collection(db, "medicalRecords"),
+      orderBy("updatedAt", "desc"),
+      limit(50)
+    );
+    const unsubMedicalRecords = onSnapshot(
+      medicalRecordsQuery,
       (snapshot) => {
         setMedicalRecords((prev) => {
           const fresh = snapshot.docs.map(
             (doc) => ({ id: doc.id, ...doc.data() }) as MedicalRecord,
           );
           const freshIds = new Set(fresh.map((r) => r.id));
+          // Păstrăm fișele mai vechi care au fost deja descărcate la cerere în sesiunea curentă
           const preservedOlder = prev.filter((r) => !freshIds.has(r.id));
           const merged = [...fresh, ...preservedOlder];
 
@@ -8933,23 +8941,53 @@ export default function App() {
     setSearchFilter("all");
     setIsSearchModalOpen(true);
 
-    // Căutare la cerere în arhiva de programări mai vechi de 30 de zile (medicalRecords sunt deja în memorie)
+    // Căutare la cerere în arhivă pentru programări și fișe medicale mai vechi
     const trimmedQuery = queryStr.trim();
     if (trimmedQuery.length >= 3) {
       (async () => {
         try {
           const extraApps: Appointment[] = [];
+          const extraMeds: MedicalRecord[] = [];
+
           if (type === "phone" && cleanDigits.length >= 3) {
-            const snapApp = await getDocs(
-              query(collection(db, "appointments"), where("patientPhone", "==", trimmedQuery))
-            ).catch(() => null);
+            const [snapApp, snapMed] = await Promise.all([
+              getDocs(query(collection(db, "appointments"), where("patientPhone", "==", trimmedQuery))).catch(() => null),
+              getDocs(query(collection(db, "medicalRecords"), where("patientPhone", "==", trimmedQuery))).catch(() => null),
+            ]);
             snapApp?.forEach((d) => extraApps.push({ id: d.id, ...d.data() } as Appointment));
+            snapMed?.forEach((d) => extraMeds.push({ id: d.id, ...d.data() } as MedicalRecord));
           } else if (type === "name") {
-            const snapApp = await getDocs(
-              query(collection(db, "appointments"), where("patientName", "==", trimmedQuery))
-            ).catch(() => null);
+            const [snapApp, snapMed] = await Promise.all([
+              getDocs(query(collection(db, "appointments"), where("patientName", "==", trimmedQuery))).catch(() => null),
+              getDocs(query(collection(db, "medicalRecords"), where("patientName", "==", trimmedQuery))).catch(() => null),
+            ]);
             snapApp?.forEach((d) => extraApps.push({ id: d.id, ...d.data() } as Appointment));
+            snapMed?.forEach((d) => extraMeds.push({ id: d.id, ...d.data() } as MedicalRecord));
           }
+
+          if (extraMeds.length > 0) {
+            setMedicalRecords((prev) => {
+              const existingIds = new Set(prev.map((m) => m.id));
+              const toAdd = extraMeds.filter((m) => !existingIds.has(m.id));
+              return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+            });
+          }
+
+          const extraMedResults: Appointment[] = extraMeds.map((med) => ({
+            id: `med_${med.id}`,
+            patientName: med.patientName || "",
+            patientPhone: med.patientPhone || "",
+            patientAge: med.patientAge?.toString() || "",
+            patientBirthDate: med.patientBirthDate || "",
+            patientSex: med.patientSex || "",
+            startTime: med.updatedAt || med.createdAt || new Date(0).toISOString(),
+            endTime: med.updatedAt || med.createdAt || new Date(0).toISOString(),
+            doctorId: "all",
+            status: "completed" as const,
+            isFromHistoryOnly: true,
+          } as unknown as Appointment));
+
+          const allExtra: Appointment[] = [...extraApps, ...extraMedResults];
 
           if (extraApps.length > 0) {
             setAppointments((prev) => {
@@ -8957,9 +8995,12 @@ export default function App() {
               const toAdd = extraApps.filter((a) => !existingIds.has(a.id));
               return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
             });
+          }
+
+          if (allExtra.length > 0) {
             setSearchResults((prev) => {
               const existingIds = new Set(prev.map((a) => a.id));
-              const toAdd = extraApps.filter((a) => !existingIds.has(a.id));
+              const toAdd = allExtra.filter((a) => !existingIds.has(a.id));
               return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
             });
           }
