@@ -46,37 +46,96 @@ export const removeRomanianDiacritics = (str: string): string => {
     .replace(/Î/g, "I");
 };
 
+export const DEFAULT_RAW_TEMPLATES: Record<string, string> = {
+  ready_pickup: "Stimate/ă {NUME}, comanda dvs. de ochelari #{COMANDA} este gata pentru ridicare la OptiCenter! Vă așteptăm cu drag.{REST_PLATA} Nu răspundeți la acest SMS.",
+  order_registered: "Stimate/ă {NUME}, comanda dvs. de ochelari #{COMANDA} a fost înregistrată cu succes la OptiCenter și a intrat în execuție.{DATA_LIVRARE} Vă mulțumim!",
+  pickup_reminder: "Stimate/ă {NUME}, vă reamintim că ochelarii dvs. sunt gata pentru ridicare la OptiCenter.{REST_PLATA} Vă așteptăm!",
+};
+
+export function getSavedRawTemplates(): Record<string, string> {
+  try {
+    const saved = localStorage.getItem("opticenter_custom_sms_templates");
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return { ...DEFAULT_RAW_TEMPLATES, ...parsed };
+    }
+  } catch (e) {
+    console.warn("Could not read custom SMS templates from localStorage:", e);
+  }
+  return { ...DEFAULT_RAW_TEMPLATES };
+}
+
+export function saveCustomRawTemplates(templates: Record<string, string>): void {
+  try {
+    localStorage.setItem("opticenter_custom_sms_templates", JSON.stringify(templates));
+  } catch (e) {
+    console.warn("Could not save SMS templates to localStorage:", e);
+  }
+}
+
+export function resetCustomRawTemplates(): Record<string, string> {
+  try {
+    localStorage.removeItem("opticenter_custom_sms_templates");
+  } catch {}
+  return { ...DEFAULT_RAW_TEMPLATES };
+}
+
+export function renderSmsTemplate(
+  templateStr: string,
+  params: {
+    patientName?: string;
+    orderNumber?: string;
+    balance?: number;
+    deliveryDate?: string;
+  }
+): string {
+  const namePart = (params.patientName && params.patientName.trim()) || "Pacient";
+  const orderPart = params.orderNumber || "—";
+  const balancePart = params.balance && params.balance > 0 ? ` Rest de plată: ${params.balance} lei.` : "";
+  const datePart = params.deliveryDate ? ` Data estimată: ${params.deliveryDate}.` : "";
+
+  let result = templateStr
+    .replace(/\{NUME\}/g, namePart)
+    .replace(/\{PATIENT_NAME\}/g, namePart)
+    .replace(/\{COMANDA\}/g, orderPart)
+    .replace(/\{ORDER_NUM\}/g, orderPart)
+    .replace(/\{REST_PLATA\}/g, balancePart)
+    .replace(/\{BALANCE\}/g, balancePart)
+    .replace(/\{DATA_LIVRARE\}/g, datePart)
+    .replace(/\{DELIVERY_DATE\}/g, datePart);
+
+  return result.replace(/\s+/g, " ").trim();
+}
+
 export const SMS_PRESET_TEMPLATES = [
   {
     id: "ready_pickup",
     title: "👓 Gata de ridicare",
     description: "Notificare că ochelarii sunt gata pentru ridicare din clinică",
-    template: (p: { patientName?: string; orderNumber?: string; balance?: number; clinicPhone?: string }) => {
-      const namePart = p.patientName ? `Stimate/ă ${p.patientName.trim()}, ` : "Bună ziua, ";
-      const orderPart = p.orderNumber ? `comanda dvs. de ochelari #${p.orderNumber}` : "comanda dvs. de ochelari";
-      const balancePart = p.balance && p.balance > 0 ? ` Rest de plată: ${p.balance} lei.` : "";
-      return `${namePart}${orderPart} este gata pentru ridicare la OptiCenter! Vă așteptăm cu drag.${balancePart} Nu răspundeți la acest SMS.`;
+    template: (p: { patientName?: string; orderNumber?: string; balance?: number; clinicPhone?: string; deliveryDate?: string }) => {
+      const currentTemplates = getSavedRawTemplates();
+      const raw = currentTemplates.ready_pickup || DEFAULT_RAW_TEMPLATES.ready_pickup;
+      return renderSmsTemplate(raw, p);
     },
   },
   {
     id: "order_registered",
     title: "📋 Înregistrare comandă",
     description: "Confirmare că ochelarii au intrat în lucru la atelier",
-    template: (p: { patientName?: string; orderNumber?: string; deliveryDate?: string }) => {
-      const namePart = p.patientName ? `Stimate/ă ${p.patientName.trim()}, ` : "Bună ziua, ";
-      const orderPart = p.orderNumber ? `comanda dvs. de ochelari #${p.orderNumber}` : "comanda dvs. de ochelari";
-      const datePart = p.deliveryDate ? ` Data estimată de finalizare: ${p.deliveryDate}.` : "";
-      return `${namePart}${orderPart} a fost înregistrată cu succes la OptiCenter și a intrat în execuție.${datePart} Vă mulțumim!`;
+    template: (p: { patientName?: string; orderNumber?: string; balance?: number; clinicPhone?: string; deliveryDate?: string }) => {
+      const currentTemplates = getSavedRawTemplates();
+      const raw = currentTemplates.order_registered || DEFAULT_RAW_TEMPLATES.order_registered;
+      return renderSmsTemplate(raw, p);
     },
   },
   {
     id: "pickup_reminder",
     title: "🔔 Reamintire ridicare",
     description: "Reamintire pentru ochelari gata neridicați",
-    template: (p: { patientName?: string; orderNumber?: string; balance?: number }) => {
-      const namePart = p.patientName ? `Stimate/ă ${p.patientName.trim()}, ` : "Bună ziua, ";
-      const balancePart = p.balance && p.balance > 0 ? ` Sold rămas: ${p.balance} lei.` : "";
-      return `${namePart}vă reamintim că ochelarii dvs. sunt gata pentru ridicare la OptiCenter.${balancePart} Vă așteptăm!`;
+    template: (p: { patientName?: string; orderNumber?: string; balance?: number; clinicPhone?: string; deliveryDate?: string }) => {
+      const currentTemplates = getSavedRawTemplates();
+      const raw = currentTemplates.pickup_reminder || DEFAULT_RAW_TEMPLATES.pickup_reminder;
+      return renderSmsTemplate(raw, p);
     },
   },
 ];

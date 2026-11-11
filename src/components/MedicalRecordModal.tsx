@@ -29,6 +29,8 @@ import {
   Undo2,
   User,
   X,
+  Cloud,
+  RefreshCw,
 } from "lucide-react";
 import { format, isSameDay, parseISO } from "date-fns";
 import { ro } from "date-fns/locale";
@@ -278,9 +280,11 @@ export interface MedicalRecordModalProps {
   setAppointments: any;
   activeAppointment: Appointment | null;
   setActiveAppointment: React.Dispatch<React.SetStateAction<Appointment | null>>;
-  saveMedicalRecord: (shouldClose?: boolean) => Promise<boolean>;
+  saveMedicalRecord: (shouldClose?: boolean, allowSkipDpCheck?: boolean) => Promise<boolean>;
   handleDiscardDraft: () => void;
   lastLocalSavedAt: Date | null;
+  lastServerSavedAt?: Date | null;
+  isServerSaving?: boolean;
   draftRestoredNotice: string | null;
   setDraftRestoredNotice: (msg: string | null) => void;
   bookingError: string | null;
@@ -389,6 +393,8 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
     saveMedicalRecord,
     handleDiscardDraft,
     lastLocalSavedAt,
+    lastServerSavedAt,
+    isServerSaving,
     draftRestoredNotice,
     setDraftRestoredNotice,
     bookingError,
@@ -468,6 +474,61 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
 
   const isMedicalRecordModalOpen = isOpen;
   const [isSavingAndPrinting, setIsSavingAndPrinting] = useState(false);
+  const [isDraftRecoveryOpen, setIsDraftRecoveryOpen] = useState(false);
+  const [availableDrafts, setAvailableDrafts] = useState<Array<{
+    key: string;
+    patientName: string;
+    savedAt: string;
+    record: any;
+  }>>([]);
+
+  const scanLocalDrafts = () => {
+    const list: Array<{
+      key: string;
+      patientName: string;
+      savedAt: string;
+      record: any;
+    }> = [];
+    try {
+      const seen = new Set<string>();
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith("opticenter_draft_mr_") || k.startsWith("opticenter_draft_backup_"))) {
+          const raw = localStorage.getItem(k);
+          if (raw) {
+            try {
+              const p = JSON.parse(raw);
+              if (p && p.record) {
+                const pName = p.patientName || p.record?.patientName || "Pacient fără nume";
+                const dedupeKey = `${pName}_${p.savedAt}`;
+                if (!seen.has(dedupeKey)) {
+                  seen.add(dedupeKey);
+                  list.push({
+                    key: k,
+                    patientName: pName,
+                    savedAt: p.savedAt || new Date().toISOString(),
+                    record: p.record,
+                  });
+                }
+              }
+            } catch {}
+          }
+        }
+      }
+      list.sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());
+      setAvailableDrafts(list);
+    } catch (e) {
+      console.warn("Scan local drafts error:", e);
+    }
+  };
+
+  const handleCloseModalSafely = () => {
+    if (setIsMedicalRecordModalOpen) {
+      setIsMedicalRecordModalOpen(false);
+    } else if (onClose) {
+      onClose();
+    }
+  };
 
   if (!isOpen || !currentMedicalRecord) return null;
 
@@ -1134,36 +1195,70 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                     </div>
                   </div>
 
-                  {/* Auto-Save Draft Status Pill */}
+                  {/* Server Save Status Pill (Optimizat Credite Firebase) */}
                   <div
                     className={cn(
-                      "p-2 rounded-xl border flex flex-col justify-center gap-0.5 min-w-[120px] sm:min-w-[130px]",
+                      "p-2 rounded-xl border flex flex-col justify-center gap-0.5 min-w-[130px] sm:min-w-[155px]",
                       darkMode
                         ? "bg-slate-800/40 border-slate-800"
                         : "bg-slate-50 border-slate-100 shadow-sm",
                     )}
-                    title="Protecție anti-pană de curent: ciorna fișei este salvată automat în memoria locală la fiecare 2 secunde"
+                    title="Economisire credite Firebase activă: datele se salvează pe server exclusiv la apăsarea butoanelor 'Salvează Fișa', 'Salvează și Printează' sau la printare document."
                   >
-                    <span className="text-[9px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest leading-none flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                      Auto-Save Ciornă
+                    <span className="text-[9px] font-black uppercase tracking-widest leading-none flex items-center gap-1.5">
+                      {isServerSaving || loading ? (
+                        <>
+                          <RefreshCw className="w-2.5 h-2.5 text-blue-500 animate-spin" />
+                          <span className="text-blue-600 dark:text-blue-400 font-bold">Salvare Server...</span>
+                        </>
+                      ) : lastServerSavedAt ? (
+                        <>
+                          <Cloud className="w-2.5 h-2.5 text-emerald-500" />
+                          <span className="text-emerald-600 dark:text-emerald-400 font-black">Salvat pe Server</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                          <span className="text-slate-500 dark:text-slate-400">Salvare la Buton</span>
+                        </>
+                      )}
                     </span>
                     <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-tight truncate">
-                      {lastLocalSavedAt
-                        ? `Salvat ${lastLocalSavedAt.toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
-                        : "Anti-Pană Activ"}
+                      {lastServerSavedAt
+                        ? `${lastServerSavedAt.toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
+                        : "Optimizat Firebase"}
                     </span>
                   </div>
 
-                  {/* Close button at the end to keep layout clean */}
+                  {/* Button to scan and restore drafts */}
                   <button
-                    onClick={() => setIsMedicalRecordModalOpen(false)}
+                    type="button"
+                    onClick={() => {
+                      scanLocalDrafts();
+                      setIsDraftRecoveryOpen(true);
+                    }}
                     className={cn(
-                      "p-2 rounded-xl transition-colors border self-stretch flex items-center justify-center min-w-[36px]",
+                      "px-2.5 py-2 rounded-xl text-[10px] font-bold border flex items-center gap-1 transition-all cursor-pointer whitespace-nowrap self-stretch",
+                      darkMode
+                        ? "bg-slate-800 hover:bg-slate-750 border-slate-700 text-slate-300"
+                        : "bg-white hover:bg-slate-50 border-slate-200 text-slate-700 shadow-xs"
+                    )}
+                    title="Verifică și recuperează ciorne de consult salvate pe acest calculator"
+                  >
+                    <Shield className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                    <span className="hidden sm:inline">Recuperează ciorne</span>
+                  </button>
+
+                  {/* Close button */}
+                  <button
+                    onClick={handleCloseModalSafely}
+                    className={cn(
+                      "p-2 rounded-xl transition-colors border self-stretch flex items-center justify-center min-w-[36px] cursor-pointer",
                       darkMode
                         ? "bg-slate-800 hover:bg-slate-750 border-slate-700 text-slate-400 hover:text-slate-200"
                         : "bg-white hover:bg-slate-50 border-slate-200 text-slate-500 hover:text-slate-700 shadow-sm",
                     )}
+                    title="Închide fișa"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -1190,36 +1285,38 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                   <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto flex-wrap">
                     <button
                       type="button"
-                      onClick={() => setDraftRestoredNotice(null)}
-                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-[10px] uppercase tracking-wider transition-all shadow-xs cursor-pointer whitespace-nowrap"
-                      title="Păstrează datele recuperate din ciornă"
+                      onClick={async () => {
+                        await saveMedicalRecord(false, true);
+                        setDraftRestoredNotice(null);
+                        setSuccessMessage("Ciorna a fost salvată și sincronizată cu succes pe server!");
+                      }}
+                      className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-[11px] uppercase tracking-wider transition-all shadow-md cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
+                      title="Salvează imediat această ciornă pe serverul Firebase"
                     >
-                      ✓ Păstrează ciorna
+                      <Save className="w-3.5 h-3.5" />
+                      💾 Salvează pe Server
                     </button>
                     <button
                       type="button"
-                      onClick={handleDiscardDraft}
+                      onClick={() => setDraftRestoredNotice(null)}
                       className="px-3 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 active:scale-95 text-slate-800 dark:text-slate-200 font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer border border-slate-300 dark:border-slate-700 whitespace-nowrap"
-                      title="Revino la versiunea salvată pe server"
+                      title="Păstrează datele recuperate în fișă pentru editare"
                     >
-                      Încarcă de pe server
+                      ✓ Păstrează în fișă
                     </button>
                     <button
                       type="button"
                       onClick={() => {
-                        if (currentMedicalRecord) {
-                          try {
-                            const targetId = currentMedicalRecord.id || `${currentMedicalRecord.patientName}_${currentMedicalRecord.patientPhone}`.replace(/\s+/g, "_").toLowerCase();
-                            localStorage.removeItem(`opticenter_draft_mr_${targetId || "new"}`);
-                          } catch (e) {}
-                        }
+                        const confirmDiscard = window.confirm(
+                          "Atenție: Dacă renunțați la ciornă, datele redactate local vor fi înlocuite cu cele existente pe server. Sunteți sigur?"
+                        );
+                        if (!confirmDiscard) return;
                         handleDiscardDraft();
                       }}
-                      className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black text-[10px] uppercase tracking-wider transition-all shadow-sm border border-amber-400 cursor-pointer flex items-center gap-1 whitespace-nowrap"
-                      title="Șterge definitiv ciorna locală și anulează recuperarea"
+                      className="px-2.5 py-1.5 rounded-xl text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap"
+                      title="Renunță la ciorna locală"
                     >
-                      <Trash2 className="w-3 h-3 text-slate-950" />
-                      <span>Șterge ciorna</span>
+                      Renunță la ciornă
                     </button>
                   </div>
                 </div>
@@ -8579,6 +8676,105 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                 </button>
                 </div>
               </div>
+
+              {/* Draft Recovery Dialog */}
+              {isDraftRecoveryOpen && (
+                <div className="fixed inset-0 z-[250] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-150">
+                  <div
+                    className={cn(
+                      "w-full max-w-xl rounded-3xl p-6 border shadow-2xl flex flex-col max-h-[82vh]",
+                      darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"
+                    )}
+                  >
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                          <Shield className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black">Ciorne Locale Salvate în Browser</h4>
+                          <p className="text-[11px] text-slate-500">Recuperează datele oricărui pacient redactat pe acest calculator</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsDraftRecoveryOpen(false)}
+                        className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    <div className="py-4 space-y-2.5 overflow-y-auto flex-1">
+                      {availableDrafts.length === 0 ? (
+                        <div className="py-8 text-center text-slate-400 text-xs">
+                          Nu au fost găsite ciorne nesalvate în memoria acestui browser.
+                        </div>
+                      ) : (
+                        availableDrafts.map((d, idx) => {
+                          const sphOD = d.record?.od?.sph || "";
+                          const sphOS = d.record?.os?.sph || "";
+                          const cylOD = d.record?.od?.cyl || "";
+                          const cylOS = d.record?.os?.cyl || "";
+                          const diag = d.record?.diagnostic || "";
+                          const timeFormatted = new Date(d.savedAt).toLocaleString("ro-RO");
+
+                          return (
+                            <div
+                              key={d.key + idx}
+                              className={cn(
+                                "p-3.5 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all",
+                                darkMode ? "bg-slate-800/60 border-slate-700/80" : "bg-slate-50 border-slate-200"
+                              )}
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <strong className="text-xs font-black text-slate-800 dark:text-slate-100">
+                                    {d.patientName}
+                                  </strong>
+                                  <span className="text-[10px] text-slate-400">
+                                    {timeFormatted}
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-slate-600 dark:text-slate-300 mt-1 space-y-0.5">
+                                  {(sphOD || cylOD || sphOS || cylOS) && (
+                                    <div className="font-mono text-[10px] text-blue-600 dark:text-blue-400 font-bold">
+                                      OD: {sphOD ? `${sphOD} sf` : ""} {cylOD ? `${cylOD} cyl` : ""} | OS: {sphOS ? `${sphOS} sf` : ""} {cylOS ? `${cylOS} cyl` : ""}
+                                    </div>
+                                  )}
+                                  {diag && <div className="line-clamp-1 italic text-[10px]">{diag}</div>}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  setCurrentMedicalRecord({ ...d.record });
+                                  await saveMedicalRecord(false, true);
+                                  setIsDraftRecoveryOpen(false);
+                                  setSuccessMessage(`Fișa pacientului "${d.patientName}" a fost restabilită și sincronizată cu succes pe server!`);
+                                }}
+                                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-wider shrink-0 cursor-pointer shadow-xs active:scale-95 transition-all"
+                              >
+                                Restabilește & Salvează pe Server
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setIsDraftRecoveryOpen(false)}
+                        className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                      >
+                        Închide
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </motion.div>
           </motion.div>
   );

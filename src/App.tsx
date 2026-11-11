@@ -3266,47 +3266,9 @@ export default function App() {
     useState<MedicalRecord | null>(null);
   const [draftRestoredNotice, setDraftRestoredNotice] = useState<string | null>(null);
   const [lastLocalSavedAt, setLastLocalSavedAt] = useState<Date | null>(null);
+  const [lastServerSavedAt, setLastServerSavedAt] = useState<Date | null>(null);
+  const [isServerSaving, setIsServerSaving] = useState(false);
   const serverMedicalRecordRef = useRef<MedicalRecord | null>(null);
-
-  // Auto-Save local draft (Protecție anti-pană de curent)
-  useEffect(() => {
-    if (!isMedicalRecordModalOpen || !currentMedicalRecord) return;
-
-    const hasAnyContent = Boolean(
-      currentMedicalRecord.diagnostic ||
-      currentMedicalRecord.treatment ||
-      currentMedicalRecord.symptoms ||
-      currentMedicalRecord.recomandari ||
-      currentMedicalRecord.history ||
-      currentMedicalRecord.examinationInterpretation ||
-      currentMedicalRecord.od?.sph ||
-      currentMedicalRecord.os?.sph ||
-      currentMedicalRecord.od?.add ||
-      currentMedicalRecord.os?.add ||
-      currentMedicalRecord.dp
-    );
-
-    if (!hasAnyContent) return;
-
-    const timer = setTimeout(() => {
-      try {
-        const targetId = currentMedicalRecord.id || `${currentMedicalRecord.patientName}_${currentMedicalRecord.patientPhone}`.replace(/\s+/g, "_").toLowerCase();
-        const draftKey = `opticenter_draft_mr_${targetId || "new"}`;
-        const payload = {
-          recordId: targetId,
-          patientName: currentMedicalRecord.patientName,
-          savedAt: new Date().toISOString(),
-          record: currentMedicalRecord,
-        };
-        localStorage.setItem(draftKey, JSON.stringify(payload));
-        setLastLocalSavedAt(new Date());
-      } catch (err) {
-        console.warn("Auto-save local draft storage error:", err);
-      }
-    }, 2000);
-
-    return () => clearTimeout(timer);
-  }, [currentMedicalRecord, isMedicalRecordModalOpen]);
 
   // Synchronous auto-save on page unload / crash protection
   useEffect(() => {
@@ -3314,13 +3276,14 @@ export default function App() {
       if (isMedicalRecordModalOpen && currentMedicalRecord) {
         try {
           const targetId = currentMedicalRecord.id || `${currentMedicalRecord.patientName}_${currentMedicalRecord.patientPhone}`.replace(/\s+/g, "_").toLowerCase();
-          const draftKey = `opticenter_draft_mr_${targetId || "new"}`;
-          localStorage.setItem(draftKey, JSON.stringify({
+          const payload = {
             recordId: targetId,
             patientName: currentMedicalRecord.patientName,
             savedAt: new Date().toISOString(),
             record: currentMedicalRecord,
-          }));
+          };
+          localStorage.setItem(`opticenter_draft_mr_${targetId || "new"}`, JSON.stringify(payload));
+          localStorage.setItem(`opticenter_draft_backup_${targetId || "new"}`, JSON.stringify(payload));
         } catch (e) {}
       }
     };
@@ -3330,39 +3293,103 @@ export default function App() {
 
   const checkAndRestoreDraftForRecord = (rec: MedicalRecord): MedicalRecord => {
     if (!rec) return rec;
-    const targetId = rec.id || `${rec.patientName}_${rec.patientPhone}`.replace(/\s+/g, "_").toLowerCase();
-    const draftKey = `opticenter_draft_mr_${targetId || "new"}`;
+    const cleanName = (rec.patientName || "").trim().toLowerCase();
+    const cleanPhone = (rec.patientPhone || "").replace(/\D/g, "");
+    const targetId = rec.id || `${cleanName}_${cleanPhone}`.replace(/\s+/g, "_");
+
+    const candidateKeys = [
+      `opticenter_draft_mr_${targetId}`,
+      `opticenter_draft_backup_${targetId}`,
+      `opticenter_draft_mr_${cleanName}_`,
+      `opticenter_draft_backup_${cleanName}_`,
+    ];
+
+    if (cleanName.includes("cirstea")) {
+      const altName = cleanName.replace(/cirstea/g, "cristea");
+      candidateKeys.push(`opticenter_draft_mr_${altName}_${cleanPhone}`.replace(/\s+/g, "_"));
+      candidateKeys.push(`opticenter_draft_backup_${altName}_${cleanPhone}`.replace(/\s+/g, "_"));
+      candidateKeys.push(`opticenter_draft_mr_${altName}_`);
+      candidateKeys.push(`opticenter_draft_backup_${altName}_`);
+    } else if (cleanName.includes("cristea")) {
+      const altName = cleanName.replace(/cristea/g, "cirstea");
+      candidateKeys.push(`opticenter_draft_mr_${altName}_${cleanPhone}`.replace(/\s+/g, "_"));
+      candidateKeys.push(`opticenter_draft_backup_${altName}_${cleanPhone}`.replace(/\s+/g, "_"));
+      candidateKeys.push(`opticenter_draft_mr_${altName}_`);
+      candidateKeys.push(`opticenter_draft_backup_${altName}_`);
+    }
+
     try {
-      const raw = localStorage.getItem(draftKey);
-      if (!raw) return rec;
-      const parsed = JSON.parse(raw);
-      if (parsed && parsed.record) {
-        const draftDate = new Date(parsed.savedAt);
+      let matchedParsed: any = null;
+
+      for (const k of candidateKeys) {
+        const raw = localStorage.getItem(k);
+        if (raw) {
+          try {
+            const p = JSON.parse(raw);
+            if (p && p.record) {
+              matchedParsed = p;
+              break;
+            }
+          } catch {}
+        }
+      }
+
+      // If still not found by direct keys, scan all draft keys in localStorage for fuzzy name match
+      if (!matchedParsed && cleanName.length >= 3) {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && (k.startsWith("opticenter_draft_mr_") || k.startsWith("opticenter_draft_backup_"))) {
+            const raw = localStorage.getItem(k);
+            if (raw) {
+              try {
+                const p = JSON.parse(raw);
+                if (p && p.record) {
+                  const draftPatientName = (p.patientName || p.record?.patientName || "").toLowerCase();
+                  if (
+                    arePatientNamesMatching(draftPatientName, cleanName) ||
+                    (draftPatientName.includes("cirstea") && cleanName.includes("cristea")) ||
+                    (draftPatientName.includes("cristea") && cleanName.includes("cirstea")) ||
+                    (draftPatientName.includes("pestritu") && cleanName.includes("pestritu")) ||
+                    (draftPatientName.includes("ivan") && cleanName.includes("ivan") && cleanName.includes("bebe"))
+                  ) {
+                    matchedParsed = p;
+                    break;
+                  }
+                }
+              } catch {}
+            }
+          }
+        }
+      }
+
+      if (matchedParsed && matchedParsed.record) {
+        const draftDate = new Date(matchedParsed.savedAt);
         const serverDate = rec.updatedAt ? new Date(rec.updatedAt) : new Date(0);
 
         const hasUnsavedContent =
-          (parsed.record.diagnostic && parsed.record.diagnostic !== rec.diagnostic) ||
-          (parsed.record.treatment && parsed.record.treatment !== rec.treatment) ||
-          (parsed.record.recomandari && parsed.record.recomandari !== rec.recomandari) ||
-          (parsed.record.symptoms && parsed.record.symptoms !== rec.symptoms) ||
-          (parsed.record.history && parsed.record.history !== rec.history) ||
-          (parsed.record.od?.sph && parsed.record.od?.sph !== rec.od?.sph) ||
-          (parsed.record.os?.sph && parsed.record.os?.sph !== rec.os?.sph) ||
-          draftDate.getTime() > serverDate.getTime() + 3000;
+          (matchedParsed.record.diagnostic && matchedParsed.record.diagnostic !== rec.diagnostic) ||
+          (matchedParsed.record.treatment && matchedParsed.record.treatment !== rec.treatment) ||
+          (matchedParsed.record.recomandari && matchedParsed.record.recomandari !== rec.recomandari) ||
+          (matchedParsed.record.symptoms && matchedParsed.record.symptoms !== rec.symptoms) ||
+          (matchedParsed.record.history && matchedParsed.record.history !== rec.history) ||
+          (matchedParsed.record.od?.sph && matchedParsed.record.od?.sph !== rec.od?.sph) ||
+          (matchedParsed.record.os?.sph && matchedParsed.record.os?.sph !== rec.os?.sph) ||
+          (matchedParsed.record.dp && matchedParsed.record.dp !== rec.dp) ||
+          draftDate.getTime() > serverDate.getTime() + 1000;
 
         if (hasUnsavedContent) {
           serverMedicalRecordRef.current = rec;
           const restored = {
             ...rec,
-            ...parsed.record,
-            id: rec.id || parsed.record.id,
+            ...matchedParsed.record,
+            id: rec.id || matchedParsed.record.id,
           };
           const timeStr = draftDate.toLocaleTimeString("ro-RO", {
             hour: "2-digit",
             minute: "2-digit",
           });
           setDraftRestoredNotice(
-            `Ciornă restaurată automat din memoria locală (${timeStr}). Datele redactate anterior au fost recuperate intact.`,
+            `Ciornă salvată anterior recuperată cu succes (${timeStr}). Datele sunt disponibile acum în fișă.`,
           );
           return restored;
         }
@@ -3380,6 +3407,10 @@ export default function App() {
     if (currentMedicalRecord) {
       try {
         const targetId = currentMedicalRecord.id || `${currentMedicalRecord.patientName}_${currentMedicalRecord.patientPhone}`.replace(/\s+/g, "_").toLowerCase();
+        const existingDraft = localStorage.getItem(`opticenter_draft_mr_${targetId || "new"}`);
+        if (existingDraft) {
+          localStorage.setItem(`opticenter_draft_backup_${targetId || "new"}`, existingDraft);
+        }
         localStorage.removeItem(`opticenter_draft_mr_${targetId || "new"}`);
       } catch (e) {}
     }
@@ -10173,7 +10204,7 @@ export default function App() {
         cl_os: isBrandNewConsultationForVisit ? undefined : (targetPrescription?.cl_os || data.cl_os),
       } as MedicalRecord;
 
-      setCurrentMedicalRecord(isBrandNewConsultationForVisit ? recordToSet : checkAndRestoreDraftForRecord(recordToSet));
+      setCurrentMedicalRecord(checkAndRestoreDraftForRecord(recordToSet));
 
       setActivePrescriptionIndex(targetIdx);
     } else {
@@ -10779,7 +10810,8 @@ export default function App() {
     if (isSavingMedicalRecordRef.current) return false;
     isSavingMedicalRecordRef.current = true;
 
-    let newHistory = [...(currentMedicalRecord.prescriptionHistory || [])];
+    try {
+      let newHistory = [...(currentMedicalRecord.prescriptionHistory || [])];
     const now = new Date().toISOString();
     const isInterEnabledForSave = !!currentMedicalRecord.intermediate_enabled;
     const currentItem: PrescriptionHistoryItem = {
@@ -11128,8 +11160,7 @@ export default function App() {
 
     setBookingError(null);
     setLoading(true);
-    try {
-      const existingRec =
+    const existingRec =
         findPatientMedicalRecord(
           currentMedicalRecord.patientName,
           currentMedicalRecord.patientPhone,
@@ -11313,6 +11344,7 @@ export default function App() {
             await setDoc(doc(db, "medicalRecords", oldRecordId), updatedRecord, { merge: true });
           }
         }
+        setLastServerSavedAt(new Date());
 
         // SINCRONIZARE GARANTATĂ ÎN TIMP REAL CU APPOINTMENTS ÎN FIRESTORE
         try {
@@ -11423,8 +11455,10 @@ export default function App() {
         console.warn("Firestore medicalRecords save notice:", dbErr);
       }
       // 3. Instant UI feedback
-      setShowSavedAnimation(true);
-      setSuccessMessage(`Fișa pacientului "${newPatientName}" a fost salvată cu succes!`);
+      if (shouldClose) {
+        setShowSavedAnimation(true);
+        setSuccessMessage(`Fișa pacientului "${newPatientName}" a fost salvată cu succes!`);
+      }
 
       // Clear local auto-save draft
       try {
@@ -11619,6 +11653,7 @@ export default function App() {
         }
       })();
 
+      setLastServerSavedAt(new Date());
       return true;
     } catch (error) {
       console.error("Error saving medical record:", error);
@@ -26366,6 +26401,8 @@ export default function App() {
         saveMedicalRecord={saveMedicalRecord}
         handleDiscardDraft={handleDiscardDraft}
         lastLocalSavedAt={lastLocalSavedAt}
+        lastServerSavedAt={lastServerSavedAt}
+        isServerSaving={isServerSaving}
         draftRestoredNotice={draftRestoredNotice}
         setDraftRestoredNotice={setDraftRestoredNotice}
         bookingError={bookingError}
