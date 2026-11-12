@@ -1461,6 +1461,7 @@ export default function App() {
   const [connectionLogs, setConnectionLogs] = useState<any[]>([]);
   const [bannedEmails, setBannedEmails] = useState<any[]>([]);
   const [showScreenSaver, setShowScreenSaver] = useState(false);
+  const [isAutoClosedForInactivity, setIsAutoClosedForInactivity] = useState(false);
   const [printMyopiaToo, setPrintMyopiaToo] = useState(false);
   const [connectionFilterDate, setConnectionFilterDate] = useState<string>(
     () => {
@@ -4635,6 +4636,84 @@ export default function App() {
       });
     };
   }, [profile, showScreenSaver, clinicConfig?.inactivityTimeoutMinutes]);
+
+  // Închidere automată și deconectare completă pentru tab-uri inactive (peste 2 ore) - 0 Costuri Firebase
+  useEffect(() => {
+    if (!profile || profile.role === "tv") return;
+
+    const TWO_HOURS_MS = 2 * 60 * 60 * 1000; // 2 ore = 7.200.000 ms
+    let lastRecordedTs = Date.now();
+    try {
+      if (!localStorage.getItem("clinic_last_interaction_ts")) {
+        localStorage.setItem("clinic_last_interaction_ts", Date.now().toString());
+      }
+    } catch {}
+
+    const updateActivity = () => {
+      const now = Date.now();
+      // Throttle: scriem în localStorage cel mult o dată la 30 secunde pentru 0 consum CPU
+      if (now - lastRecordedTs > 30000) {
+        lastRecordedTs = now;
+        try {
+          localStorage.setItem("clinic_last_interaction_ts", now.toString());
+        } catch {}
+      }
+    };
+
+    const triggerInactivityClose = () => {
+      setIsAutoClosedForInactivity(true);
+      // 1. Deconectează complet sesiunea din memorie -> oprește instantaneu toți ascultătorii Firestore
+      setProfile(null);
+      setShowAdminAppointments(false);
+      try {
+        sessionStorage.removeItem("clinic_user");
+        localStorage.removeItem("clinic_user");
+      } catch {}
+      setGoogleUser(null);
+      signOut(auth).catch(() => {});
+
+      // 2. Încearcă închiderea automată a paginii / tab-ului
+      try {
+        window.close();
+      } catch {}
+    };
+
+    const checkInactivity = () => {
+      try {
+        const storedStr = localStorage.getItem("clinic_last_interaction_ts");
+        const lastActive = storedStr ? Number(storedStr) : lastRecordedTs;
+        if (Date.now() - lastActive >= TWO_HOURS_MS) {
+          triggerInactivityClose();
+        }
+      } catch {}
+    };
+
+    // Verificare periodică la fiecare 60 de secunde
+    const checkInterval = setInterval(checkInactivity, 60000);
+
+    // Verifică și când utilizatorul deschide din nou tab-ul după inactivitate/sleep
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        checkInactivity();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    const activityEvents = [
+      "mousemove",
+      "keydown",
+      "mousedown",
+      "scroll",
+      "touchstart",
+    ];
+    activityEvents.forEach((ev) => window.addEventListener(ev, updateActivity, { passive: true }));
+
+    return () => {
+      clearInterval(checkInterval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      activityEvents.forEach((ev) => window.removeEventListener(ev, updateActivity));
+    };
+  }, [profile]);
 
   const [passwordDrafts, setPasswordDrafts] = useState<Record<string, string>>(
     {},
@@ -7895,6 +7974,11 @@ export default function App() {
   }, [releaseSlotLock, reschedulingAppointment]);
 
   useEffect(() => {
+    if (!profile) {
+      setActiveSlotLocks({});
+      return;
+    }
+
     // Ascultător în timp real ultra-eficient pentru blocarea intervalelor în curs de programare
     const unsubSlotLocks = onSnapshot(
       collection(db, "slot_locks"),
@@ -7936,7 +8020,7 @@ export default function App() {
       unsubSlotLocks();
       window.removeEventListener("beforeunload", handleBeforeUnload);
     };
-  }, []);
+  }, [profile]);
 
   useEffect(() => {
     if (isBookingModalOpen || isNewPatientFromSearchModalOpen) {
@@ -8124,12 +8208,12 @@ export default function App() {
       }
     );
 
-    // 5. Medical Documents (Point 3.A: Smart / Lazy Loading - ultimele 90 de zile în loc de întreaga arhivă istorică)
-    const ninetyDaysAgoISO = subDays(startOfDay(new Date()), 90).toISOString();
+    // 5. Medical Documents (Smart / Lazy Loading - ultimele 30 de zile în loc de întreaga arhivă istorică)
+    const thirtyDaysAgoDocsISO = subDays(startOfDay(new Date()), 30).toISOString();
     const unsubMedicalDocuments = onSnapshot(
       query(
         collection(db, "medicalDocuments"),
-        where("date", ">=", ninetyDaysAgoISO),
+        where("date", ">=", thirtyDaysAgoDocsISO),
       ),
       (snapshot) => {
         setMedicalDocuments((prev) => {
@@ -11614,7 +11698,7 @@ export default function App() {
               performedExams.push("SLT");
             }
 
-            const alertDocId = `${medicalRecordAny.id}_${Date.now()}`;
+            const alertDocId = `alert_${medicalRecordAny.id}`;
             await setDoc(doc(db, "reception_alerts", alertDocId), {
               id: alertDocId,
               patientId: medicalRecordAny.id,
@@ -21305,6 +21389,53 @@ export default function App() {
             >
               Am înțeles ✕
             </button>
+          </div>
+        </div>
+      )}
+      {isAutoClosedForInactivity && (
+        <div className="fixed inset-0 z-[999999] bg-slate-950/95 backdrop-blur-xl flex flex-col items-center justify-center p-6 text-center select-none animate-in fade-in duration-300">
+          <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl flex flex-col items-center">
+            <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mb-6 text-amber-500">
+              <ClockIcon className="w-8 h-8" />
+            </div>
+            <h2 className="text-xl sm:text-2xl font-black text-white mb-3">
+              Tab Închis / Sesiune Inactivă
+            </h2>
+            <p className="text-xs sm:text-sm text-slate-400 mb-6 leading-relaxed">
+              Pentru a proteja datele pacienților și pentru a economisi complet conexiunile și costurile Firebase, această sesiune a fost deconectată și oprită automat după <strong className="text-amber-400">2 ore de inactivitate</strong>.
+            </p>
+            <div className="w-full flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    window.close();
+                  } catch {}
+                  window.location.href = "about:blank";
+                }}
+                className="w-full py-3.5 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-sm transition-all shadow-lg shadow-red-900/30 cursor-pointer active:scale-98 flex items-center justify-center gap-2"
+              >
+                <X className="w-4 h-4" />
+                Închide Acest Tab
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    localStorage.setItem("clinic_last_interaction_ts", Date.now().toString());
+                  } catch {}
+                  setIsAutoClosedForInactivity(false);
+                  window.location.reload();
+                }}
+                className="w-full py-3.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 font-bold text-sm transition-all cursor-pointer active:scale-98 flex items-center justify-center gap-2"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Reconectare / Deschide din nou
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-5">
+              Puteți închide oricând această fereastră cu combinația de taste <kbd className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 font-mono text-slate-300">Ctrl + W</kbd>.
+            </p>
           </div>
         </div>
       )}
