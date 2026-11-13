@@ -781,6 +781,7 @@ export interface ClinicConfig {
   logoUrl: string;
   secondaryLogoUrl?: string;
   inactivityTimeoutMinutes?: number;
+  screenSaverDisabledUsers?: Record<string, boolean>;
   autoCleanupEnabled?: boolean;
   autoCleanupDays?: number;
   lastAutoCleanupDate?: string;

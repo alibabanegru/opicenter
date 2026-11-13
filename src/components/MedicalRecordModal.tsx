@@ -1,6 +1,5 @@
 import * as React from "react";
 import { Fragment, useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "motion/react";
 import {
   AlertCircle,
   Cake,
@@ -533,19 +532,13 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
   if (!isOpen || !currentMedicalRecord) return null;
 
   return (
-          <motion.div
+          <div
             key="medical-record-modal-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 z-50"
+            className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 z-50"
           >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
+            <div
               className={cn(
-                "rounded-3xl p-5 sm:p-6 w-full max-w-[96vw] xl:max-w-[98vw] 2xl:max-w-[1560px] shadow-2xl border overflow-hidden flex flex-col h-[96vh] max-h-[96vh] transition-all",
+                "rounded-2xl p-5 sm:p-6 w-full max-w-[96vw] xl:max-w-[98vw] 2xl:max-w-[1560px] shadow-2xl border overflow-hidden flex flex-col h-[96vh] max-h-[96vh]",
                 darkMode
                   ? "bg-slate-900 border-slate-800 text-white"
                   : "bg-white border-slate-200 text-slate-900",
@@ -3423,10 +3416,8 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           </div>
 
                           {currentMedicalRecord.nonCycloplegic?.enabled && (
-                            <motion.div
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: "auto", opacity: 1 }}
-                              className="w-full max-w-[400px] mt-1 mb-2 p-4 rounded-2xl border bg-rose-50/50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/30 flex flex-col gap-3"
+                            <div
+                              className="w-full max-w-[400px] mt-1 mb-2 p-4 rounded-xl border bg-rose-50/50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/30 flex flex-col gap-3"
                             >
                               <div className="flex justify-between gap-4">
                                 {/* OD Non-Cyc */}
@@ -3653,14 +3644,12 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                   </div>
                                 </div>
                               </div>
-                            </motion.div>
+                            </div>
                           )}
 
                           {currentMedicalRecord.cycloplegia?.enabled && (
-                            <motion.div
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: "auto", opacity: 1 }}
-                              className="w-full max-w-[400px] mt-1 mb-2 p-4 rounded-2xl border bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/30 flex flex-col gap-3"
+                            <div
+                              className="w-full max-w-[400px] mt-1 mb-2 p-4 rounded-xl border bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/30 flex flex-col gap-3"
                             >
                               <div className="flex justify-between gap-4">
                                 {/* OD Cyc */}
@@ -3887,7 +3876,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                   </div>
                                 </div>
                               </div>
-                            </motion.div>
+                            </div>
                           )}
 
                           <div
@@ -8775,7 +8764,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                   </div>
                 </div>
               )}
-            </motion.div>
-          </motion.div>
+            </div>
+          </div>
   );
 };

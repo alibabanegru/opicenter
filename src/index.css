@@ -8,9 +8,43 @@
 }
 
 @layer base {
+  body {
+    font-variant-numeric: tabular-nums;
+  }
+
   .font-mono {
     font-variant-numeric: tabular-nums;
   }
+
+  /* Clean, uniform input focus without overriding compact sizing */
+  input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: none;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16);
+  }
+}
+
+/* Medical Luxury / Clean Swiss refinement & Zero-Animation discipline */
+.rounded-3xl {
+  border-radius: 1rem;
+}
+
+.shadow-2xl {
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08), 0 4px 10px -6px rgba(15, 23, 42, 0.04);
+}
+
+.dark .shadow-2xl {
+  box-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.45);
+}
+
+/* Neutralize distracting UI animations (keep animate-spin strictly for loading indicators) */
+.animate-pulse,
+.animate-bounce,
+.animate-fade-in,
+.animate-in {
+  animation: none !important;
 }
 
 @layer utilities {
@@ -22,135 +56,55 @@
     scrollbar-width: none;
   }
 
-  @keyframes blink-yellow {
-    0%, 100% { background-color: rgba(234, 179, 8, 0.3); }
-    50% { background-color: transparent; }
-  }
-
-  @keyframes blink-green {
-    0%, 100% { color: #10b981; }
-    50% { color: inherit; }
-  }
-
-  @keyframes blink-red {
-    0%, 100% { color: #ef4444; }
-    50% { color: inherit; }
-  }
-
-  @keyframes blink-orange {
-    0%, 100% { color: #f97316; }
-    50% { color: inherit; }
-  }
-
-  .animate-blink-yellow {
-    animation: blink-yellow 1s infinite;
-  }
-
-  .animate-blink-green {
-    animation: blink-green 1s infinite;
-  }
-
-  .animate-blink-red {
-    animation: blink-red 0.5s infinite;
-  }
-
-  .animate-blink-orange {
-    animation: blink-orange 0.5s infinite;
-  }
-
-  @keyframes pulse-yellow-bg {
-    0%, 100% { background-color: #fef08a; color: #1e293b; border-color: #eab308; }
-    50% { background-color: #fde047; color: #0f172a; border-color: #ca8a04; }
-  }
-
-  @keyframes pulse-orange-bg {
-    0%, 100% { background-color: #ffedd5; color: #1e293b; border-color: #f97316; }
-    50% { background-color: #f97316; color: #ffffff; border-color: #ea580c; }
-  }
-
-  @keyframes pulse-red-bg {
-    0%, 100% { background-color: #fee2e2; color: #1e293b; border-color: #ef4444; }
-    50% { background-color: #ef4444; color: #ffffff; border-color: #dc2626; }
-  }
+  /* Calm static medical highlights (no blinking) */
+  .animate-blink-yellow { color: #b45309; }
+  .animate-blink-green { color: #059669; }
+  .animate-blink-red { color: #dc2626; }
+  .animate-blink-orange { color: #ea580c; }
 
   .animate-pulse-yellow-bg {
-    animation: pulse-yellow-bg 1s infinite ease-in-out;
+    background-color: #fefce8;
+    color: #854d0e;
+    border-color: #eab308;
+    border-left: 3px solid #eab308;
   }
 
   .animate-pulse-orange-bg {
-    animation: pulse-orange-bg 1s infinite ease-in-out;
+    background-color: #fff7ed;
+    color: #9a3412;
+    border-color: #f97316;
+    border-left: 3px solid #ea580c;
   }
 
   .animate-pulse-red-bg {
-    animation: pulse-red-bg 1s infinite ease-in-out;
-  }
-
-  @keyframes pulse-soft-red {
-    0%, 100% {
-      background-color: rgba(254, 242, 242, 0.45);
-      border-color: rgba(252, 165, 165, 0.3);
-      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
-    }
-    50% {
-      background-color: rgba(254, 226, 226, 0.5);
-      border-color: rgba(248, 113, 113, 0.4);
-      box-shadow: 0 0 6px 1px rgba(239, 68, 68, 0.06);
-    }
-  }
-
-  @keyframes pulse-soft-red-dark {
-    0%, 100% {
-      background-color: rgba(136, 19, 55, 0.08);
-      border-color: rgba(225, 29, 72, 0.18);
-      box-shadow: 0 0 0 0 rgba(225, 29, 72, 0);
-    }
-    50% {
-      background-color: rgba(159, 18, 57, 0.18);
-      border-color: rgba(244, 63, 94, 0.3);
-      box-shadow: 0 0 6px 1px rgba(244, 63, 94, 0.09);
-    }
+    background-color: #fef2f2;
+    color: #991b1b;
+    border-color: #ef4444;
+    border-left: 3px solid #dc2626;
   }
 
   .animate-pulse-soft-red {
-    animation: pulse-soft-red 1.8s infinite ease-in-out;
+    background-color: rgba(254, 242, 242, 0.55);
+    border-color: rgba(252, 165, 165, 0.65);
+    border-left: 3px solid #e11d48;
   }
 
   .dark .animate-pulse-soft-red {
-    animation: pulse-soft-red-dark 1.8s infinite ease-in-out;
-  }
-
-  @keyframes pulse-soft-orange {
-    0%, 100% {
-      background-color: rgba(255, 251, 245, 0.5);
-      border-color: rgba(253, 186, 116, 0.3);
-      box-shadow: 0 0 0 0 rgba(249, 115, 22, 0);
-    }
-    50% {
-      background-color: rgba(254, 237, 213, 0.5);
-      border-color: rgba(251, 146, 60, 0.4);
-      box-shadow: 0 0 6px 1px rgba(249, 115, 22, 0.08);
-    }
-  }
-
-  @keyframes pulse-soft-orange-dark {
-    0%, 100% {
-      background-color: rgba(124, 45, 18, 0.1);
-      border-color: rgba(234, 88, 12, 0.2);
-      box-shadow: 0 0 0 0 rgba(234, 88, 12, 0);
-    }
-    50% {
-      background-color: rgba(154, 52, 18, 0.2);
-      border-color: rgba(249, 115, 22, 0.35);
-      box-shadow: 0 0 6px 1px rgba(249, 115, 22, 0.1);
-    }
+    background-color: rgba(136, 19, 55, 0.14);
+    border-color: rgba(225, 29, 72, 0.35);
+    border-left: 3px solid #f43f5e;
   }
 
   .animate-pulse-soft-orange {
-    animation: pulse-soft-orange 1.8s infinite ease-in-out;
+    background-color: rgba(255, 251, 235, 0.65);
+    border-color: rgba(253, 186, 116, 0.65);
+    border-left: 3px solid #d97706;
   }
 
   .dark .animate-pulse-soft-orange {
-    animation: pulse-soft-orange-dark 1.8s infinite ease-in-out;
+    background-color: rgba(124, 45, 18, 0.16);
+    border-color: rgba(234, 88, 12, 0.35);
+    border-left: 3px solid #f59e0b;
   }
 }
 

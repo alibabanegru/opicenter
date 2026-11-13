@@ -4502,10 +4502,14 @@ export default function App() {
     age: string;
     birthDate: string;
     phone: string;
+    cnp?: string;
     sex?: "M" | "F" | "";
     notes?: string;
     symptomSelect?: string;
     symptomText?: string;
+    gdprSigned?: boolean;
+    gdprSignature?: string;
+    gdprSignedAt?: string;
   } | null>(null);
   const [selectedDoctorForExport, setSelectedDoctorForExport] =
     useState<string>("all");
@@ -4593,13 +4597,33 @@ export default function App() {
     return matchedUser?.avatar || null;
   }, [profile, availableUsers]);
 
+  const isScreenSaverEnabledForCurrentUser = useMemo(() => {
+    if (!profile || profile.role === "tv") return false;
+    const disabledMap = clinicConfig?.screenSaverDisabledUsers || {};
+    if (profile.uid && disabledMap[profile.uid] === true) return false;
+    const matchedUser = availableUsers.find(
+      (u) =>
+        (profile.uid && u.id === profile.uid) ||
+        (u.name &&
+          profile.displayName &&
+          u.name === profile.displayName &&
+          u.role === profile.role) ||
+        (u.role === profile.role &&
+          (u.role === "admin" ||
+            u.role === "frontdesk" ||
+            u.role === "seller")),
+    );
+    if (matchedUser && disabledMap[matchedUser.id] === true) return false;
+    return true;
+  }, [profile, availableUsers, clinicConfig?.screenSaverDisabledUsers]);
+
   useEffect(() => {
     if (!profile) return; // Only if signed in
-    if (profile.role === "tv") {
+    if (!isScreenSaverEnabledForCurrentUser) {
       if (showScreenSaver) {
         setShowScreenSaver(false);
       }
-      return; // Disable screensaver for TV user
+      return; // Disable screensaver for TV user or users disabled by Admin
     }
     if (showScreenSaver) return; // If screensaver is already showing, do nothing
 
@@ -4635,7 +4659,12 @@ export default function App() {
         window.removeEventListener(event, resetTimer);
       });
     };
-  }, [profile, showScreenSaver, clinicConfig?.inactivityTimeoutMinutes]);
+  }, [
+    profile,
+    showScreenSaver,
+    clinicConfig?.inactivityTimeoutMinutes,
+    isScreenSaverEnabledForCurrentUser,
+  ]);
 
   // Închidere automată și deconectare completă pentru tab-uri inactive (peste 2 ore) - 0 Costuri Firebase
   useEffect(() => {
@@ -6817,22 +6846,45 @@ export default function App() {
       return false;
     });
 
-    const isSigned = record?.gdprSigned ||
+    const matchedSignedApp =
+      record && record.gdprSigned === false
+        ? undefined
+        : appointments.find((a) => {
+            if (!(a as any).gdprSigned) return false;
+            if (cleanCnp && a.patientCnp && a.patientCnp.trim() === cleanCnp) return true;
+            const aName = normalizePatientName(a.patientName);
+            const aPhone = normalizePhone(a.patientPhone);
+            if (cleanName && aName && cleanName === aName) {
+              if (!cleanPhone || !aPhone || cleanPhone === aPhone) return true;
+            }
+            if (cleanPhone && aPhone && cleanPhone === aPhone) return true;
+            return false;
+          });
+
+    const isSigned =
+      record?.gdprSigned ||
       (editingAppointment &&
         normalizePatientName(editingAppointment.patientName) === cleanName &&
         (editingAppointment as any).gdprSigned) ||
+      !!(matchedSignedApp as any)?.gdprSigned ||
       false;
 
-    const signature = record?.gdprSignature ||
+    const signature =
+      record?.gdprSignature ||
       (editingAppointment &&
         normalizePatientName(editingAppointment.patientName) === cleanName &&
         (editingAppointment as any).gdprSignature) ||
+      (matchedSignedApp as any)?.gdprSignature ||
       "";
 
     return {
       signed: isSigned,
       signature: signature,
-      cnp: record?.patientCnp || (editingAppointment?.patientCnp) || "",
+      cnp:
+        record?.patientCnp ||
+        editingAppointment?.patientCnp ||
+        matchedSignedApp?.patientCnp ||
+        "",
     };
   };
 
@@ -6930,6 +6982,7 @@ export default function App() {
     // Automatically update global patientPhone state if provided
     if (phone) {
       setPatientPhone(phone);
+      setFaraTelefon(false);
     }
 
     const phoneKey = phone || (cnpClean ? `cnp_${cnpClean}` : "fara_tel");
@@ -7060,12 +7113,16 @@ export default function App() {
 
       // Update medicalRecords in local state so all components immediately reflect the change (signed or revoked)
       setMedicalRecords((prev) => {
-        return prev.map((r) => {
+        let found = false;
+        const mapped = prev.map((r) => {
           const isTarget =
             r.id === effectiveRecordId ||
             (targetExistingRecord && r.id === targetExistingRecord.id) ||
-            (cleanName && normalizePatientName(r.patientName) === cleanName);
+            (cleanName &&
+              normalizePatientName(r.patientName) === cleanName &&
+              (!cleanPhone || !normalizePhone(r.patientPhone) || normalizePhone(r.patientPhone) === cleanPhone));
           if (isTarget) {
+            found = true;
             return {
               ...r,
               ...updatedRecord,
@@ -7077,11 +7134,28 @@ export default function App() {
           }
           return r;
         });
+        if (!found) {
+          return [
+            {
+              ...updatedRecord,
+              id: effectiveRecordId,
+              gdprSigned: isSigned,
+              gdprSignature: signature || "",
+              gdprSignedAt: isSigned ? new Date().toISOString() : undefined,
+            } as MedicalRecord,
+            ...mapped,
+          ];
+        }
+        return mapped;
       });
 
-      // Update booking modal state immediately so the GDPR button updates right away
+      // Update booking / new-patient modal state immediately so CNP, Sex, BirthDate and GDPR button update right away
       if (cnpClean) {
         setPatientCnp(cnpClean);
+        const detectedSexFromCnp = getSexFromCNP(cnpClean);
+        if (detectedSexFromCnp && !patientSex) {
+          setPatientSex(detectedSexFromCnp);
+        }
       }
       if (finalBirthDate) {
         setPatientBirthDate(finalBirthDate);
@@ -7117,6 +7191,9 @@ export default function App() {
           if (app.patientName && normalizePatientName(app.patientName) === cleanName) {
             return {
               ...app,
+              ...(phone ? { patientPhone: phone } : {}),
+              ...(cnpClean ? { patientCnp: cnpClean } : {}),
+              ...(finalBirthDate ? { patientBirthDate: finalBirthDate } : {}),
               gdprSigned: isSigned,
               gdprSignature: signature || "",
               gdprSignedAt: isSigned ? new Date().toISOString() : null,
@@ -9095,6 +9172,44 @@ export default function App() {
     }
   };
 
+  const openNewPatientModal = (rawNameOrQuery = "", rawPhone = "") => {
+    const cleanDigits = (rawPhone || rawNameOrQuery).replace(/\D/g, "");
+    const looksLikeCnp = cleanDigits.length === 13 && validateCNP(cleanDigits);
+    const isPhone = !looksLikeCnp && cleanDigits.length >= 6 && (rawPhone ? true : !/[a-zA-ZăâîșțĂÂÎȘȚ]/.test(rawNameOrQuery));
+
+    setBookingError(null);
+    setEditingAppointment(null);
+
+    if (looksLikeCnp) {
+      setPatientName(rawPhone ? rawNameOrQuery : "");
+      setPatientPhone("");
+      setFaraTelefon(true);
+      setPatientCnp(cleanDigits);
+      setPatientSex(getSexFromCNP(cleanDigits) || "");
+      setPatientBirthDate(getBirthDateFromCNP(cleanDigits) || "");
+    } else if (isPhone) {
+      setPatientName(rawPhone ? rawNameOrQuery : "");
+      setPatientPhone(cleanDigits);
+      setFaraTelefon(false);
+      setPatientCnp("");
+      setPatientSex("");
+      setPatientBirthDate("");
+    } else {
+      setPatientName(rawNameOrQuery);
+      setPatientPhone("");
+      setFaraTelefon(true);
+      setPatientCnp("");
+      setPatientSex("");
+      setPatientBirthDate("");
+    }
+
+    setHasStoredPhone(false);
+    setPatientNotes("");
+    setSymptomSelect("");
+    setSymptomText("");
+    setIsNewPatientFromSearchModalOpen(true);
+  };
+
   const handleQuickBookingFromSearch = () => {
     if (!patientName || !patientBirthDate || (!faraTelefon && !patientPhone))
       return;
@@ -9129,16 +9244,24 @@ export default function App() {
       return;
     }
 
+    const valPhone = faraTelefon ? "" : patientPhone;
+    const valCnp = patientCnp.trim();
+    const gdprInfo = getGdprStatus(patientName, valPhone, valCnp);
+
     setBookingError(null);
     setQuickBookingPatient({
       name: patientName,
       age: calculatedAge.toString(),
       birthDate: patientBirthDate,
-      phone: faraTelefon ? "" : patientPhone,
+      phone: valPhone,
+      cnp: valCnp,
       sex: patientSex as "M" | "F",
       notes: patientNotes,
       symptomSelect: symptomSelect,
       symptomText: symptomText,
+      gdprSigned: gdprInfo.signed,
+      gdprSignature: gdprInfo.signature || "",
+      gdprSignedAt: gdprInfo.signed ? new Date().toISOString() : undefined,
     });
 
     setIsNewPatientFromSearchModalOpen(false);
@@ -9147,6 +9270,8 @@ export default function App() {
     setPatientName("");
     setPatientBirthDate("");
     setPatientPhone("");
+    setPatientCnp("");
+    setPatientSex("");
     setPatientNotes("");
     setSymptomSelect("");
     setSymptomText("");
@@ -10204,6 +10329,9 @@ export default function App() {
           data.patientAge || appointment.patientAge || latestDoc?.formValues?.ageSimple,
         patientBirthDate: finalPatientBirthDate,
         patientCnp: finalPatientCnp,
+        gdprSigned: data.gdprSigned ?? (appointment as any).gdprSigned ?? false,
+        gdprSignature: data.gdprSignature || (appointment as any).gdprSignature || "",
+        gdprSignedAt: data.gdprSignedAt || (appointment as any).gdprSignedAt || undefined,
         patientAddress: finalPatientAddress,
         patientSeries: finalPatientSeries,
         patientNumber: finalPatientNumber,
@@ -10342,7 +10470,10 @@ export default function App() {
           appointment.patientAge || latestDoc?.formValues?.ageSimple || 0,
         patientBirthDate:
           appointment.patientBirthDate || latestDoc?.formValues?.birthDate || "",
-        patientCnp: latestDoc?.formValues?.patientCnp || "",
+        patientCnp: appointment.patientCnp || latestDoc?.formValues?.patientCnp || "",
+        gdprSigned: !!(appointment as any).gdprSigned,
+        gdprSignature: (appointment as any).gdprSignature || "",
+        gdprSignedAt: (appointment as any).gdprSignedAt || undefined,
         patientAddress: latestDoc?.formValues?.patientAddress || "",
         patientSeries: latestDoc?.formValues?.patientSeries || "",
         patientNumber: latestDoc?.formValues?.patientNumber || "",
@@ -10708,7 +10839,10 @@ export default function App() {
             appointment.patientAge || latestDoc?.formValues?.ageSimple || 0,
           patientBirthDate:
             appointment.patientBirthDate || latestDoc?.formValues?.birthDate || "",
-          patientCnp: latestDoc?.formValues?.patientCnp || "",
+          patientCnp: appointment.patientCnp || latestDoc?.formValues?.patientCnp || "",
+          gdprSigned: !!(appointment as any).gdprSigned,
+          gdprSignature: (appointment as any).gdprSignature || "",
+          gdprSignedAt: (appointment as any).gdprSignedAt || undefined,
           patientAddress: latestDoc?.formValues?.patientAddress || "",
           patientSeries: latestDoc?.formValues?.patientSeries || "",
           patientNumber: latestDoc?.formValues?.patientNumber || "",
@@ -13549,30 +13683,70 @@ export default function App() {
     const qName = quickBookingPatient.name;
     const qBirth = quickBookingPatient.birthDate || "";
     const qSex = quickBookingPatient.sex || "";
+    const qCnp = (quickBookingPatient.cnp || "").trim();
+    const matchedMedRec = findPatientMedicalRecord(
+      qName,
+      quickBookingPatient.phone,
+      qCnp,
+      medicalRecords,
+      qBirth,
+    );
+    const effectiveCnp = qCnp || matchedMedRec?.patientCnp || undefined;
+    const effectiveGdprSigned = !!(quickBookingPatient.gdprSigned || matchedMedRec?.gdprSigned);
+    const effectiveGdprSignature = quickBookingPatient.gdprSignature || matchedMedRec?.gdprSignature || undefined;
+    const effectiveGdprSignedAt = quickBookingPatient.gdprSignedAt || matchedMedRec?.gdprSignedAt || undefined;
 
     setBookingError(null);
     try {
-      await addDoc(
+      const quickAppData = {
+        patientName: quickBookingPatient.name,
+        patientAge: calculatedAge,
+        patientBirthDate: quickBookingPatient.birthDate,
+        patientPhone: quickBookingPatient.phone,
+        patientCnp: effectiveCnp,
+        patientSex: quickBookingPatient.sex || "",
+        patientNotes: quickBookingPatient.notes || "",
+        patientSymptomSelect: quickBookingPatient.symptomSelect || "",
+        patientSymptomText: quickBookingPatient.symptomText || "",
+        doctorId: doctorId,
+        startTime: time.toISOString(),
+        endTime: endTime.toISOString(),
+        status: "scheduled" as const,
+        isConsultComplet: undefined,
+        isControl: undefined,
+        isGratis: undefined,
+        isNewPatientManualEntry: false,
+        medicalRecordId: matchedMedRec?.id || undefined,
+        gdprSigned: effectiveGdprSigned ? true : undefined,
+        gdprSignature: effectiveGdprSignature,
+        gdprSignedAt: effectiveGdprSignedAt,
+      };
+      const addedRef = await addDoc(
         collection(db, "appointments"),
-        removeUndefined({
-          patientName: quickBookingPatient.name,
-          patientAge: calculatedAge,
-          patientBirthDate: quickBookingPatient.birthDate,
-          patientPhone: quickBookingPatient.phone,
-          patientSex: quickBookingPatient.sex || "",
-          patientNotes: quickBookingPatient.notes || "",
-          patientSymptomSelect: quickBookingPatient.symptomSelect || "",
-          patientSymptomText: quickBookingPatient.symptomText || "",
-          doctorId: doctorId,
-          startTime: time.toISOString(),
-          endTime: endTime.toISOString(),
-          status: "scheduled",
-          isConsultComplet: undefined,
-          isControl: undefined,
-          isGratis: undefined,
-          isNewPatientManualEntry: false,
-        }),
+        removeUndefined(quickAppData),
       );
+      setAppointments((prev) => {
+        if (prev.some((a) => a.id === addedRef.id)) return prev;
+        return [...prev, { id: addedRef.id, ...removeUndefined(quickAppData) } as Appointment];
+      });
+      if (effectiveCnp || effectiveGdprSigned) {
+        syncPatientUniversal(
+          {
+            patientName: qName,
+            patientPhone: quickBookingPatient.phone,
+            patientCnp: effectiveCnp,
+            recordId: matchedMedRec?.id,
+          },
+          {
+            patientName: qName,
+            patientPhone: quickBookingPatient.phone,
+            patientCnp: effectiveCnp,
+            patientBirthDate: qBirth,
+            patientSex: qSex,
+            patientAge: calculatedAge,
+          },
+        ).catch((e) => console.warn("Universal sync notice (quick booking):", e));
+      }
       setQuickBookingPatient(null);
     } catch (error) {
       console.error("Error direct booking:", error);
@@ -14734,6 +14908,7 @@ export default function App() {
           patientAge: calculatedAge,
           patientBirthDate,
           patientPhone: valPhone,
+          patientCnp: patientCnp.trim() || reschedulingAppointment.patientCnp || undefined,
           patientSex,
           patientNotes,
           patientSymptomSelect: symptomSelect,
@@ -14745,6 +14920,8 @@ export default function App() {
           isConsultComplet: bookingConsultType ? bookingConsultType === "consult" : undefined,
           isControl: bookingConsultType ? bookingConsultType === "control" : undefined,
           isGratis: bookingConsultType ? bookingConsultType === "gratis" : undefined,
+          gdprSigned: (reschedulingAppointment as any).gdprSigned || undefined,
+          gdprSignature: (reschedulingAppointment as any).gdprSignature || undefined,
           createdAt: new Date().toISOString(),
         };
         await addDoc(collection(db, "appointments"), removeUndefined(appData));
@@ -14833,12 +15010,20 @@ export default function App() {
           );
         }
       } else {
+        const gdprSnapshot = getGdprStatus(patientName, valPhone, patientCnp.trim());
+        const matchedRecForApp = findPatientMedicalRecord(
+          patientName,
+          valPhone,
+          patientCnp.trim(),
+          medicalRecords,
+          patientBirthDate,
+        );
         const newAppData = {
           patientName,
           patientAge: calculatedAge,
           patientBirthDate,
           patientPhone: valPhone,
-          patientCnp: patientCnp.trim() || undefined,
+          patientCnp: patientCnp.trim() || matchedRecForApp?.patientCnp || undefined,
           patientSex,
           patientNotes,
           patientSymptomSelect: symptomSelect,
@@ -14851,6 +15036,9 @@ export default function App() {
           isControl: bookingConsultType ? bookingConsultType === "control" : undefined,
           isGratis: bookingConsultType ? bookingConsultType === "gratis" : undefined,
           isNewPatientManualEntry: forceTreatAsExisting ? false : !isPatientSelectedFromSearch,
+          medicalRecordId: matchedRecForApp?.id || undefined,
+          gdprSigned: gdprSnapshot.signed ? true : undefined,
+          gdprSignature: gdprSnapshot.signature || undefined,
           createdAt: new Date().toISOString(),
         };
         const docRef = await addDoc(
@@ -21439,7 +21627,7 @@ export default function App() {
           </div>
         </div>
       )}
-      {showScreenSaver && profile?.role !== "tv" && (
+      {showScreenSaver && isScreenSaverEnabledForCurrentUser && (
         <WindowsScreenSaver
           onClose={() => setShowScreenSaver(false)}
           darkMode={darkMode}
@@ -21455,74 +21643,53 @@ export default function App() {
         </div>
       )}
       {/* Navbar */}
-      {/* Saved Animation Overlay */}
-      <AnimatePresence>
-        {showSavedAnimation && (
-          <motion.div
-            key="saved-animation-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[100]"
+      {/* Saved Confirmation Overlay (Static, zero delay) */}
+      {showSavedAnimation && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-[100]">
+          <div
+            className={cn(
+              "p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-4 border",
+              darkMode
+                ? "bg-slate-900 border-slate-800"
+                : "bg-white border-slate-200",
+            )}
           >
-            <motion.div
-              initial={{ scale: 0.5, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.8, opacity: 0 }}
-              className={cn(
-                "p-8 rounded-3xl shadow-2xl flex flex-col items-center gap-4 transition-all scale-110",
-                darkMode
-                  ? "bg-slate-900 border border-slate-800"
-                  : "bg-white border border-slate-200",
-              )}
-            >
-              <div className="w-20 h-20 bg-emerald-500 rounded-full flex items-center justify-center shadow-lg shadow-emerald-500/30">
-                <Check className="w-12 h-12 text-white stroke-[3px]" />
-              </div>
-              <div className="text-center">
-                <h3
-                  className={cn(
-                    "text-2xl font-black uppercase tracking-tighter",
-                    darkMode ? "text-slate-100" : "text-slate-900",
-                  )}
-                >
-                  Salvat cu succes
-                </h3>
-                <p
-                  className={cn(
-                    "text-sm font-medium",
-                    darkMode ? "text-slate-400" : "text-slate-500",
-                  )}
-                >
-                  Fișa medicală a fost actualizată
-                </p>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            <div className="w-16 h-16 bg-emerald-600 rounded-full flex items-center justify-center">
+              <Check className="w-9 h-9 text-white stroke-[3px]" />
+            </div>
+            <div className="text-center">
+              <h3
+                className={cn(
+                  "text-xl font-bold tracking-tight",
+                  darkMode ? "text-slate-100" : "text-slate-900",
+                )}
+              >
+                Salvat cu succes
+              </h3>
+              <p
+                className={cn(
+                  "text-sm font-medium",
+                  darkMode ? "text-slate-400" : "text-slate-500",
+                )}
+              >
+                Fișa medicală a fost actualizată
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Popup Confirmare Pacient Existent (Nume și Data Nașterii coincid) */}
-      <AnimatePresence>
-        {existingPatientPrompt && (
-          <motion.div
-            key="existing-patient-prompt-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-[9999]"
+      {existingPatientPrompt && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 z-[9999]">
+          <div
+            className={cn(
+              "rounded-2xl p-6 sm:p-8 w-full max-w-lg shadow-2xl border text-left",
+              darkMode
+                ? "bg-slate-900 border-slate-700 text-slate-100"
+                : "bg-white border-slate-200 text-slate-900"
+            )}
           >
-            <motion.div
-              initial={{ scale: 0.92, opacity: 0, y: 15 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.92, opacity: 0, y: 15 }}
-              className={cn(
-                "rounded-3xl p-6 sm:p-8 w-full max-w-lg shadow-2xl border transition-all text-left",
-                darkMode
-                  ? "bg-slate-900 border-slate-700 text-slate-100"
-                  : "bg-white border-slate-200 text-slate-900"
-              )}
-            >
               <div className="flex items-start justify-between gap-4 mb-5">
                 <div className="flex items-start gap-4 min-w-0">
                   <div className="p-3.5 rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-400 shrink-0 border border-amber-500/30">
@@ -21658,10 +21825,9 @@ export default function App() {
                   <span>NU, pacient nou</span>
                 </button>
               </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </div>
+        </div>
+      )}
 
       <nav
         className={cn(
@@ -22212,12 +22378,7 @@ export default function App() {
                                     type="button"
                                     onClick={() => {
                                       setIsOmniboxOpen(false);
-                                      const cleanDigits = universalSearchQuery.replace(/\D/g, "");
-                                      const isPhone = cleanDigits.length >= 6;
-                                      setPatientName(isPhone ? "" : universalSearchQuery);
-                                      setPatientPhone(isPhone ? cleanDigits : "");
-                                      setFaraTelefon(!isPhone);
-                                      setIsNewPatientFromSearchModalOpen(true);
+                                      openNewPatientModal(universalSearchQuery);
                                     }}
                                     className="px-3 py-1.5 rounded-lg text-xs font-bold border border-emerald-500 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 transition-all cursor-pointer"
                                   >
@@ -22250,14 +22411,7 @@ export default function App() {
 
                   {/* Quick Pacient Nou button */}
                   <button
-                    onClick={() => {
-                      const cleanDigits = universalSearchQuery.replace(/[^0-9]/g, "");
-                      const isDigits = cleanDigits.length >= 6;
-                      setPatientName(isDigits ? "" : universalSearchQuery);
-                      setPatientPhone(isDigits ? cleanDigits : "");
-                      setFaraTelefon(!cleanDigits);
-                      setIsNewPatientFromSearchModalOpen(true);
-                    }}
+                    onClick={() => openNewPatientModal(universalSearchQuery)}
                     className={cn(
                       "px-2.5 py-1.5 rounded-lg border text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shrink-0 hover:scale-102 active:scale-98 shadow-sm cursor-pointer",
                       darkMode
@@ -22424,9 +22578,8 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 pb-8">
         {/* Reception Alerts Popups */}
         {activeAlerts.length > 0 && (
-          <div className="mb-3 space-y-3">
-            <AnimatePresence>
-              {activeAlerts.map((alert, alertIdx) => {
+          <div className="mb-3 space-y-2.5">
+            {activeAlerts.map((alert, alertIdx) => {
                 const recDetails = [];
                 const patientRecord = medicalRecords.find((r) => r.id === alert.patientId);
                 const prescriptions = patientRecord?.prescriptionHistory || [];
@@ -22616,23 +22769,17 @@ export default function App() {
                 }
 
                 return (
-                  <motion.div
+                  <div
                     key={`reception-alert-${alert.id || 'alert'}-${alertIdx}`}
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
                     className={cn(
-                      "py-2 px-4 rounded-xl border flex items-center gap-3 shadow-sm relative overflow-hidden",
+                      "py-2.5 px-4 rounded-xl border border-l-4 border-l-rose-600 flex items-center gap-3 shadow-xs relative overflow-hidden",
                       darkMode
-                        ? "bg-red-955/40 border-red-900/60 text-red-100"
-                        : "bg-red-50 border-red-200 text-red-900",
+                        ? "bg-rose-950/25 border-rose-900/50 text-rose-100"
+                        : "bg-rose-50/60 border-rose-200 text-rose-950",
                     )}
                   >
-                    {/* Pulsing state light accent on left edge */}
-                    <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-600 animate-pulse" />
-
-                    <div className="p-1 rounded-lg bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 shrink-0">
-                      <AlertTriangle className="w-4 h-4 animate-bounce" />
+                    <div className="p-1.5 rounded-lg bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400 shrink-0">
+                      <AlertTriangle className="w-4 h-4" />
                     </div>
 
                     <div className="flex-1 min-w-0 pr-8 flex items-center gap-x-3 gap-y-1.5 flex-wrap text-xs font-medium">
@@ -22798,10 +22945,9 @@ export default function App() {
                         <X className="w-3.5 h-3.5" />
                       </button>
                     )}
-                  </motion.div>
+                  </div>
                 );
               })}
-            </AnimatePresence>
           </div>
         )}
 
@@ -22949,18 +23095,20 @@ export default function App() {
                     </button>
                   </div>
 
-                  <button
-                    onClick={() => setShowScreenSaver(true)}
-                    className={cn(
-                      "flex items-center justify-center p-2 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-md border group shrink-0",
-                      darkMode
-                        ? "bg-slate-900 border-slate-800 text-indigo-400 hover:bg-slate-800/80"
-                        : "bg-white border-indigo-100 text-indigo-600 hover:bg-indigo-50/60",
-                    )}
-                    title="Activează Screen Saver"
-                  >
-                    <Monitor className="w-4 h-4 text-indigo-500 animate-pulse group-hover:scale-110 transition-transform" />
-                  </button>
+                  {isScreenSaverEnabledForCurrentUser && (
+                    <button
+                      onClick={() => setShowScreenSaver(true)}
+                      className={cn(
+                        "flex items-center justify-center p-2 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-md border group shrink-0",
+                        darkMode
+                          ? "bg-slate-900 border-slate-800 text-indigo-400 hover:bg-slate-800/80"
+                          : "bg-white border-indigo-100 text-indigo-600 hover:bg-indigo-50/60",
+                      )}
+                      title="Activează Screen Saver"
+                    >
+                      <Monitor className="w-4 h-4 text-indigo-500 animate-pulse group-hover:scale-110 transition-transform" />
+                    </button>
+                  )}
                 </div>
 
                 {/* Buton / Indicator Conexiune Online / Offline amplasat în partea stângă sub Medici/Optometrist */}
@@ -22994,18 +23142,20 @@ export default function App() {
               </div>
             ) : (
               <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setShowScreenSaver(true)}
-                  className={cn(
-                    "flex items-center justify-center p-2 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-md border group shrink-0",
-                    darkMode
-                      ? "bg-slate-900 border-slate-800 text-indigo-400 hover:bg-slate-800/80"
-                      : "bg-white border-indigo-100 text-indigo-600 hover:bg-indigo-50/60",
-                  )}
-                  title="Activează Screen Saver"
-                >
-                  <Monitor className="w-4 h-4 text-indigo-500 animate-pulse group-hover:scale-110 transition-transform" />
-                </button>
+                {isScreenSaverEnabledForCurrentUser && (
+                  <button
+                    onClick={() => setShowScreenSaver(true)}
+                    className={cn(
+                      "flex items-center justify-center p-2 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-md border group shrink-0",
+                      darkMode
+                        ? "bg-slate-900 border-slate-800 text-indigo-400 hover:bg-slate-800/80"
+                        : "bg-white border-indigo-100 text-indigo-600 hover:bg-indigo-50/60",
+                    )}
+                    title="Activează Screen Saver"
+                  >
+                    <Monitor className="w-4 h-4 text-indigo-500 animate-pulse group-hover:scale-110 transition-transform" />
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -24434,12 +24584,7 @@ export default function App() {
                 </div>
                 <div className="flex items-center gap-3">
                   <button
-                    onClick={() => {
-                      setPatientName(searchName);
-                      setPatientPhone(searchPhone.replace(/[^0-9]/g, ""));
-                      setFaraTelefon(!searchPhone.trim());
-                      setIsNewPatientFromSearchModalOpen(true);
-                    }}
+                    onClick={() => openNewPatientModal(searchName, searchPhone)}
                     className={cn(
                       "flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold transition-all text-sm shadow-sm",
                       darkMode
@@ -24579,14 +24724,7 @@ export default function App() {
                         {(searchFilter === "all" ||
                           searchFilter === "future") && (
                           <button
-                            onClick={() => {
-                              setPatientName(searchName);
-                              setPatientPhone(
-                                searchPhone.replace(/[^0-9]/g, ""),
-                              );
-                              setFaraTelefon(!searchPhone.trim());
-                              setIsNewPatientFromSearchModalOpen(true);
-                            }}
+                            onClick={() => openNewPatientModal(searchName, searchPhone)}
                             className={cn(
                               "mt-5 flex items-center gap-2 px-6 py-3 rounded-xl font-bold mx-auto transition-all text-sm shadow-md",
                               darkMode
@@ -25410,6 +25548,49 @@ export default function App() {
                 <div>
                   <label
                     className={cn(
+                      "block text-xs font-bold uppercase tracking-widest mb-2 ml-1 flex items-center justify-between",
+                      darkMode ? "text-slate-500" : "text-slate-400",
+                    )}
+                  >
+                    <span>CNP Pacient</span>
+                    <span className="text-[10px] font-normal lowercase tracking-normal">
+                      (opțional — completează Sex și Data Nașterii)
+                    </span>
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={13}
+                    value={patientCnp}
+                    onChange={(e) => {
+                      const clean = e.target.value.replace(/\D/g, "").slice(0, 13);
+                      setPatientCnp(clean);
+                      const detectedSex = getSexFromCNP(clean);
+                      if (detectedSex) {
+                        setPatientSex(detectedSex);
+                      }
+                      const detectedBirth = getBirthDateFromCNP(clean);
+                      if (detectedBirth) {
+                        setPatientBirthDate(detectedBirth);
+                      }
+                    }}
+                    placeholder="13 cifre (opțional)..."
+                    className={cn(
+                      "w-full px-4 py-3 rounded-xl border-2 transition-all outline-none font-mono",
+                      darkMode
+                        ? "bg-slate-800 border-slate-700 text-slate-100 focus:border-blue-500"
+                        : "bg-slate-50 border-slate-200 text-slate-900 focus:border-blue-500",
+                    )}
+                  />
+                  {patientCnp.length === 13 && !validateCNP(patientCnp) && (
+                    <p className="text-[11px] text-amber-500 font-semibold mt-1 ml-1">
+                      Notă: CNP-ul introdus nu respectă cifra de control standard.
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label
+                    className={cn(
                       "block text-xs font-bold uppercase tracking-widest mb-2 ml-1",
                       darkMode ? "text-slate-300" : "text-slate-700",
                     )}
@@ -25477,25 +25658,55 @@ export default function App() {
                   </div>
                 )}
 
-                <button
-                  onClick={handleQuickBookingFromSearch}
-                  disabled={
-                    !patientName ||
-                    !patientBirthDate ||
-                    (!faraTelefon && !patientPhone)
-                  }
-                  className={cn(
-                    "w-full font-bold py-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2",
-                    !patientName ||
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!patientName.trim()) {
+                        setBookingError("Introduceți mai întâi numele pacientului pentru a deschide formularul GDPR.");
+                        patientNameInputRef.current?.focus();
+                        return;
+                      }
+                      setBookingError(null);
+                      setIsGdprModalOpen(true);
+                    }}
+                    className={cn(
+                      "px-4 py-4 rounded-xl font-bold flex items-center justify-center gap-2 border transition-colors shrink-0 cursor-pointer",
+                      getGdprStatus(patientName, faraTelefon ? "" : patientPhone, patientCnp).signed
+                        ? "border-emerald-500 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20"
+                        : darkMode
+                          ? "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700"
+                          : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100",
+                    )}
+                    title="Formular Consimțământ GDPR"
+                  >
+                    {getGdprStatus(patientName, faraTelefon ? "" : patientPhone, patientCnp).signed ? (
+                      <Check className="w-5 h-5" />
+                    ) : (
+                      <Shield className="w-5 h-5" />
+                    )}
+                    GDPR
+                  </button>
+                  <button
+                    onClick={handleQuickBookingFromSearch}
+                    disabled={
+                      !patientName ||
                       !patientBirthDate ||
                       (!faraTelefon && !patientPhone)
-                      ? "bg-slate-700 text-slate-500 cursor-not-allowed"
-                      : "bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/40",
-                  )}
-                >
-                  <CalendarPlus className="w-5 h-5" />
-                  Adaugă pacient nou și programează
-                </button>
+                    }
+                    className={cn(
+                      "flex-1 font-bold py-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2",
+                      !patientName ||
+                        !patientBirthDate ||
+                        (!faraTelefon && !patientPhone)
+                        ? "bg-slate-700 text-slate-500 cursor-not-allowed"
+                        : "bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/40 cursor-pointer",
+                    )}
+                  >
+                    <CalendarPlus className="w-5 h-5" />
+                    Adaugă pacient nou și programează
+                  </button>
+                </div>
               </div>
             </motion.div>
           </motion.div>
@@ -26742,10 +26953,10 @@ export default function App() {
             <button
               onClick={handleRestoreOrders}
               disabled={loading}
-              className="flex items-center gap-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl shadow-2xl transition-all hover:scale-105 active:scale-95 text-xs font-black shrink-0 border border-emerald-500/20 text-center justify-center animate-bounce shadow-emerald-500/10 cursor-pointer"
+              className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md transition-colors text-xs font-bold shrink-0 border border-emerald-500/20 text-center justify-center cursor-pointer"
               title={`Restabilește cele ${deletedOrdersBackup.standaloneDocs.length} comenzi șterse Recent`}
             >
-              <Undo2 className="w-4 h-4 shrink-0 animate-pulse" />
+              <Undo2 className="w-4 h-4 shrink-0" />
               <span>
                 Restabilește Comenzi (
                 {deletedOrdersBackup.standaloneDocs.length})
@@ -26759,10 +26970,10 @@ export default function App() {
             <button
               onClick={handleRestorePatients}
               disabled={loading}
-              className="flex items-center gap-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl shadow-2xl transition-all hover:scale-105 active:scale-95 text-xs font-black shrink-0 border border-emerald-500/20 text-center justify-center animate-bounce shadow-emerald-500/10 cursor-pointer"
+              className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md transition-colors text-xs font-bold shrink-0 border border-emerald-500/20 text-center justify-center cursor-pointer"
               title={`Restabilește cele ${deletedPatientsBackup.length} fișe de pacienți și ${deletedAppointmentsBackup.length} programări șterse Recent`}
             >
-              <Undo2 className="w-4 h-4 shrink-0 animate-pulse" />
+              <Undo2 className="w-4 h-4 shrink-0" />
               <span>
                 Restabilește Pacienți ({deletedPatientsBackup.length})
               </span>
@@ -26774,10 +26985,10 @@ export default function App() {
             onClick={undoLastDelete}
             disabled={deletedAppointments.length === 0}
             className={cn(
-              "p-4 bg-red-600 text-white rounded-full shadow-2xl transition-all flex items-center justify-center relative",
+              "p-3.5 bg-red-600 text-white rounded-full shadow-lg transition-colors flex items-center justify-center relative",
               deletedAppointments.length === 0
-                ? "opacity-50 cursor-not-allowed scale-90"
-                : "hover:scale-110 hover:bg-red-700 active:scale-95 cursor-pointer",
+                ? "opacity-50 cursor-not-allowed"
+                : "hover:bg-red-700 cursor-pointer",
             )}
             title={
               deletedAppointments.length > 0
@@ -26785,9 +26996,9 @@ export default function App() {
                 : "Nu există pacienți șterși în istoric (maxim 20 în istoric)"
             }
           >
-            <RotateCcw className="w-6 h-6 text-white" />
+            <RotateCcw className="w-5 h-5 text-white" />
             {deletedAppointments.length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-white text-red-600 border border-red-600 text-[10px] font-black rounded-full w-5 h-5 flex items-center justify-center shadow-md animate-bounce">
+              <span className="absolute -top-1 -right-1 bg-white text-red-600 border border-red-600 text-[10px] font-black rounded-full w-5 h-5 flex items-center justify-center shadow-xs">
                 {deletedAppointments.length}
               </span>
             )}
@@ -26796,126 +27007,86 @@ export default function App() {
           {/* Settings Button */}
           <button
             onClick={() => setIsConfigModalOpen(true)}
-            className="p-4 bg-slate-900 text-white rounded-full shadow-2xl hover:scale-110 transition-transform flex items-center justify-center cursor-pointer"
+            className="p-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-full shadow-lg transition-colors flex items-center justify-center cursor-pointer"
             title="Setați Clinica"
           >
-            <Settings className="w-6 h-6" />
+            <Settings className="w-5 h-5" />
           </button>
         </div>
       )}
 
-      {/* Config Modal (Simplified for demo) */}
-      <AnimatePresence>
-        {/* Banner plutitor de deconectare offline */}
-        {!isAppOnline && (
-          <motion.div
-            key="offline-floating-banner"
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="fixed top-20 left-1/2 -translate-x-1/2 z-[110] bg-rose-600 text-white px-5 py-2.5 rounded-2xl font-bold shadow-2xl flex items-center gap-2.5 text-xs border border-rose-400/30"
-          >
-            <WifiOff className="w-4 h-4 animate-bounce" />
-            <span>Rețeaua a fost întreruptă! Puteți continua redactarea fișelor — datele sunt salvate local și se vor sincroniza când revine conexiunea.</span>
-          </motion.div>
-        )}
+      {/* Banner plutitor de deconectare offline */}
+      {!isAppOnline && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[110] bg-rose-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center gap-2.5 text-xs border border-rose-400/30">
+          <WifiOff className="w-4 h-4 shrink-0" />
+          <span>Rețeaua a fost întreruptă! Puteți continua redactarea fișelor — datele sunt salvate local și se vor sincroniza când revine conexiunea.</span>
+        </div>
+      )}
 
-        {/* Banner temporar de resincronizare automată la revenirea internetului */}
-        {showReconnectedBanner && (
-          <motion.div
-            key="reconnected-floating-banner"
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="fixed top-20 left-1/2 -translate-x-1/2 z-[110] bg-emerald-600 text-white px-5 py-2.5 rounded-2xl font-bold shadow-2xl flex items-center gap-2.5 text-xs border border-emerald-400/30"
-          >
-            <Wifi className="w-4 h-4" />
-            <span>Conexiunea la internet a revenit! Sincronizare automată în curs...</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Banner temporar de resincronizare automată la revenirea internetului */}
+      {showReconnectedBanner && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[110] bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center gap-2.5 text-xs border border-emerald-400/30">
+          <Wifi className="w-4 h-4 shrink-0" />
+          <span>Conexiunea la internet a revenit! Sincronizare automată în curs...</span>
+        </div>
+      )}
 
-      <AnimatePresence>
-        {successMessage && (
-          <motion.div
-            key="success-toast"
-            initial={{ opacity: 0, y: 50, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            transition={{ type: "spring", stiffness: 400, damping: 25 }}
-            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[99999] bg-emerald-600/95 border border-emerald-400 text-white px-5 py-3.5 rounded-2xl font-bold shadow-2xl flex items-center gap-3 backdrop-blur-md max-w-lg w-[90vw] sm:w-auto text-sm"
+      {successMessage && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[99999] bg-emerald-600 border border-emerald-500 text-white px-5 py-3.5 rounded-xl font-semibold shadow-lg flex items-center gap-3 max-w-lg w-[90vw] sm:w-auto text-sm">
+          <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-100" />
+          <span className="flex-1 leading-snug">{successMessage}</span>
+          <button
+            onClick={() => setSuccessMessage(null)}
+            className="p-1 hover:bg-white/20 rounded-lg transition-colors ml-2 shrink-0 cursor-pointer text-white/90 hover:text-white"
+            title="Închide"
           >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {errorMessage && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[99999] bg-rose-600 border border-rose-500 text-white px-5 py-3.5 rounded-xl font-semibold shadow-lg flex items-center gap-3 max-w-lg w-[90vw] sm:w-auto text-sm">
+          <AlertCircle className="w-5 h-5 shrink-0 text-rose-100" />
+          <span className="flex-1 leading-snug">{errorMessage}</span>
+          <button
+            onClick={() => setErrorMessage(null)}
+            className="p-1 hover:bg-white/20 rounded-lg transition-colors ml-2 shrink-0 cursor-pointer text-white/90 hover:text-white"
+            title="Închide"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {appNotification && (
+        <div
+          className={cn(
+            "fixed bottom-8 left-1/2 -translate-x-1/2 z-[99999] px-5 py-3.5 rounded-xl font-semibold shadow-lg flex items-center gap-3 border max-w-lg w-[90vw] sm:w-auto text-sm",
+            appNotification.type === "success"
+              ? "bg-emerald-600 border-emerald-500 text-white"
+              : appNotification.type === "warning"
+              ? "bg-amber-600 border-amber-500 text-white"
+              : "bg-rose-600 border-rose-500 text-white"
+          )}
+        >
+          {appNotification.type === "success" ? (
             <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-100" />
-            <span className="flex-1 leading-snug">{successMessage}</span>
-            <button
-              onClick={() => setSuccessMessage(null)}
-              className="p-1 hover:bg-white/20 rounded-lg transition-colors ml-2 shrink-0 cursor-pointer text-white/90 hover:text-white"
-              title="Închide"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {errorMessage && (
-          <motion.div
-            key="error-toast"
-            initial={{ opacity: 0, y: 50, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            transition={{ type: "spring", stiffness: 400, damping: 25 }}
-            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[99999] bg-rose-600/95 border border-rose-400 text-white px-5 py-3.5 rounded-2xl font-bold shadow-2xl flex items-center gap-3 backdrop-blur-md max-w-lg w-[90vw] sm:w-auto text-sm"
-          >
+          ) : appNotification.type === "warning" ? (
+            <AlertTriangle className="w-5 h-5 shrink-0 text-amber-100" />
+          ) : (
             <AlertCircle className="w-5 h-5 shrink-0 text-rose-100" />
-            <span className="flex-1 leading-snug">{errorMessage}</span>
-            <button
-              onClick={() => setErrorMessage(null)}
-              className="p-1 hover:bg-white/20 rounded-lg transition-colors ml-2 shrink-0 cursor-pointer text-white/90 hover:text-white"
-              title="Închide"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {appNotification && (
-          <motion.div
-            key={`app-notif-${appNotification.id}`}
-            initial={{ opacity: 0, y: 50, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            transition={{ type: "spring", stiffness: 400, damping: 25 }}
-            className={cn(
-              "fixed bottom-8 left-1/2 -translate-x-1/2 z-[99999] px-5 py-3.5 rounded-2xl font-bold shadow-2xl flex items-center gap-3 border backdrop-blur-md max-w-lg w-[90vw] sm:w-auto text-sm",
-              appNotification.type === "success"
-                ? "bg-emerald-600/95 border-emerald-400 text-white shadow-emerald-900/30"
-                : appNotification.type === "warning"
-                ? "bg-amber-500/95 border-amber-300 text-white shadow-amber-900/30"
-                : "bg-rose-600/95 border-rose-400 text-white shadow-rose-900/30"
-            )}
+          )}
+          <span className="flex-1 leading-snug">{appNotification.message}</span>
+          <button
+            onClick={() => setAppNotification(null)}
+            className="p-1 hover:bg-white/20 rounded-lg transition-colors ml-2 shrink-0 cursor-pointer text-white/90 hover:text-white"
+            title="Închide"
           >
-            {appNotification.type === "success" ? (
-              <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-100" />
-            ) : appNotification.type === "warning" ? (
-              <AlertTriangle className="w-5 h-5 shrink-0 text-amber-100" />
-            ) : (
-              <AlertCircle className="w-5 h-5 shrink-0 text-rose-100" />
-            )}
-            <span className="flex-1 leading-snug">{appNotification.message}</span>
-            <button
-              onClick={() => setAppNotification(null)}
-              className="p-1 hover:bg-white/20 rounded-lg transition-colors ml-2 shrink-0 cursor-pointer text-white/90 hover:text-white"
-              title="Închide"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       <AnimatePresence>
         {userToDeleteId && (
@@ -27716,34 +27887,128 @@ export default function App() {
                         </div>
                       </div>
 
-                      <div className="col-span-1 md:col-span-2 border-t border-dashed border-slate-300 dark:border-slate-800 pt-6 mt-2">
-                        <label className="block text-xs font-black text-slate-500 mb-2 uppercase tracking-wide">
-                          Timp Inactivitate Screen Saver (Minute)
-                        </label>
-                        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                          <input
-                            type="number"
-                            min="1"
-                            max="60"
-                            value={clinicConfig.inactivityTimeoutMinutes ?? 5}
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value) || 5;
-                              updateClinicConfig({
-                                inactivityTimeoutMinutes: val,
-                              });
-                            }}
-                            className={cn(
-                              "w-32 px-4 py-2 border rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500",
-                              darkMode
-                                ? "bg-slate-900 border-slate-700 text-slate-100"
-                                : "bg-white border-slate-200 text-slate-900 shadow-sm",
-                            )}
-                          />
-                          <span className="text-xs text-slate-400 font-bold">
-                            X minute de inactivitate (fără mișcare de
-                            mouse/taste/touch) activează Screen Saver-ul cu poza
-                            utilizatorului curent.
-                          </span>
+                      <div className="col-span-1 md:col-span-2 border-t border-dashed border-slate-300 dark:border-slate-800 pt-6 mt-2 space-y-5">
+                        <div>
+                          <label className="block text-xs font-black text-slate-500 mb-2 uppercase tracking-wide">
+                            Timp Inactivitate Screen Saver (Minute)
+                          </label>
+                          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                            <input
+                              type="number"
+                              min="1"
+                              max="60"
+                              value={clinicConfig.inactivityTimeoutMinutes ?? 5}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value) || 5;
+                                updateClinicConfig({
+                                  inactivityTimeoutMinutes: val,
+                                });
+                              }}
+                              className={cn(
+                                "w-32 px-4 py-2 border rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500",
+                                darkMode
+                                  ? "bg-slate-900 border-slate-700 text-slate-100"
+                                  : "bg-white border-slate-200 text-slate-900 shadow-sm",
+                              )}
+                            />
+                            <span className="text-xs text-slate-400 font-bold">
+                              X minute de inactivitate (fără mișcare de
+                              mouse/taste/touch) activează Screen Saver-ul cu poza
+                              utilizatorului curent.
+                            </span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-black text-slate-500 mb-2.5 uppercase tracking-wide flex items-center gap-2">
+                            <Monitor className="w-4 h-4 text-indigo-500" />
+                            <span>Control Screen Saver per Utilizator</span>
+                          </label>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                            {availableUsers.map((user) => {
+                              const isTv = user.role === "tv";
+                              const isDisabled =
+                                isTv ||
+                                clinicConfig.screenSaverDisabledUsers?.[user.id] === true;
+                              return (
+                                <div
+                                  key={`ss-user-${user.id}`}
+                                  className={cn(
+                                    "flex items-center justify-between gap-2 p-2.5 rounded-xl border transition-colors",
+                                    darkMode
+                                      ? "bg-slate-900/60 border-slate-800"
+                                      : "bg-white border-slate-200 shadow-xs",
+                                  )}
+                                >
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <div
+                                      className={cn(
+                                        "w-2 h-6 rounded-full shrink-0",
+                                        ROLE_COLORS[user.role] || "bg-blue-600",
+                                      )}
+                                    />
+                                    <div className="min-w-0">
+                                      <p
+                                        className={cn(
+                                          "text-xs font-bold truncate",
+                                          darkMode ? "text-slate-100" : "text-slate-900",
+                                        )}
+                                      >
+                                        {user.name}
+                                      </p>
+                                      <p className="text-[10px] font-semibold text-slate-500 uppercase truncate">
+                                        {getRoleLabel(user.role)}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  {isTv ? (
+                                    <span className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider bg-slate-200 dark:bg-slate-800 text-slate-500 shrink-0">
+                                      TV (Oprit)
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        const nextDisabled = !isDisabled;
+                                        await updateClinicConfig({
+                                          screenSaverDisabledUsers: {
+                                            ...(clinicConfig.screenSaverDisabledUsers || {}),
+                                            [user.id]: nextDisabled,
+                                          },
+                                        });
+                                        setSuccessMessage(
+                                          `Screen Saver ${nextDisabled ? "dezactivat" : "activat"} pentru ${user.name}.`,
+                                        );
+                                      }}
+                                      className={cn(
+                                        "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer",
+                                        !isDisabled
+                                          ? "bg-emerald-500/15 border-emerald-500/35 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/25"
+                                          : "bg-rose-500/15 border-rose-500/35 text-rose-600 dark:text-rose-400 hover:bg-rose-500/25",
+                                      )}
+                                      title={
+                                        !isDisabled
+                                          ? `Click pentru a dezactiva Screen Saver-ul pentru ${user.name}`
+                                          : `Click pentru a activa Screen Saver-ul pentru ${user.name}`
+                                      }
+                                    >
+                                      {!isDisabled ? (
+                                        <>
+                                          <Check className="w-3.5 h-3.5" />
+                                          <span>Activ</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Ban className="w-3.5 h-3.5" />
+                                          <span>Dezactivat</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -33381,32 +33646,40 @@ export default function App() {
         patientCnp={
           isMedicalRecordModalOpen
             ? (currentMedicalRecord?.patientCnp || activeAppointment?.patientCnp || patientCnp || "")
-            : (patientCnp || editingAppointment?.patientCnp || currentMedicalRecord?.patientCnp || activeAppointment?.patientCnp || "")
+            : isNewPatientFromSearchModalOpen
+              ? (patientCnp || "")
+              : (patientCnp || editingAppointment?.patientCnp || currentMedicalRecord?.patientCnp || activeAppointment?.patientCnp || "")
         }
         patientPhone={
           isMedicalRecordModalOpen
             ? (currentMedicalRecord?.patientPhone || activeAppointment?.patientPhone || patientPhone || "")
-            : (patientPhone || editingAppointment?.patientPhone || currentMedicalRecord?.patientPhone || activeAppointment?.patientPhone || "")
+            : isNewPatientFromSearchModalOpen
+              ? (faraTelefon ? "" : patientPhone || "")
+              : (patientPhone || editingAppointment?.patientPhone || currentMedicalRecord?.patientPhone || activeAppointment?.patientPhone || "")
         }
         patientBirthDate={
           isMedicalRecordModalOpen
             ? (currentMedicalRecord?.patientBirthDate || activeAppointment?.patientBirthDate || patientBirthDate || "")
-            : (patientBirthDate || editingAppointment?.patientBirthDate || currentMedicalRecord?.patientBirthDate || activeAppointment?.patientBirthDate || "")
+            : isNewPatientFromSearchModalOpen
+              ? (patientBirthDate || "")
+              : (patientBirthDate || editingAppointment?.patientBirthDate || currentMedicalRecord?.patientBirthDate || activeAppointment?.patientBirthDate || "")
         }
         initialSignature={
           isMedicalRecordModalOpen
             ? (currentMedicalRecord?.gdprSignature || "")
-            : (
-                currentMedicalRecord?.gdprSignature ||
-                (editingAppointment as any)?.gdprSignature ||
-                (activeAppointment as any)?.gdprSignature ||
-                getGdprStatus(
-                  patientName || editingAppointment?.patientName || "",
-                  patientPhone || editingAppointment?.patientPhone || "",
-                  patientCnp || editingAppointment?.patientCnp || ""
-                ).signature ||
-                ""
-              )
+            : isNewPatientFromSearchModalOpen
+              ? (getGdprStatus(patientName, faraTelefon ? "" : patientPhone, patientCnp).signature || "")
+              : (
+                  currentMedicalRecord?.gdprSignature ||
+                  (editingAppointment as any)?.gdprSignature ||
+                  (activeAppointment as any)?.gdprSignature ||
+                  getGdprStatus(
+                    patientName || editingAppointment?.patientName || "",
+                    patientPhone || editingAppointment?.patientPhone || "",
+                    patientCnp || editingAppointment?.patientCnp || ""
+                  ).signature ||
+                  ""
+                )
         }
         onSave={handleSaveGdpr}
       />
