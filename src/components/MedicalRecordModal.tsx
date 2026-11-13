@@ -1031,7 +1031,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                       Data Nașterii
                     </span>
                     <div className="flex items-center gap-1 focus-within:ring-2 focus-within:ring-amber-500/50 rounded-lg py-0.5">
-                      <Calendar className="w-4 h-4 text-emerald-500 shrink-0" />
+                      <Calendar className="w-3 h-3 text-emerald-500 shrink-0" />
                       <input
                         type="text"
                         maxLength={10}
@@ -1097,7 +1097,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           }
                         }}
                         className={cn(
-                          "bg-transparent text-base sm:text-lg font-black outline-none w-full text-slate-950 dark:text-white focus:text-blue-600 dark:focus:text-blue-400 transition-colors",
+                          "bg-transparent text-[9px] sm:text-[10px] font-black tracking-tight outline-none w-full min-w-0 text-slate-950 dark:text-white focus:text-blue-600 dark:focus:text-blue-400 transition-colors",
                         )}
                       />
                     </div>
@@ -8752,7 +8752,36 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                       )}
                     </div>
 
-                    <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex justify-end">
+                    <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
+                      {availableDrafts.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            try {
+                              const keysToDelete: string[] = [];
+                              for (let i = 0; i < localStorage.length; i++) {
+                                const k = localStorage.key(i);
+                                if (
+                                  k &&
+                                  (k.startsWith("opticenter_draft_mr_") ||
+                                    k.startsWith("opticenter_draft_backup_"))
+                                ) {
+                                  keysToDelete.push(k);
+                                }
+                              }
+                              keysToDelete.forEach((k) => localStorage.removeItem(k));
+                            } catch {}
+                            setAvailableDrafts([]);
+                            setDraftRestoredNotice(null);
+                          }}
+                          className="px-3.5 py-2 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 flex items-center gap-1.5 cursor-pointer transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Șterge toate ciornele</span>
+                        </button>
+                      ) : (
+                        <div />
+                      )}
                       <button
                         type="button"
                         onClick={() => setIsDraftRecoveryOpen(false)}

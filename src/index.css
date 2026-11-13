@@ -3,17 +3,27 @@
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Times New Roman", Times, serif;
+  --font-mono: "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-signature: "Dancing Script", cursive;
 }
 
 @layer base {
-  body {
-    font-variant-numeric: tabular-nums;
+  body,
+  table,
+  td,
+  th,
+  input,
+  select {
+    font-variant-numeric: tabular-nums lining-nums;
   }
 
-  .font-mono {
-    font-variant-numeric: tabular-nums;
+  .font-mono,
+  .tabular-nums {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  input[type="number"] {
+    font-variant-numeric: tabular-nums lining-nums;
   }
 
   /* Clean, uniform input focus without overriding compact sizing */
@@ -39,12 +49,27 @@
   box-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.45);
 }
 
-/* Neutralize distracting UI animations (keep animate-spin strictly for loading indicators) */
+/* Neutralize distracting UI animations & scale-bounce effects (keep animate-spin strictly for loading indicators) */
 .animate-pulse,
 .animate-bounce,
+.animate-ping,
 .animate-fade-in,
-.animate-in {
+.animate-in,
+.animate-slide-up {
   animation: none !important;
+}
+
+.hover\:scale-102:hover,
+.hover\:scale-105:hover,
+.hover\:scale-110:hover,
+.hover\:scale-115:hover,
+.hover\:scale-\[1\.02\]:hover,
+.active\:scale-95:active,
+.active\:scale-98:active,
+.active\:scale-\[0\.98\]:active,
+.active\:scale-\[0\.99\]:active,
+.group:hover .group-hover\:scale-110 {
+  transform: none !important;
 }
 
 @layer utilities {
@@ -125,7 +150,6 @@
 .document-modal-fullscreen input[type="text"],
 .document-modal-fullscreen textarea {
   border-width: 1px !important;
-  transition: border-width 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease !important;
 }
 
 .document-modal-fullscreen input[type="text"]:focus,

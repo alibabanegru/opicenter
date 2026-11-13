@@ -1597,7 +1597,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                 <span className="text-[10px] font-black uppercase text-slate-400 mb-1 leading-none">
                                   Comenzi
                                 </span>
-                                <span className="text-2xl font-black text-blue-600 leading-tight">
+                                <span className="text-2xl font-black font-mono tabular-nums text-blue-600 leading-tight">
                                   {filteredStatsOrders.length}
                                 </span>
                               </div>
@@ -1612,9 +1612,9 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                 <span className="text-[10px] font-black uppercase text-slate-400 mb-1 leading-none text-center">
                                   Valoare Tot.
                                 </span>
-                                <span className="text-xl font-black text-slate-700 dark:text-slate-200 leading-tight">
+                                <span className="text-xl font-black font-mono tabular-nums text-slate-700 dark:text-slate-200 leading-tight">
                                   {totalAmount}{" "}
-                                  <span className="text-[10px]">RON</span>
+                                  <span className="text-[10px] font-sans">RON</span>
                                 </span>
                               </div>
                               <div
@@ -1628,9 +1628,9 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                 <span className="text-[10px] font-black uppercase text-slate-400 mb-1 leading-none">
                                   Incasat
                                 </span>
-                                <span className="text-xl font-black text-emerald-600 leading-tight">
+                                <span className="text-xl font-black font-mono tabular-nums text-emerald-600 leading-tight">
                                   {collectedAmount}{" "}
-                                  <span className="text-[10px]">RON</span>
+                                  <span className="text-[10px] font-sans">RON</span>
                                 </span>
                               </div>
                               <div
@@ -1644,7 +1644,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                 <span className="text-[10px] font-black uppercase text-slate-400 mb-1 leading-none text-center">
                                   In Curs
                                 </span>
-                                <span className="text-xl font-black text-amber-600 leading-tight">
+                                <span className="text-xl font-black font-mono tabular-nums text-amber-600 leading-tight">
                                   {
                                     filteredStatsOrders.filter(
                                       (o) => o.status !== "completed",
@@ -1657,7 +1657,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                   setOrdersTab("with-balance");
                                 }}
                                 className={cn(
-                                  "p-4 rounded-2xl border flex flex-col items-center justify-center text-center transition-all cursor-pointer hover:border-amber-500 hover:scale-[1.02] active:scale-98 group",
+                                  "p-4 rounded-2xl border flex flex-col items-center justify-center text-center cursor-pointer hover:border-amber-500 group",
                                   darkMode
                                     ? "bg-slate-800 border-slate-700 hover:bg-slate-750"
                                     : "bg-white border-slate-200 shadow-sm hover:bg-amber-50/40",
@@ -1668,9 +1668,9 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                   <CreditCard className="w-3 h-3 text-amber-500" />
                                   Rest de Plată
                                 </span>
-                                <span className="text-xl font-black text-rose-600 dark:text-rose-400 leading-tight">
+                                <span className="text-xl font-black font-mono tabular-nums text-rose-600 dark:text-rose-400 leading-tight">
                                   {pendingAmount}{" "}
-                                  <span className="text-[10px]">RON</span>
+                                  <span className="text-[10px] font-sans">RON</span>
                                 </span>
                                 <span className="text-[9px] font-bold text-amber-600 underline mt-1 opacity-80 group-hover:opacity-100">
                                   Filtrează {unpaidOrdersCount} &rarr;
@@ -2842,18 +2842,18 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                     <div className="flex items-center gap-1.5">
                                       <div className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-xl text-right">
                                         <div className="text-[9px] font-black uppercase text-slate-400 leading-none mb-0.5">Total</div>
-                                        <span className="text-xs font-black text-blue-600 dark:text-blue-400">
+                                        <span className="text-xs font-black font-mono tabular-nums text-blue-600 dark:text-blue-400">
                                           {orderTotal.toFixed(2)} RON
                                         </span>
                                       </div>
                                       <div className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-xl text-right">
                                         <div className="text-[9px] font-black uppercase text-slate-400 leading-none mb-0.5">Avans</div>
-                                        <span className="text-xs font-black text-emerald-600 dark:text-emerald-400">
+                                        <span className="text-xs font-black font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
                                           {orderAdvance.toFixed(2)} RON
                                         </span>
                                       </div>
                                       <div className={cn(
-                                        "px-2.5 py-1 rounded-xl text-right border transition-all",
+                                        "px-2.5 py-1 rounded-xl text-right border",
                                         orderBalance > 0
                                           ? "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400"
                                           : "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400"
@@ -2861,7 +2861,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                         <div className="text-[9px] font-black uppercase opacity-75 leading-none mb-0.5">
                                           {orderBalance > 0 ? "Rest de plată" : "Sold"}
                                         </div>
-                                        <span className="text-xs font-black">
+                                        <span className="text-xs font-black font-mono tabular-nums">
                                           {orderBalance > 0 ? `${orderBalance.toFixed(2)} RON` : "Achitat (0 RON)"}
                                         </span>
                                       </div>
@@ -2871,7 +2871,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                       <button
                                         type="button"
                                         onClick={(e) => handleCollectRemainingBalance(order, e)}
-                                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-md shadow-amber-500/25 flex items-center gap-1.5 cursor-pointer shrink-0"
+                                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-black uppercase tracking-wider rounded-xl shadow-sm flex items-center gap-1.5 cursor-pointer shrink-0"
                                         title={`Încasează rapid diferența de ${orderBalance.toFixed(2)} RON fără a deschide fereastra complexă de configurare`}
                                       >
                                         <CreditCard className="w-3.5 h-3.5" />

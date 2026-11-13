@@ -480,7 +480,7 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                                   )
                                 }
                                 className={cn(
-                                  "w-full p-2.5 border rounded-xl text-lg font-black outline-none focus:ring-2 focus:ring-cyan-500 transition-all pl-9 shadow-sm",
+                                  "w-full p-2.5 border rounded-xl text-lg font-black font-mono tabular-nums text-right outline-none focus:ring-2 focus:ring-blue-500 pl-11 shadow-sm",
                                   darkMode
                                     ? "bg-slate-900 border-slate-700 text-white"
                                     : "bg-white border-slate-200",
@@ -658,7 +658,7 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                                   )
                                 }
                                 className={cn(
-                                  "w-full p-2.5 border rounded-xl text-lg font-black outline-none focus:ring-2 focus:ring-indigo-500 transition-all pl-9 shadow-sm",
+                                  "w-full p-2.5 border rounded-xl text-lg font-black font-mono tabular-nums text-right outline-none focus:ring-2 focus:ring-blue-500 pl-11 shadow-sm",
                                   darkMode
                                     ? "bg-slate-900 border-slate-700 text-white"
                                     : "bg-white border-slate-200",
@@ -751,7 +751,7 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                                     setFramePickerCategory("Toate");
                                     setFramePickerTarget("distance");
                                   }}
-                                  className="flex items-center gap-1 px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all cursor-pointer hover:scale-105 active:scale-95"
+                                  className="flex items-center gap-1 px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs cursor-pointer"
                                   title="Alege o ramă din stocul de inventar (Brand, Cod, Preț)"
                                 >
                                   <Store className="w-3 h-3" />
@@ -858,7 +858,7 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                               }
                               if (qty === 1) {
                                 return (
-                                  <div className="mt-1.5 p-2.5 rounded-xl bg-amber-500/20 border-2 border-amber-500/60 text-amber-900 dark:text-amber-200 text-[11px] font-black flex items-center justify-between gap-2 shadow-xs animate-pulse">
+                                  <div className="mt-1.5 p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/50 text-amber-900 dark:text-amber-200 text-[11px] font-black flex items-center justify-between gap-2 shadow-xs">
                                     <div className="flex items-center gap-1.5">
                                       <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
                                       <span>Atenție, această ramă este ultima pe stoc! ({matched.brand ? `${matched.brand} - ` : ""}{matched.code})</span>
@@ -912,7 +912,7 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                                 }
                                 onFocus={(e) => e.target.select()}
                                 className={cn(
-                                  "w-full p-2.5 border rounded-xl text-xl font-black outline-none focus:ring-2 focus:ring-blue-500 transition-all pl-9 shadow-sm",
+                                  "w-full p-2.5 border rounded-xl text-xl font-black font-mono tabular-nums text-right outline-none focus:ring-2 focus:ring-blue-500 pl-11 shadow-sm",
                                   darkMode
                                     ? "bg-slate-900 border-slate-700 text-white"
                                     : "bg-white border-slate-200",
@@ -2847,25 +2847,22 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                     {/* Grand Total Card */}
                     <div
                       className={cn(
-                        "p-6 rounded-[2.5rem] border-4 flex flex-col items-end gap-1 shadow-2xl relative overflow-hidden",
+                        "p-6 rounded-2xl border-2 flex flex-col items-end gap-1 shadow-lg relative overflow-hidden",
                         darkMode
                           ? "bg-blue-600 border-blue-500"
                           : "bg-blue-600 border-blue-500",
                       )}
                     >
-                      <div className="absolute -top-4 -right-4 w-24 h-24 bg-white/10 rounded-full blur-2xl animate-pulse" />
-                      <div className="absolute -bottom-4 -left-4 w-24 h-24 bg-white/10 rounded-full blur-2xl animate-pulse" />
-
-                      <span className="text-[11px] font-black text-white/60 uppercase tracking-[0.3em] relative z-20">
+                      <span className="text-[11px] font-black text-white/75 uppercase tracking-[0.2em] relative z-20">
                         Total Comandă
                       </span>
-                      <div className="flex items-baseline gap-1 relative z-20">
-                        <span className="text-5xl font-black text-white drop-shadow-xl">
+                      <div className="flex items-baseline gap-1.5 relative z-20 font-mono tabular-nums">
+                        <span className="text-5xl font-black text-white">
                           {(
                             currentMedicalRecord.glassesOrder?.total || 0
                           ).toFixed(0)}
                         </span>
-                        <span className="text-xl font-black text-white/60">
+                        <span className="text-xl font-bold text-white/75 font-sans">
                           RON
                         </span>
                       </div>
@@ -2893,7 +2890,7 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                           }
                           onFocus={(e) => e.target.select()}
                           className={cn(
-                            "w-full p-4 pr-16 border-2 rounded-2xl font-black text-2xl outline-none focus:ring-2 focus:ring-emerald-500",
+                            "w-full p-4 pr-16 border-2 rounded-2xl font-black font-mono tabular-nums text-right text-2xl outline-none focus:ring-2 focus:ring-emerald-500",
                             darkMode
                               ? "bg-slate-800 border-emerald-500/30 text-emerald-400"
                               : "bg-emerald-50 border-emerald-200 text-emerald-700",
