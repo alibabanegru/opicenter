@@ -1031,7 +1031,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                       Data Nașterii
                     </span>
                     <div className="flex items-center gap-1 focus-within:ring-2 focus-within:ring-amber-500/50 rounded-lg py-0.5">
-                      <Calendar className="w-3 h-3 text-emerald-500 shrink-0" />
+                      <Calendar className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
                       <input
                         type="text"
                         maxLength={10}
@@ -1097,7 +1097,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           }
                         }}
                         className={cn(
-                          "bg-transparent text-[9px] sm:text-[10px] font-black tracking-tight outline-none w-full min-w-0 text-slate-950 dark:text-white focus:text-blue-600 dark:focus:text-blue-400 transition-colors",
+                          "bg-transparent text-xs font-black outline-none w-full text-slate-950 dark:text-white focus:text-blue-600 dark:focus:text-blue-400 transition-colors",
                         )}
                       />
                     </div>
@@ -8758,7 +8758,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           type="button"
                           onClick={() => {
                             try {
-                              const keysToDelete: string[] = [];
+                              const keysToRemove: string[] = [];
                               for (let i = 0; i < localStorage.length; i++) {
                                 const k = localStorage.key(i);
                                 if (
@@ -8766,15 +8766,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                   (k.startsWith("opticenter_draft_mr_") ||
                                     k.startsWith("opticenter_draft_backup_"))
                                 ) {
-                                  keysToDelete.push(k);
+                                  keysToRemove.push(k);
                                 }
                               }
-                              keysToDelete.forEach((k) => localStorage.removeItem(k));
-                            } catch {}
-                            setAvailableDrafts([]);
-                            setDraftRestoredNotice(null);
+                              keysToRemove.forEach((k) => localStorage.removeItem(k));
+                              setAvailableDrafts([]);
+                              setDraftRestoredNotice(null);
+                            } catch (e) {
+                              console.warn("Clear all local drafts error:", e);
+                            }
                           }}
-                          className="px-3.5 py-2 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 flex items-center gap-1.5 cursor-pointer transition-colors"
+                          className="px-3.5 py-2 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-900/40 cursor-pointer flex items-center gap-1.5 transition-colors"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                           <span>Șterge toate ciornele</span>

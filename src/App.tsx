@@ -20741,16 +20741,16 @@ export default function App() {
     return (
       <div
         className={cn(
-          "min-h-screen flex flex-col items-center justify-center p-6 transition-colors duration-300",
-          darkMode ? "bg-slate-950" : "bg-slate-50",
+          "min-h-screen flex flex-col items-center justify-center p-6",
+          darkMode ? "bg-[#0B1120]" : "bg-[#F8FAFC]",
         )}
       >
         <div
           className={cn(
-            "p-8 rounded-3xl shadow-2xl max-w-md w-full border transition-all text-center",
+            "p-8 rounded-3xl shadow-2xl max-w-md w-full border text-center",
             darkMode
-              ? "bg-slate-900 border-slate-800 shadow-black/50"
-              : "bg-white border-slate-200 shadow-slate-200",
+              ? "bg-[#111827] border-slate-800 shadow-black/50"
+              : "bg-[#FFFFFF] border-slate-200 shadow-slate-200",
           )}
         >
           <div className="flex flex-col items-center mb-6">
@@ -20965,16 +20965,16 @@ export default function App() {
     return (
       <div
         className={cn(
-          "min-h-screen flex flex-col items-center justify-center p-6 transition-colors duration-300",
-          darkMode ? "bg-slate-950" : "bg-slate-50",
+          "min-h-screen flex flex-col items-center justify-center p-6",
+          darkMode ? "bg-[#0B1120]" : "bg-[#F8FAFC]",
         )}
       >
         <div
           className={cn(
-            "p-8 rounded-3xl shadow-2xl max-w-md w-full border transition-all text-center animate-fade-in",
+            "p-8 rounded-3xl shadow-2xl max-w-md w-full border text-center",
             darkMode
-              ? "bg-slate-900 border-slate-800 shadow-black/50"
-              : "bg-white border-slate-200 shadow-slate-200",
+              ? "bg-[#111827] border-slate-800 shadow-black/50"
+              : "bg-[#FFFFFF] border-slate-200 shadow-slate-200",
           )}
         >
           <div className="flex flex-col items-center mb-6 text-center">
@@ -21150,8 +21150,8 @@ export default function App() {
     return (
       <div
         className={cn(
-          "min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 transition-colors duration-300 relative",
-          darkMode ? "bg-slate-950" : "bg-slate-50"
+          "min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 relative",
+          darkMode ? "bg-[#0B1120]" : "bg-[#F8FAFC]"
         )}
       >
         {loading && (
@@ -21210,15 +21210,15 @@ export default function App() {
                     }
                   }}
                   className={cn(
-                    "flex items-center gap-2 py-2 px-3.5 rounded-xl font-bold text-xs transition-all border cursor-pointer shadow-2xs active:scale-95",
+                    "flex items-center gap-2 py-2 px-3.5 rounded-xl font-bold text-xs border cursor-pointer",
                     isSelected
-                      ? "bg-purple-600 text-white border-purple-600 shadow-md ring-2 ring-purple-400/30"
+                      ? "bg-[#2563EB] text-white border-[#2563EB]"
                       : darkMode
-                        ? "bg-slate-900/90 border-slate-800 text-purple-300 hover:bg-purple-950/50 hover:border-purple-800"
-                        : "bg-white border-slate-200 text-purple-800 hover:bg-purple-50/80 hover:border-purple-300"
+                        ? "bg-[#111827] border-slate-800 text-slate-200 hover:bg-slate-800"
+                        : "bg-[#FFFFFF] border-slate-200 text-slate-700 hover:bg-slate-50"
                   )}
                 >
-                  <Shield className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+                  <Shield className={cn("w-3.5 h-3.5 shrink-0", isSelected ? "text-white" : "text-slate-500 dark:text-slate-400")} />
                   <span>{adminUser.name || "Administrator"}</span>
                 </button>
 
@@ -21229,10 +21229,10 @@ export default function App() {
                       initial={{ opacity: 0, y: 5, scale: 0.95 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: 5, scale: 0.95 }}
-                      className="absolute right-0 mt-2 w-64 p-3 rounded-2xl border shadow-xl z-50 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
+                      className="absolute right-0 mt-2 w-64 p-3 rounded-2xl border shadow-xl z-50 bg-[#FFFFFF] dark:bg-[#111827] border-slate-200 dark:border-slate-800"
                     >
                       <div className="space-y-2">
-                        <p className="text-[10px] font-black uppercase text-purple-600 dark:text-purple-400 tracking-wider">
+                        <p className="text-[10px] font-black uppercase text-slate-600 dark:text-slate-400 tracking-wider">
                           Autentificare Administrator
                         </p>
                         <div className="relative">
@@ -21243,10 +21243,10 @@ export default function App() {
                             onKeyDown={(e) => e.key === "Enter" && handleLogin()}
                             placeholder="Introduceți parola admin"
                             className={cn(
-                              "w-full p-2 text-xs border rounded-lg outline-none focus:ring-2 focus:ring-purple-500 pr-8",
+                              "w-full p-2 text-xs border rounded-lg outline-none focus:ring-2 focus:ring-blue-500 pr-8",
                               darkMode
-                                ? "bg-slate-950 text-slate-100 border-slate-700"
-                                : "bg-slate-50 text-slate-900 border-slate-300"
+                                ? "bg-[#0B1120] text-slate-100 border-slate-700"
+                                : "bg-[#F8FAFC] text-slate-900 border-slate-300"
                             )}
                             autoFocus
                           />
@@ -21282,7 +21282,7 @@ export default function App() {
                         <button
                           onClick={handleLogin}
                           disabled={loading}
-                          className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-1.5 rounded-lg text-xs transition-all shadow-md cursor-pointer disabled:opacity-50"
+                          className="w-full bg-[#2563EB] hover:bg-blue-700 text-white font-bold py-1.5 rounded-lg text-xs cursor-pointer disabled:opacity-50"
                         >
                           {loading ? "Se verifică..." : "Intră ca Admin"}
                         </button>
@@ -21298,10 +21298,10 @@ export default function App() {
         {/* CENTER COLUMN CARD */}
         <div
           className={cn(
-            "p-6 sm:p-7 rounded-3xl shadow-xl max-w-md w-full border transition-all my-auto",
+            "p-6 sm:p-7 rounded-3xl shadow-xl max-w-md w-full border my-auto",
             darkMode
-              ? "bg-slate-900/90 border-slate-800 shadow-black/50"
-              : "bg-white border-slate-200/90 shadow-slate-200/60"
+              ? "bg-[#111827] border-slate-800 shadow-black/50"
+              : "bg-[#FFFFFF] border-slate-200 shadow-slate-200/60"
           )}
         >
           <div className="flex flex-col items-center mb-5 text-center">
@@ -21538,8 +21538,8 @@ export default function App() {
   return (
     <div
       className={cn(
-        "min-h-screen font-sans transition-colors duration-300",
-        darkMode ? "bg-slate-950 text-slate-100" : "bg-slate-50 text-slate-900",
+        "min-h-screen font-sans",
+        darkMode ? "bg-[#0B1120] text-slate-100" : "bg-[#F8FAFC] text-slate-900",
       )}
     >
       {dbError && (
@@ -21831,10 +21831,10 @@ export default function App() {
 
       <nav
         className={cn(
-          "border-b sticky top-0 z-30 transition-colors duration-300",
+          "border-b sticky top-0 z-30",
           darkMode
-            ? "bg-slate-900 border-slate-800"
-            : "bg-white border-slate-200 shadow-sm",
+            ? "bg-[#111827] border-slate-800"
+            : "bg-[#FFFFFF] border-slate-200",
         )}
       >
         {reschedulingAppointment && (
@@ -21973,16 +21973,16 @@ export default function App() {
                           exit={{ opacity: 0, y: -4, scale: 0.98 }}
                           transition={{ duration: 0.15 }}
                           className={cn(
-                            "absolute left-0 top-full mt-1.5 w-[380px] sm:w-[500px] md:w-[600px] lg:w-[680px] xl:w-[740px] max-w-[95vw] rounded-2xl shadow-2xl border overflow-hidden z-50 backdrop-blur-md",
+                            "absolute left-0 top-full mt-1.5 w-[380px] sm:w-[500px] md:w-[600px] lg:w-[680px] xl:w-[740px] max-w-[95vw] rounded-2xl shadow-xl border overflow-hidden z-50",
                             darkMode
-                              ? "bg-slate-900/95 border-slate-700 shadow-black/70 text-slate-100"
-                              : "bg-white/95 border-slate-200 shadow-slate-400/40 text-slate-900"
+                              ? "bg-[#111827] border-slate-800 shadow-black/60 text-slate-100"
+                              : "bg-[#FFFFFF] border-slate-200 shadow-slate-300/40 text-slate-900"
                           )}
                         >
                           {/* Header */}
                           <div className={cn(
                             "px-3.5 py-2 border-b flex items-center justify-between text-[11px] font-bold uppercase tracking-wider",
-                            darkMode ? "bg-slate-850/80 border-slate-800 text-slate-400" : "bg-slate-50/80 border-slate-100 text-slate-500"
+                            darkMode ? "bg-[#0B1120] border-slate-800 text-slate-400" : "bg-[#F8FAFC] border-slate-100 text-slate-600"
                           )}>
                             <span className="flex items-center gap-1.5">
                               <User className="w-3.5 h-3.5 text-blue-500" />
@@ -22250,7 +22250,7 @@ export default function App() {
                                                       e.stopPropagation();
                                                       handleQuickCollectRemainingBalance(item.quickCard!.activeOrder!, item);
                                                     }}
-                                                    className="px-2 py-0.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-[9px] font-bold uppercase flex items-center gap-1 cursor-pointer ml-auto"
+                                                    className="px-2 py-0.5 bg-[#FFFFFF] dark:bg-[#111827] border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded text-[9px] font-bold uppercase flex items-center gap-1 cursor-pointer ml-auto"
                                                     title={`Încasează direct restul de ${item.quickCard.activeOrder.balance.toFixed(0)} RON`}
                                                   >
                                                     <CreditCard className="w-2.5 h-2.5" />
@@ -22280,7 +22280,7 @@ export default function App() {
                                                   setPatientOrdersSearchQuery(item.patientName || "");
                                                   setIsOrdersModalOpen(true);
                                                 }}
-                                                className="px-2 py-0.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-[9px] font-bold uppercase flex items-center gap-1 cursor-pointer ml-auto"
+                                                className="px-2 py-0.5 bg-[#FFFFFF] dark:bg-[#111827] border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded text-[9px] font-bold uppercase flex items-center gap-1 cursor-pointer ml-auto"
                                                 title="Deschide centralizatorul pentru încasare"
                                               >
                                                 <CreditCard className="w-2.5 h-2.5" />
@@ -22353,7 +22353,7 @@ export default function App() {
                                   <button
                                     type="button"
                                     onClick={() => handleUniversalSearch(universalSearchQuery)}
-                                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white transition-all shadow-xs cursor-pointer"
+                                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#2563EB] hover:bg-blue-700 text-white cursor-pointer"
                                   >
                                     Caută aprofundat în baza de date
                                   </button>
@@ -22363,7 +22363,7 @@ export default function App() {
                                       setIsOmniboxOpen(false);
                                       openNewPatientModal(universalSearchQuery);
                                     }}
-                                    className="px-3 py-1.5 rounded-lg text-xs font-bold border border-emerald-500 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 transition-all cursor-pointer"
+                                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#FFFFFF] dark:bg-[#111827] border border-[#059669] text-[#059669] dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer"
                                   >
                                     + Pacient Nou
                                   </button>
@@ -22375,7 +22375,7 @@ export default function App() {
                           {/* Footer */}
                           <div className={cn(
                             "p-2.5 border-t flex items-center justify-between text-xs",
-                            darkMode ? "bg-slate-850 border-slate-800" : "bg-slate-50 border-slate-100"
+                            darkMode ? "bg-[#0B1120] border-slate-800" : "bg-[#F8FAFC] border-slate-100"
                           )}>
                             <button
                               type="button"
@@ -22392,10 +22392,10 @@ export default function App() {
                     </AnimatePresence>
                   </div>
 
-                  {/* Quick Pacient Nou button (10% primary clinical accent) */}
+                  {/* Quick Pacient Nou button (10% primary Cobalt clinical accent) */}
                   <button
                     onClick={() => openNewPatientModal(universalSearchQuery)}
-                    className="px-2.5 py-1.5 rounded-lg border border-blue-600 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer"
+                    className="px-2.5 py-1.5 rounded-lg border border-[#2563EB] bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shrink-0 cursor-pointer"
                     title="Adaugă Pacient Nou"
                   >
                     <UserPlus className="w-3.5 h-3.5" />
@@ -22411,10 +22411,10 @@ export default function App() {
                     <button
                       onClick={() => setIsAppointmentHistoryModalOpen(true)}
                       className={cn(
-                        "p-2 rounded-lg border flex items-center justify-center shrink-0 shadow-2xs relative cursor-pointer",
+                        "p-2 rounded-lg border flex items-center justify-center shrink-0 relative cursor-pointer",
                         darkMode
-                          ? "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-blue-400"
-                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-blue-600",
+                          ? "bg-[#111827] border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+                          : "bg-[#FFFFFF] border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900",
                       )}
                       title="Istoric Programări"
                     >
@@ -22428,19 +22428,19 @@ export default function App() {
                     <button
                       onClick={() => setIsOrdersModalOpen(true)}
                       className={cn(
-                        "px-2.5 py-1.5 rounded-lg border text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shrink-0 shadow-2xs relative cursor-pointer",
+                        "px-2.5 py-1.5 rounded-lg border text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shrink-0 relative cursor-pointer",
                         darkMode
-                          ? "bg-slate-900 border-slate-700 text-slate-200 hover:bg-slate-800"
-                          : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50",
+                          ? "bg-[#111827] border-slate-800 text-slate-200 hover:bg-slate-800"
+                          : "bg-[#FFFFFF] border-slate-200 text-slate-700 hover:bg-slate-50",
                       )}
                       title="Prescripție ochelari"
                     >
-                      <Glasses className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                      <Glasses className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                       <span className="text-[10px] tracking-tight">
                         Prescripție ochelari
                       </span>
                       {hasOverdueOrders && (
-                        <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-rose-500 rounded-full border border-white dark:border-slate-900" />
+                        <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-rose-500 rounded-full border border-white dark:border-[#111827]" />
                       )}
                     </button>
                   )}
@@ -22454,10 +22454,10 @@ export default function App() {
                         setIsExportModalOpen(true);
                       }}
                       className={cn(
-                        "p-2 rounded-lg border flex items-center justify-center shrink-0 shadow-2xs relative cursor-pointer",
+                        "p-2 rounded-lg border flex items-center justify-center shrink-0 relative cursor-pointer",
                         darkMode
-                          ? "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-blue-400"
-                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-blue-600",
+                          ? "bg-[#111827] border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+                          : "bg-[#FFFFFF] border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900",
                       )}
                       title="Exportă PDF"
                     >
@@ -22477,39 +22477,35 @@ export default function App() {
                     setIsExportModalOpen(true);
                   }}
                   className={cn(
-                    "p-2 rounded-full transition-all",
+                    "p-2 rounded-lg border cursor-pointer",
                     (profile?.role === "admin" ||
                       profile?.role === "frontdesk" ||
                       profile?.role === "seller") &&
                       "md:hidden",
                     darkMode
-                      ? "bg-slate-800 text-blue-400 hover:bg-slate-700"
-                      : "bg-slate-100 text-blue-600 hover:bg-slate-200",
+                      ? "bg-[#111827] border-slate-800 text-slate-300 hover:bg-slate-800"
+                      : "bg-[#FFFFFF] border-slate-200 text-slate-600 hover:bg-slate-50",
                   )}
                   title="Exportă PDF"
                 >
-                  <Download className="w-5 h-5" />
+                  <Download className="w-4 h-4" />
                 </button>
               )}
-
-
-
-
 
               <button
                 onClick={() => setDarkMode(!darkMode)}
                 className={cn(
-                  "p-2 rounded-full transition-all",
+                  "p-2 rounded-lg border cursor-pointer",
                   darkMode
-                    ? "bg-slate-800 text-amber-400 hover:bg-slate-700"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200",
+                    ? "bg-[#111827] border-slate-800 text-slate-300 hover:bg-slate-800"
+                    : "bg-[#FFFFFF] border-slate-200 text-slate-600 hover:bg-slate-50",
                 )}
                 title={darkMode ? "Mod Luminos" : "Mod Întunecat"}
               >
                 {darkMode ? (
-                  <Eye className="w-5 h-5" />
+                  <Eye className="w-4 h-4" />
                 ) : (
-                  <EyeOff className="w-5 h-5" />
+                  <EyeOff className="w-4 h-4" />
                 )}
               </button>
 
@@ -22529,7 +22525,7 @@ export default function App() {
                   <p
                     className={cn(
                       "text-[10px] font-bold uppercase tracking-wider",
-                      darkMode ? "text-slate-400" : "text-slate-500",
+                      darkMode ? "text-slate-400" : "text-slate-600",
                     )}
                   >
                     {getRoleLabel(profile.role)}
@@ -22539,14 +22535,14 @@ export default function App() {
               <button
                 onClick={logout}
                 className={cn(
-                  "p-2 rounded-full transition-colors",
+                  "p-2 rounded-lg border cursor-pointer",
                   darkMode
-                    ? "hover:bg-red-900/30 text-slate-500 hover:text-red-400"
-                    : "hover:bg-red-50 text-slate-400 hover:text-red-600",
+                    ? "bg-[#111827] border-slate-800 text-slate-400 hover:bg-rose-950/30 hover:border-rose-900/50 hover:text-rose-400"
+                    : "bg-[#FFFFFF] border-slate-200 text-slate-500 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600",
                 )}
                 title="Ieșire"
               >
-                <LogOut className="w-5 h-5" />
+                <LogOut className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -23041,19 +23037,19 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <div
                     className={cn(
-                      "flex items-center gap-1 p-1 rounded-xl border backdrop-blur-sm transition-all",
+                      "flex items-center gap-1 p-1 rounded-xl border",
                       darkMode
-                        ? "bg-slate-900/50 border-slate-800 shadow-inner"
-                        : "bg-slate-50 border-slate-200 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05)]",
+                        ? "bg-[#111827] border-slate-800"
+                        : "bg-[#FFFFFF] border-slate-200",
                     )}
                   >
                     <button
                       onClick={() => setShowAdminAppointments(false)}
                       className={cn(
-                        "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5",
+                        "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 cursor-pointer",
                         !showAdminAppointments
-                          ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-slate-200 dark:ring-slate-600"
-                          : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300",
+                          ? "bg-[#2563EB] text-white"
+                          : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200",
                       )}
                     >
                       <Activity className="w-3 h-3" />
@@ -23062,10 +23058,10 @@ export default function App() {
                     <button
                       onClick={() => setShowAdminAppointments(true)}
                       className={cn(
-                        "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5",
+                        "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 cursor-pointer",
                         showAdminAppointments
-                          ? "bg-emerald-500 text-white shadow-lg shadow-emerald-900/20"
-                          : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300",
+                          ? "bg-[#059669] text-white"
+                          : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200",
                       )}
                     >
                       <Glasses className="w-3.5 h-3.5" />
@@ -23077,10 +23073,10 @@ export default function App() {
                     <button
                       onClick={() => setShowScreenSaver(true)}
                       className={cn(
-                        "flex items-center justify-center p-2 rounded-xl shadow-2xs border shrink-0 cursor-pointer",
+                        "flex items-center justify-center p-2 rounded-xl border shrink-0 cursor-pointer",
                         darkMode
-                          ? "bg-slate-900 border-slate-800 text-blue-400 hover:bg-slate-800"
-                          : "bg-white border-slate-200 text-blue-600 hover:bg-slate-50",
+                          ? "bg-[#111827] border-slate-800 text-slate-300 hover:bg-slate-800"
+                          : "bg-[#FFFFFF] border-slate-200 text-slate-600 hover:bg-slate-50",
                       )}
                       title="Activează Screen Saver"
                     >
@@ -23094,7 +23090,7 @@ export default function App() {
                   className={cn(
                     "flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border cursor-default",
                     isAppOnline
-                      ? "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-emerald-600 dark:text-emerald-400"
+                      ? "bg-[#FFFFFF] dark:bg-[#111827] border-slate-200 dark:border-slate-800 text-[#059669] dark:text-emerald-400"
                       : "bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400"
                   )}
                   title={
@@ -23105,7 +23101,7 @@ export default function App() {
                 >
                   {isAppOnline ? (
                     <>
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#059669]" />
                       <Wifi className="w-3 h-3" />
                       <span>Online</span>
                     </>
@@ -23124,10 +23120,10 @@ export default function App() {
                   <button
                     onClick={() => setShowScreenSaver(true)}
                     className={cn(
-                      "flex items-center justify-center p-2 rounded-xl shadow-2xs border shrink-0 cursor-pointer",
+                      "flex items-center justify-center p-2 rounded-xl border shrink-0 cursor-pointer",
                       darkMode
-                        ? "bg-slate-900 border-slate-800 text-blue-400 hover:bg-slate-800"
-                        : "bg-white border-slate-200 text-blue-600 hover:bg-slate-50",
+                        ? "bg-[#111827] border-slate-800 text-slate-300 hover:bg-slate-800"
+                        : "bg-[#FFFFFF] border-slate-200 text-slate-600 hover:bg-slate-50",
                     )}
                     title="Activează Screen Saver"
                   >
@@ -23158,10 +23154,10 @@ export default function App() {
               <button
                 onClick={() => setIsWeatherModalOpen(true)}
                 className={cn(
-                  "flex items-center gap-2 px-3 py-1.5 rounded-xl shadow-2xs border cursor-pointer shrink-0",
+                  "flex items-center gap-2 px-3 py-1.5 rounded-xl border cursor-pointer shrink-0",
                   darkMode
-                    ? "bg-slate-900 border-slate-800 hover:bg-slate-800"
-                    : "bg-white border-slate-200 hover:bg-slate-50",
+                    ? "bg-[#111827] border-slate-800 hover:bg-slate-800"
+                    : "bg-[#FFFFFF] border-slate-200 hover:bg-slate-50",
                 )}
               >
                 {weather ? (
@@ -23219,14 +23215,14 @@ export default function App() {
                 <button
                   onClick={() => setIsBNRModalOpen(true)}
                   className={cn(
-                    "flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl shadow-2xs border leading-tight shrink-0 cursor-pointer",
+                    "flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border leading-tight shrink-0 cursor-pointer",
                     darkMode
-                      ? "bg-slate-900 border-slate-800 hover:bg-slate-800 text-amber-400"
-                      : "bg-white border-slate-200 hover:bg-slate-50 text-amber-600",
+                      ? "bg-[#111827] border-slate-800 hover:bg-slate-800 text-slate-300"
+                      : "bg-[#FFFFFF] border-slate-200 hover:bg-slate-50 text-slate-600",
                   )}
                   title="Curs Valutar BNR"
                 >
-                  <Landmark className="w-3.5 h-3.5 shrink-0" />
+                  <Landmark className="w-3.5 h-3.5 shrink-0 text-slate-500 dark:text-slate-400" />
                   <div className="flex flex-col items-start leading-none">
                     <span className="text-[8px] font-bold uppercase tracking-tight text-slate-500 dark:text-slate-400">
                       curs
@@ -23267,10 +23263,10 @@ export default function App() {
                     }
                   }}
                   className={cn(
-                    "flex items-center justify-center p-2 rounded-xl shadow-2xs border relative shrink-0 cursor-pointer",
+                    "flex items-center justify-center p-2 rounded-xl border relative shrink-0 cursor-pointer",
                     darkMode
-                      ? "bg-slate-900 border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-rose-400"
-                      : "bg-white border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-rose-600",
+                      ? "bg-[#111827] border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-rose-400"
+                      : "bg-[#FFFFFF] border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-rose-600",
                   )}
                   title="Aniversări Pacienți (Astăzi & În curând)"
                 >
@@ -23283,7 +23279,7 @@ export default function App() {
                     }).length;
                     if (todayCount > 0) {
                       return (
-                        <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white font-black font-mono tabular-nums text-[9px] w-4.5 h-4.5 rounded-full flex items-center justify-center border border-white dark:border-slate-900">
+                        <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white font-black font-mono tabular-nums text-[9px] w-4.5 h-4.5 rounded-full flex items-center justify-center border border-white dark:border-[#111827]">
                           {todayCount}
                         </span>
                       );
@@ -23301,14 +23297,14 @@ export default function App() {
                     onClick={handleLoadFullArchive}
                     disabled={isLoadingAllHistory}
                     className={cn(
-                      "flex items-center gap-1 px-2 py-0.5 rounded-lg transition-all shadow-xs border text-[10px] font-bold shrink-0 cursor-pointer disabled:opacity-50",
+                      "flex items-center gap-1 px-2 py-0.5 rounded-lg border text-[10px] font-bold shrink-0 cursor-pointer disabled:opacity-50",
                       hasLoadedAllHistory
-                        ? (darkMode ? "bg-emerald-950/40 border-emerald-800 text-emerald-300" : "bg-emerald-50 border-emerald-200 text-emerald-700")
-                        : (darkMode ? "bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300" : "bg-white border-slate-200 hover:bg-slate-50 text-slate-700")
+                        ? (darkMode ? "bg-[#111827] border-emerald-700/60 text-emerald-400" : "bg-[#FFFFFF] border-emerald-300 text-[#059669]")
+                        : (darkMode ? "bg-[#111827] border-slate-800 hover:bg-slate-800 text-slate-300" : "bg-[#FFFFFF] border-slate-200 hover:bg-slate-50 text-slate-600")
                     )}
                     title="Smart Loading Total: Descarcă toată arhiva clinică din baza de date"
                   >
-                    <Database className={cn("w-3 h-3", isLoadingAllHistory && "animate-spin text-blue-500", hasLoadedAllHistory && "text-emerald-500")} />
+                    <Database className={cn("w-3 h-3", isLoadingAllHistory && "animate-spin text-blue-500", hasLoadedAllHistory && "text-[#059669]")} />
                     <span>
                       {isLoadingAllHistory ? "Se încarcă..." : hasLoadedAllHistory ? "Arhivă Totală Activă" : "Smart Loading Total"}
                     </span>
@@ -23320,14 +23316,14 @@ export default function App() {
                     onClick={handleLoad30Days}
                     disabled={isLoading30Days}
                     className={cn(
-                      "flex items-center gap-1 px-2 py-0.5 rounded-lg transition-all shadow-xs border text-[10px] font-bold shrink-0 cursor-pointer disabled:opacity-50",
+                      "flex items-center gap-1 px-2 py-0.5 rounded-lg border text-[10px] font-bold shrink-0 cursor-pointer disabled:opacity-50",
                       !hasLoadedAllHistory
-                        ? (darkMode ? "bg-blue-950/40 border-blue-800 text-blue-300" : "bg-blue-50 border-blue-200 text-blue-700")
-                        : (darkMode ? "bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300" : "bg-white border-slate-200 hover:bg-slate-50 text-slate-700")
+                        ? (darkMode ? "bg-[#111827] border-blue-700/60 text-blue-400" : "bg-[#FFFFFF] border-blue-300 text-[#2563EB]")
+                        : (darkMode ? "bg-[#111827] border-slate-800 hover:bg-slate-800 text-slate-300" : "bg-[#FFFFFF] border-slate-200 hover:bg-slate-50 text-slate-600")
                     )}
                     title="Smart Loading 30 Zile: Sincronizează doar ultimele 30 zile pentru a economisi credite Firebase"
                   >
-                    <ClockIcon className={cn("w-3 h-3", isLoading30Days && "animate-spin text-blue-500", !hasLoadedAllHistory && "text-blue-500")} />
+                    <ClockIcon className={cn("w-3 h-3", isLoading30Days && "animate-spin text-blue-500", !hasLoadedAllHistory && "text-[#2563EB]")} />
                     <span>
                       {isLoading30Days ? "Sincronizare..." : !hasLoadedAllHistory ? "Smart Loading 30 Zile (Activ)" : "Smart Loading 30 Zile"}
                     </span>
@@ -23346,15 +23342,15 @@ export default function App() {
                 setShowDatePickerDropdown(!showDatePickerDropdown);
               }}
               className={cn(
-                "relative flex items-center justify-center gap-2 h-9 px-3 rounded-xl cursor-pointer transition-all shadow-sm border select-none text-xs font-bold",
+                "relative flex items-center justify-center gap-2 h-9 px-3 rounded-xl cursor-pointer border select-none text-xs font-bold",
                 darkMode
-                  ? "bg-slate-900 border-slate-800 text-blue-400 hover:text-blue-300 hover:bg-slate-800"
-                  : "bg-white border-slate-200 text-blue-600 hover:text-blue-700 hover:bg-slate-50",
+                  ? "bg-[#111827] border-slate-800 text-slate-200 hover:bg-slate-800"
+                  : "bg-[#FFFFFF] border-slate-200 text-slate-700 hover:bg-slate-50",
               )}
               title="Alege săptămâna din calendar"
             >
               <span>Calendar</span>
-              <Calendar className="w-4 h-4" />
+              <Calendar className="w-4 h-4 text-[#2563EB] dark:text-blue-400" />
             </button>
 
             {showDatePickerDropdown && (
@@ -23609,10 +23605,10 @@ export default function App() {
 
             <div
               className={cn(
-                "flex items-center gap-0.5 p-0.5 rounded-xl shadow-md border transition-all",
+                "flex items-center gap-0.5 p-0.5 rounded-xl border",
                 darkMode
-                  ? "bg-slate-900 border-slate-800"
-                  : "bg-white border-slate-200",
+                  ? "bg-[#111827] border-slate-800"
+                  : "bg-[#FFFFFF] border-slate-200",
               )}
             >
               <button
@@ -23705,37 +23701,33 @@ export default function App() {
                   key={`day-${idx}`}
                   id={isToday ? "today-column" : undefined}
                   className={cn(
-                    "rounded-2xl border overflow-hidden flex flex-col transition-all w-[85vw] md:w-full shrink-0",
+                    "rounded-2xl border overflow-hidden flex flex-col w-[85vw] md:w-full shrink-0",
                     profile?.role === "tv" ? "h-fit" : "min-h-[600px] h-full",
-                    darkMode ? "bg-slate-900" : "bg-white",
+                    darkMode ? "bg-[#111827]" : "bg-[#FFFFFF]",
                     isSaturday
                       ? darkMode
-                        ? "border-slate-600 border-2 shadow-lg"
-                        : "border-slate-350 border-2 shadow-sm"
+                        ? "border-slate-700 border-2"
+                        : "border-slate-300 border-2"
                       : isToday
                         ? darkMode
-                          ? "border-blue-500/80 shadow-md ring-1 ring-blue-500/30"
-                          : "border-blue-400 shadow-md ring-1 ring-blue-400/30"
+                          ? "border-blue-500/70 ring-1 ring-blue-500/20"
+                          : "border-[#2563EB] ring-1 ring-blue-500/20"
                         : darkMode
-                          ? "border-slate-800 shadow-xs"
-                          : "border-slate-200 shadow-2xs",
+                          ? "border-slate-800"
+                          : "border-slate-200",
                   )}
                 >
                   <div
                     className={cn(
-                      "p-2 text-center transition-all relative sticky top-0 z-20 shadow-xs",
+                      "p-2 text-center relative sticky top-0 z-20",
                       profile?.role !== "tv" && "border-b",
                       isToday
                         ? darkMode
-                          ? "bg-blue-950/70 border-blue-900/60"
-                          : "bg-blue-50/80 border-blue-200/80"
+                          ? "bg-[#111827] border-slate-800"
+                          : "bg-[#FFFFFF] border-slate-200"
                         : darkMode
-                          ? "bg-slate-900 border-slate-800"
-                          : "bg-slate-50/90 border-slate-200",
-                      isSaturday &&
-                        (darkMode
-                          ? "bg-slate-850 border-slate-700"
-                          : "bg-slate-100/90 border-slate-200"),
+                          ? "bg-[#111827] border-slate-800"
+                          : "bg-[#FFFFFF] border-slate-200",
                     )}
                   >
                     <div className="flex items-center justify-center gap-1.5 mb-0.5">
@@ -23743,14 +23735,14 @@ export default function App() {
                         className={cn(
                           "text-[13px] font-black uppercase tracking-widest",
                           isToday
-                            ? (darkMode ? "text-blue-400 font-black" : "text-blue-700 font-black")
-                            : (darkMode ? "text-slate-400" : "text-slate-500"),
+                            ? (darkMode ? "text-blue-400 font-black" : "text-[#2563EB] font-black")
+                            : (darkMode ? "text-slate-400" : "text-slate-600"),
                         )}
                       >
                         {format(day, "EEEE", { locale: ro })}
                       </p>
                       {isToday && (
-                        <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded-full bg-blue-600 text-white tracking-wider">
+                        <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded-full bg-[#2563EB] text-white tracking-wider">
                           Azi
                         </span>
                       )}
@@ -23758,15 +23750,15 @@ export default function App() {
 
                     <div className="flex justify-center items-center h-5 my-0.5">
                       {appointmentsForDay.length === 0 ? (
-                        <div className="text-[9px] opacity-40 font-bold uppercase tracking-wider">
+                        <div className="text-[9px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider">
                           Fără programări
                         </div>
                       ) : (
                         <div className={cn(
-                          "text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border shadow-2xs",
+                          "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border",
                           darkMode
-                            ? "bg-blue-950/60 border-blue-800 text-blue-300"
-                            : "bg-blue-50 border-blue-200 text-blue-700"
+                            ? "bg-[#0B1120] border-slate-800 text-slate-300"
+                            : "bg-[#F8FAFC] border-slate-200 text-slate-600"
                         )}>
                           Total: {appointmentsForDay.length} {appointmentsForDay.length === 1 ? "programare" : "programări"}
                         </div>
@@ -23775,13 +23767,13 @@ export default function App() {
 
                     <div
                       className={cn(
-                        "inline-flex items-baseline justify-center gap-1.5 px-3.5 py-1 mx-auto rounded-xl border transition-all shadow-2xs",
+                        "inline-flex items-baseline justify-center gap-1.5 px-3.5 py-1 mx-auto rounded-xl border",
                         workingDoctors.length > 1 ? "mb-1" : "mb-1.5",
                         isToday
-                          ? "bg-blue-600 border-blue-500 text-white shadow-md shadow-blue-900/30"
+                          ? "bg-[#2563EB] border-[#2563EB] text-white"
                           : darkMode
-                            ? "bg-slate-800/90 border-slate-700 text-slate-200"
-                            : "bg-white border-slate-200 text-slate-800",
+                            ? "bg-[#0B1120] border-slate-800 text-slate-200"
+                            : "bg-[#F8FAFC] border-slate-200 text-slate-800",
                       )}
                     >
                       <span className="text-2xl font-black leading-none">
@@ -23950,8 +23942,8 @@ export default function App() {
                   {profile?.role !== "tv" && (
                     <div
                       className={cn(
-                        "p-2 space-y-1 flex-1 overflow-y-auto transition-colors duration-300",
-                        darkMode ? "bg-slate-900/50" : "bg-slate-50/50",
+                        "p-2 space-y-1 flex-1 overflow-y-auto",
+                        darkMode ? "bg-[#0B1120]/60" : "bg-[#F8FAFC]",
                       )}
                     >
                     {visibleDoctorRoles.map((role) => {
@@ -23966,11 +23958,11 @@ export default function App() {
                           {workingDoctors.length > 1 && (
                             <div
                               className={cn(
-                                "py-1 px-2 mt-2 mb-1 rounded-lg text-[9px] font-black uppercase tracking-widest text-center border transition-all",
+                                "py-1 px-2 mt-2 mb-1 rounded-lg text-[9px] font-black uppercase tracking-widest text-center border",
                                 ROLE_TEXT_COLORS[role as Role],
                                 darkMode
-                                  ? "bg-slate-800/80 border-slate-700"
-                                  : "bg-slate-100 border-slate-200",
+                                  ? "bg-[#111827] border-slate-800"
+                                  : "bg-[#FFFFFF] border-slate-200",
                               )}
                             >
                               {getRoleLabel(role as Role)}
@@ -24148,15 +24140,15 @@ export default function App() {
                                         "p-2 gap-1 border-l-[3px]",
                                         appointment.status === "cancelled"
                                           ? darkMode
-                                            ? "bg-slate-850/50 border-slate-800 border-l-slate-600 text-slate-500 opacity-60"
-                                            : "bg-slate-100/70 border-slate-200 border-l-slate-300 text-slate-400 opacity-65"
+                                            ? "bg-[#111827]/50 border-slate-800 border-l-slate-600 text-slate-500 opacity-60"
+                                            : "bg-slate-100/80 border-slate-200 border-l-slate-300 text-slate-400 opacity-65"
                                           : isConsultedToday
                                             ? darkMode
-                                              ? "bg-slate-900/50 border-slate-800 border-l-emerald-500/70 text-slate-400 opacity-75 hover:opacity-100"
-                                              : "bg-slate-50/90 border-slate-200 border-l-emerald-500 text-slate-500 opacity-80 hover:opacity-100"
+                                              ? "bg-[#111827]/70 border-slate-800 border-l-[#059669] text-slate-400 opacity-80 hover:opacity-100"
+                                              : "bg-[#FFFFFF]/80 border-slate-200 border-l-[#059669] text-slate-500 opacity-85 hover:opacity-100"
                                             : darkMode
-                                              ? "bg-slate-800/85 border-slate-700/90 border-l-blue-500 text-slate-100 hover:bg-slate-800 shadow-2xs"
-                                              : "bg-white border-slate-200/90 border-l-blue-600 text-slate-800 hover:border-slate-300 shadow-2xs",
+                                              ? "bg-[#111827] border-slate-800 border-l-[#2563EB] text-slate-100 hover:bg-slate-800/80"
+                                              : "bg-[#FFFFFF] border-slate-200 border-l-[#2563EB] text-slate-800 hover:border-slate-300",
                                       )
                                     : isLockedByOther
                                       ? darkMode
@@ -24173,8 +24165,8 @@ export default function App() {
                                                 ? "bg-amber-900/10 border-amber-900/30 text-amber-500 hover:bg-amber-900/20"
                                                 : "bg-amber-50/70 border-amber-200 text-amber-700 hover:bg-amber-100/70"
                                               : darkMode
-                                                ? "bg-slate-900/60 border-slate-800/80 text-slate-300 hover:border-blue-500/70 hover:bg-slate-800/80"
-                                                : "bg-white/90 border-slate-200/80 text-slate-600 hover:border-blue-400 hover:bg-blue-50/30",
+                                                ? "bg-[#111827]/60 border-slate-800/80 text-slate-300 hover:border-blue-500/70 hover:bg-[#111827]"
+                                                : "bg-[#FFFFFF] border-slate-200/80 text-slate-600 hover:border-blue-400 hover:bg-slate-50",
                                           ),
                                   isLockedByOther && "p-1.5 px-2.5 opacity-90",
                                   isLockedByMe && "p-1.5 px-2.5",
@@ -26964,10 +26956,12 @@ export default function App() {
             onClick={undoLastDelete}
             disabled={deletedAppointments.length === 0}
             className={cn(
-              "p-3.5 bg-red-600 text-white rounded-full shadow-lg transition-colors flex items-center justify-center relative",
+              "p-3.5 rounded-full border shadow-sm flex items-center justify-center relative",
               deletedAppointments.length === 0
-                ? "opacity-50 cursor-not-allowed"
-                : "hover:bg-red-700 cursor-pointer",
+                ? darkMode
+                  ? "bg-[#111827] border-slate-800 text-slate-500 opacity-50 cursor-not-allowed"
+                  : "bg-[#FFFFFF] border-slate-200 text-slate-400 opacity-50 cursor-not-allowed"
+                : "bg-rose-600 border-rose-600 text-white hover:bg-rose-700 cursor-pointer",
             )}
             title={
               deletedAppointments.length > 0
@@ -26975,9 +26969,9 @@ export default function App() {
                 : "Nu există pacienți șterși în istoric (maxim 20 în istoric)"
             }
           >
-            <RotateCcw className="w-5 h-5 text-white" />
+            <RotateCcw className="w-5 h-5" />
             {deletedAppointments.length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-white text-red-600 border border-red-600 text-[10px] font-black rounded-full w-5 h-5 flex items-center justify-center shadow-xs">
+              <span className="absolute -top-1 -right-1 bg-white text-rose-600 border border-rose-600 text-[10px] font-black rounded-full w-5 h-5 flex items-center justify-center shadow-xs">
                 {deletedAppointments.length}
               </span>
             )}
@@ -26986,7 +26980,12 @@ export default function App() {
           {/* Settings Button */}
           <button
             onClick={() => setIsConfigModalOpen(true)}
-            className="p-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-full shadow-lg transition-colors flex items-center justify-center cursor-pointer"
+            className={cn(
+              "p-3.5 rounded-full border shadow-sm flex items-center justify-center cursor-pointer",
+              darkMode
+                ? "bg-[#111827] border-slate-800 text-slate-200 hover:bg-slate-800"
+                : "bg-[#FFFFFF] border-slate-200 text-slate-700 hover:bg-slate-50"
+            )}
             title="Setați Clinica"
           >
             <Settings className="w-5 h-5" />
