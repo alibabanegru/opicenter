@@ -1421,13 +1421,12 @@ export default function App() {
   };
 
   const clearAllConnectionLogs = async () => {
-    if (
-      !window.confirm(
-        "Sigur doriți să ștergeți întregul istoric de conectări? Această acțiune este ireversibilă!",
-      )
-    ) {
-      return;
-    }
+    const confirmed = await requestConfirmation(
+      "Sigur doriți să ștergeți întregul istoric de conectări? Această acțiune este ireversibilă!",
+      "Ștergere Istoric Conectări",
+      "Șterge Tot",
+    );
+    if (!confirmed) return;
     try {
       const q = collection(db, "connection_logs");
       const snapshot = await getDocs(q);
@@ -2738,9 +2737,12 @@ export default function App() {
   };
 
   const handleDeleteFrame = async (frameId: string, frameCode: string) => {
-    if (!window.confirm(`Sigur doriți să ștergeți definitiv rama cu codul "${frameCode}" din stoc?`)) {
-      return;
-    }
+    const confirmed = await requestConfirmation(
+      `Sigur doriți să ștergeți definitiv rama cu codul "${frameCode}" din stoc?`,
+      "Ștergere Ramă din Stoc",
+      "Șterge Rama",
+    );
+    if (!confirmed) return;
     try {
       await deleteDoc(doc(db, "frame_stock", frameId));
       await logActivity(
@@ -2942,12 +2944,36 @@ export default function App() {
   const [lastServerSavedAt, setLastServerSavedAt] = useState<Date | null>(null);
   const [isServerSaving, setIsServerSaving] = useState(false);
   const serverMedicalRecordRef = useRef<MedicalRecord | null>(null);
+  const draftBaselineSnapshotRef = useRef<string>("");
+
+  const [inAppConfirm, setInAppConfirm] = useState<{
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    isDanger?: boolean;
+    resolve: (ok: boolean) => void;
+  } | null>(null);
+
+  const requestConfirmation = (
+    message: string,
+    title = "Confirmare acțiune",
+    confirmLabel = "Confirmă",
+    isDanger = true,
+  ): Promise<boolean> => {
+    return new Promise((resolve) => {
+      setInAppConfirm({ title, message, confirmLabel, isDanger, resolve });
+    });
+  };
 
   // Synchronous auto-save on page unload / crash protection
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (isMedicalRecordModalOpen && currentMedicalRecord) {
         try {
+          const serialized = JSON.stringify(currentMedicalRecord);
+          if (draftBaselineSnapshotRef.current && serialized === draftBaselineSnapshotRef.current) {
+            return;
+          }
           const targetId = currentMedicalRecord.id || `${currentMedicalRecord.patientName}_${currentMedicalRecord.patientPhone}`.replace(/\s+/g, "_").toLowerCase();
           const payload = {
             recordId: targetId,
@@ -2967,8 +2993,18 @@ export default function App() {
   // Debounced local draft auto-save while editing a medical record
   useEffect(() => {
     if (!isMedicalRecordModalOpen || !currentMedicalRecord) return;
+    try {
+      const serialized = JSON.stringify(currentMedicalRecord);
+      if (draftBaselineSnapshotRef.current && serialized === draftBaselineSnapshotRef.current) {
+        return;
+      }
+    } catch {}
     const timer = setTimeout(() => {
       try {
+        const serialized = JSON.stringify(currentMedicalRecord);
+        if (draftBaselineSnapshotRef.current && serialized === draftBaselineSnapshotRef.current) {
+          return;
+        }
         const targetId =
           currentMedicalRecord.id ||
           `${currentMedicalRecord.patientName}_${currentMedicalRecord.patientPhone}`
@@ -2994,7 +3030,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [isMedicalRecordModalOpen, currentMedicalRecord]);
 
-  const checkAndRestoreDraftForRecord = (rec: MedicalRecord): MedicalRecord => {
+  const checkAndRestoreDraftForRecord = (rec: MedicalRecord, hasServerCopy = false): MedicalRecord => {
     if (!rec) return rec;
     const cleanName = (rec.patientName || "").trim().toLowerCase();
     const cleanPhone = (rec.patientPhone || "").replace(/\D/g, "");
@@ -3069,7 +3105,7 @@ export default function App() {
         const draftDate = new Date(matchedParsed.savedAt);
         const serverDate = rec.updatedAt ? new Date(rec.updatedAt) : new Date(0);
 
-        const hasUnsavedContent =
+        const hasFieldChanges =
           (matchedParsed.record.diagnostic && matchedParsed.record.diagnostic !== rec.diagnostic) ||
           (matchedParsed.record.treatment && matchedParsed.record.treatment !== rec.treatment) ||
           (matchedParsed.record.recomandari && matchedParsed.record.recomandari !== rec.recomandari) ||
@@ -3077,11 +3113,19 @@ export default function App() {
           (matchedParsed.record.history && matchedParsed.record.history !== rec.history) ||
           (matchedParsed.record.od?.sph && matchedParsed.record.od?.sph !== rec.od?.sph) ||
           (matchedParsed.record.os?.sph && matchedParsed.record.os?.sph !== rec.os?.sph) ||
-          (matchedParsed.record.dp && matchedParsed.record.dp !== rec.dp) ||
-          draftDate.getTime() > serverDate.getTime() + 1000;
+          (matchedParsed.record.dp && matchedParsed.record.dp !== rec.dp);
+
+        const isDraftMateriallyDifferent =
+          JSON.stringify({ ...matchedParsed.record, updatedAt: "" }) !==
+          JSON.stringify({ ...rec, updatedAt: "" });
+
+        const hasUnsavedContent =
+          hasFieldChanges ||
+          (isDraftMateriallyDifferent && draftDate.getTime() > serverDate.getTime() + 1000);
 
         if (hasUnsavedContent) {
           serverMedicalRecordRef.current = rec;
+          draftBaselineSnapshotRef.current = "";
           const restored = {
             ...rec,
             ...matchedParsed.record,
@@ -3091,6 +3135,8 @@ export default function App() {
             hour: "2-digit",
             minute: "2-digit",
           });
+          setLastLocalSavedAt(!isNaN(draftDate.getTime()) ? draftDate : new Date());
+          setLastServerSavedAt(hasServerCopy && rec.updatedAt && !isNaN(new Date(rec.updatedAt).getTime()) ? new Date(rec.updatedAt) : null);
           setDraftRestoredNotice(
             `Ciornă salvată anterior recuperată cu succes (${timeStr}). Datele sunt disponibile acum în fișă.`,
           );
@@ -3100,13 +3146,27 @@ export default function App() {
     } catch (e) {
       console.warn("Error restoring draft:", e);
     }
+    draftBaselineSnapshotRef.current = JSON.stringify(rec);
+    setLastLocalSavedAt(null);
+    setLastServerSavedAt(hasServerCopy && rec.updatedAt && !isNaN(new Date(rec.updatedAt).getTime()) ? new Date(rec.updatedAt) : null);
+    setDraftRestoredNotice(null);
     return rec;
   };
 
   const handleDiscardDraft = () => {
     if (serverMedicalRecordRef.current) {
+      draftBaselineSnapshotRef.current = JSON.stringify(serverMedicalRecordRef.current);
       setCurrentMedicalRecord(serverMedicalRecordRef.current);
+      setLastServerSavedAt(
+        serverMedicalRecordRef.current.updatedAt &&
+          !isNaN(new Date(serverMedicalRecordRef.current.updatedAt).getTime())
+          ? new Date(serverMedicalRecordRef.current.updatedAt)
+          : null,
+      );
+    } else {
+      draftBaselineSnapshotRef.current = "";
     }
+    setLastLocalSavedAt(null);
     if (currentMedicalRecord) {
       try {
         const targetId = currentMedicalRecord.id || `${currentMedicalRecord.patientName}_${currentMedicalRecord.patientPhone}`.replace(/\s+/g, "_").toLowerCase();
@@ -4874,8 +4934,8 @@ export default function App() {
     setEditingSymptomValue("");
   };
 
-  const handleDeleteSymptom = (index: number) => {
-    if (confirm("Sigur doriți să ștergeți acest simptom din listă?")) {
+  const handleDeleteSymptom = async (index: number) => {
+    if (await requestConfirmation("Sigur doriți să ștergeți acest simptom din listă?", "Ștergere Simptom", "Șterge")) {
       const updated = symptomOptionsDraft.filter((_, idx) => idx !== index);
       setSymptomOptionsDraft(updated);
     }
@@ -4928,8 +4988,8 @@ export default function App() {
     setEditingDiagnosticValue("");
   };
 
-  const handleDeleteDiagnostic = (index: number) => {
-    if (confirm("Sigur doriți să ștergeți acest diagnostic din listă?")) {
+  const handleDeleteDiagnostic = async (index: number) => {
+    if (await requestConfirmation("Sigur doriți să ștergeți acest diagnostic din listă?", "Ștergere Diagnostic", "Șterge")) {
       const updated = diagnosticOptionsDraft.filter((_, idx) => idx !== index);
       setDiagnosticOptionsDraft(updated);
     }
@@ -4982,8 +5042,8 @@ export default function App() {
     setEditingRecommendationValue("");
   };
 
-  const handleDeleteRecommendation = (index: number) => {
-    if (confirm("Sigur doriți să ștergeți această recomandare din listă?")) {
+  const handleDeleteRecommendation = async (index: number) => {
+    if (await requestConfirmation("Sigur doriți să ștergeți această recomandare din listă?", "Ștergere Recomandare", "Șterge")) {
       const updated = recommendationOptionsDraft.filter((_, idx) => idx !== index);
       setRecommendationOptionsDraft(updated);
     }
@@ -5036,8 +5096,8 @@ export default function App() {
     setEditingAnteriorSegmentValue("");
   };
 
-  const handleDeleteAnteriorSegment = (index: number) => {
-    if (confirm("Sigur doriți să ștergeți această opțiune din listă?")) {
+  const handleDeleteAnteriorSegment = async (index: number) => {
+    if (await requestConfirmation("Sigur doriți să ștergeți această opțiune din listă?", "Ștergere Opțiune Pol Anterior", "Șterge")) {
       const updated = anteriorSegmentOptionsDraft.filter((_, idx) => idx !== index);
       setAnteriorSegmentOptionsDraft(updated);
     }
@@ -5090,8 +5150,8 @@ export default function App() {
     setEditingPosteriorSegmentValue("");
   };
 
-  const handleDeletePosteriorSegment = (index: number) => {
-    if (confirm("Sigur doriți să ștergeți această opțiune din listă?")) {
+  const handleDeletePosteriorSegment = async (index: number) => {
+    if (await requestConfirmation("Sigur doriți să ștergeți această opțiune din listă?", "Ștergere Opțiune Pol Posterior", "Șterge")) {
       const updated = posteriorSegmentOptionsDraft.filter((_, idx) => idx !== index);
       setPosteriorSegmentOptionsDraft(updated);
     }
@@ -9722,7 +9782,7 @@ export default function App() {
         cl_os: isBrandNewConsultationForVisit ? undefined : (targetPrescription?.cl_os || data.cl_os),
       } as MedicalRecord;
 
-      setCurrentMedicalRecord(checkAndRestoreDraftForRecord(recordToSet));
+      setCurrentMedicalRecord(checkAndRestoreDraftForRecord(recordToSet, true));
 
       setActivePrescriptionIndex(targetIdx);
     } else {
@@ -9838,7 +9898,7 @@ export default function App() {
         updatedAt: new Date().toISOString(),
       } as MedicalRecord;
 
-      setCurrentMedicalRecord(checkAndRestoreDraftForRecord(newRec));
+      setCurrentMedicalRecord(checkAndRestoreDraftForRecord(newRec, false));
       setActivePrescriptionIndex(null);
     }
     setActiveOrderIndex(null);
@@ -10328,158 +10388,168 @@ export default function App() {
   const saveMedicalRecord = async (
     shouldClose = true,
     allowSkipDpCheck = false,
+    recordOverride?: MedicalRecord | null,
   ): Promise<boolean> => {
-    if (!currentMedicalRecord) return false;
+    const activeRecord = recordOverride || currentMedicalRecord;
+    if (!activeRecord) return false;
     // Prevenire trimiteri paralele sau dublu-click accidental (Point 3.B)
     if (isSavingMedicalRecordRef.current) return false;
     isSavingMedicalRecordRef.current = true;
 
+    const isExternalOverride = !!(
+      recordOverride &&
+      currentMedicalRecord &&
+      recordOverride.id !== currentMedicalRecord.id
+    );
+    const effectivePrescriptionIndex = isExternalOverride ? null : activePrescriptionIndex;
+    const effectiveAppointment = isExternalOverride ? null : activeAppointment;
+
     try {
-      let newHistory = [...(currentMedicalRecord.prescriptionHistory || [])];
+      let newHistory = [...(activeRecord.prescriptionHistory || [])];
     const now = new Date().toISOString();
-    const isInterEnabledForSave = !!currentMedicalRecord.intermediate_enabled;
+    const isInterEnabledForSave = !!activeRecord.intermediate_enabled;
     const currentItem: PrescriptionHistoryItem = {
       date:
-        activePrescriptionIndex !== null && newHistory[activePrescriptionIndex]
-          ? newHistory[activePrescriptionIndex].date
-          : (activeAppointment?.startTime ? new Date(activeAppointment.startTime).toISOString() : now),
-      doctorId: activeAppointment?.doctorId || profile?.role || "all",
+        effectivePrescriptionIndex !== null && newHistory[effectivePrescriptionIndex]
+          ? newHistory[effectivePrescriptionIndex].date
+          : (effectiveAppointment?.startTime ? new Date(effectiveAppointment.startTime).toISOString() : now),
+      doctorId: effectiveAppointment?.doctorId || profile?.role || "all",
       od: {
-        ...currentMedicalRecord.od,
-        intermediate_sph: isInterEnabledForSave ? currentMedicalRecord.od.intermediate_sph : "",
-        intermediate_cyl: isInterEnabledForSave ? currentMedicalRecord.od.intermediate_cyl : "",
-        intermediate_axis: isInterEnabledForSave ? currentMedicalRecord.od.intermediate_axis : "",
+        ...activeRecord.od,
+        intermediate_sph: isInterEnabledForSave ? activeRecord.od.intermediate_sph : "",
+        intermediate_cyl: isInterEnabledForSave ? activeRecord.od.intermediate_cyl : "",
+        intermediate_axis: isInterEnabledForSave ? activeRecord.od.intermediate_axis : "",
       },
       os: {
-        ...currentMedicalRecord.os,
-        intermediate_sph: isInterEnabledForSave ? currentMedicalRecord.os.intermediate_sph : "",
-        intermediate_cyl: isInterEnabledForSave ? currentMedicalRecord.os.intermediate_cyl : "",
-        intermediate_axis: isInterEnabledForSave ? currentMedicalRecord.os.intermediate_axis : "",
+        ...activeRecord.os,
+        intermediate_sph: isInterEnabledForSave ? activeRecord.os.intermediate_sph : "",
+        intermediate_cyl: isInterEnabledForSave ? activeRecord.os.intermediate_cyl : "",
+        intermediate_axis: isInterEnabledForSave ? activeRecord.os.intermediate_axis : "",
       },
-      dp: currentMedicalRecord.dp,
-      dp_od: currentMedicalRecord.dp_od,
-      dp_os: currentMedicalRecord.dp_os,
-      dp_aproape: currentMedicalRecord.dp_aproape,
-      dp_aproape_od: currentMedicalRecord.dp_aproape_od,
-      dp_aproape_os: currentMedicalRecord.dp_aproape_os,
+      dp: activeRecord.dp,
+      dp_od: activeRecord.dp_od,
+      dp_os: activeRecord.dp_os,
+      dp_aproape: activeRecord.dp_aproape,
+      dp_aproape_od: activeRecord.dp_aproape_od,
+      dp_aproape_os: activeRecord.dp_aproape_os,
       intermediate_enabled: isInterEnabledForSave,
-      intermediate_distance: isInterEnabledForSave ? currentMedicalRecord.intermediate_distance : "",
-      intermediate_dp: isInterEnabledForSave ? currentMedicalRecord.intermediate_dp : "",
-      intermediate_dp_od: isInterEnabledForSave ? currentMedicalRecord.intermediate_dp_od : "",
-      intermediate_dp_os: isInterEnabledForSave ? currentMedicalRecord.intermediate_dp_os : "",
-      specialMentions: currentMedicalRecord.specialMentions,
-      treatment: currentMedicalRecord.treatment,
-      diagnostic: currentMedicalRecord.diagnostic,
-      recomandari: currentMedicalRecord.recomandari,
-      symptoms: currentMedicalRecord.symptoms,
-      history: currentMedicalRecord.history,
-      onsetAndEvolution: currentMedicalRecord.onsetAndEvolution,
-      recentHospitalizations: currentMedicalRecord.recentHospitalizations,
-      clinicalTreatment: currentMedicalRecord.clinicalTreatment,
-      dependencyStatus: currentMedicalRecord.dependencyStatus,
-      mobilityStatus: currentMedicalRecord.mobilityStatus,
-      recoveryPlan: currentMedicalRecord.recoveryPlan,
-      recoveryPrognosis: currentMedicalRecord.recoveryPrognosis,
-      medications: currentMedicalRecord.medications,
-      iop: currentMedicalRecord.iop
-        ? { ...currentMedicalRecord.iop }
+      intermediate_distance: isInterEnabledForSave ? activeRecord.intermediate_distance : "",
+      intermediate_dp: isInterEnabledForSave ? activeRecord.intermediate_dp : "",
+      intermediate_dp_od: isInterEnabledForSave ? activeRecord.intermediate_dp_od : "",
+      intermediate_dp_os: isInterEnabledForSave ? activeRecord.intermediate_dp_os : "",
+      specialMentions: activeRecord.specialMentions,
+      treatment: activeRecord.treatment,
+      diagnostic: activeRecord.diagnostic,
+      recomandari: activeRecord.recomandari,
+      symptoms: activeRecord.symptoms,
+      history: activeRecord.history,
+      onsetAndEvolution: activeRecord.onsetAndEvolution,
+      recentHospitalizations: activeRecord.recentHospitalizations,
+      clinicalTreatment: activeRecord.clinicalTreatment,
+      dependencyStatus: activeRecord.dependencyStatus,
+      mobilityStatus: activeRecord.mobilityStatus,
+      recoveryPlan: activeRecord.recoveryPlan,
+      recoveryPrognosis: activeRecord.recoveryPrognosis,
+      medications: activeRecord.medications,
+      iop: activeRecord.iop
+        ? { ...activeRecord.iop }
         : { od: "", os: "" },
-      correctedIop: currentMedicalRecord.correctedIop
-        ? { ...currentMedicalRecord.correctedIop }
+      correctedIop: activeRecord.correctedIop
+        ? { ...activeRecord.correctedIop }
         : { od: "", os: "" },
-      pachymetry: currentMedicalRecord.pachymetry
-        ? { ...currentMedicalRecord.pachymetry }
+      pachymetry: activeRecord.pachymetry
+        ? { ...activeRecord.pachymetry }
         : { od: "", os: "" },
-      axialLength: currentMedicalRecord.axialLength
-        ? { ...currentMedicalRecord.axialLength }
+      axialLength: activeRecord.axialLength
+        ? { ...activeRecord.axialLength }
         : { od: "", os: "" },
-      keratometry: currentMedicalRecord.keratometry
-        ? { ...currentMedicalRecord.keratometry }
+      keratometry: activeRecord.keratometry
+        ? { ...activeRecord.keratometry }
         : { od: "", os: "" },
-      anteriorSegment: currentMedicalRecord.anteriorSegment
-        ? { ...currentMedicalRecord.anteriorSegment }
+      anteriorSegment: activeRecord.anteriorSegment
+        ? { ...activeRecord.anteriorSegment }
         : { od: "", os: "" },
-      anteriorSegmentAo: currentMedicalRecord.anteriorSegmentAo,
-      posteriorSegment: currentMedicalRecord.posteriorSegment
-        ? { ...currentMedicalRecord.posteriorSegment }
+      anteriorSegmentAo: activeRecord.anteriorSegmentAo,
+      posteriorSegment: activeRecord.posteriorSegment
+        ? { ...activeRecord.posteriorSegment }
         : { od: "", os: "" },
-      posteriorSegmentAo: currentMedicalRecord.posteriorSegmentAo,
-      contrastSensitivity: currentMedicalRecord.contrastSensitivity,
-      colorVision: currentMedicalRecord.colorVision,
-      binocularVision: currentMedicalRecord.binocularVision,
-      otherEyeDiseases: currentMedicalRecord.otherEyeDiseases,
-      scutire: currentMedicalRecord.scutire,
-      examinations: currentMedicalRecord.examinations
-        ? { ...currentMedicalRecord.examinations }
+      posteriorSegmentAo: activeRecord.posteriorSegmentAo,
+      contrastSensitivity: activeRecord.contrastSensitivity,
+      colorVision: activeRecord.colorVision,
+      binocularVision: activeRecord.binocularVision,
+      otherEyeDiseases: activeRecord.otherEyeDiseases,
+      scutire: activeRecord.scutire,
+      examinations: activeRecord.examinations
+        ? { ...activeRecord.examinations }
         : { ...DEFAULT_EXAMINATIONS },
-      examinationInterpretation: currentMedicalRecord.examinationInterpretation,
-      lensType: currentMedicalRecord.lensType,
-      lensMaterial: currentMedicalRecord.lensMaterial,
-      lensTreatment: currentMedicalRecord.lensTreatment,
-      lensHeliomat: (currentMedicalRecord as any).lensHeliomat,
-      cycloplegia: currentMedicalRecord.cycloplegia
-        ? { ...currentMedicalRecord.cycloplegia }
+      examinationInterpretation: activeRecord.examinationInterpretation,
+      lensType: activeRecord.lensType,
+      lensMaterial: activeRecord.lensMaterial,
+      lensTreatment: activeRecord.lensTreatment,
+      lensHeliomat: (activeRecord as any).lensHeliomat,
+      cycloplegia: activeRecord.cycloplegia
+        ? { ...activeRecord.cycloplegia }
         : undefined,
-      nonCycloplegic: currentMedicalRecord.nonCycloplegic
-        ? { ...currentMedicalRecord.nonCycloplegic }
+      nonCycloplegic: activeRecord.nonCycloplegic
+        ? { ...activeRecord.nonCycloplegic }
         : undefined,
-      heliomat_od: (currentMedicalRecord as any).heliomat_od,
-      heliomat_os: (currentMedicalRecord as any).heliomat_os,
-      progresiv_od: (currentMedicalRecord as any).progresiv_od,
-      progresiv_os: (currentMedicalRecord as any).progresiv_os,
-      bifocal_od: (currentMedicalRecord as any).bifocal_od,
-      bifocal_os: (currentMedicalRecord as any).bifocal_os,
-      degresiv_od: (currentMedicalRecord as any).degresiv_od,
-      degresiv_os: (currentMedicalRecord as any).degresiv_os,
-      isControl: currentMedicalRecord.isControl,
-      isGratis: currentMedicalRecord.isGratis,
-      isConsultComplet: currentMedicalRecord.isConsultComplet,
+      heliomat_od: (activeRecord as any).heliomat_od,
+      heliomat_os: (activeRecord as any).heliomat_os,
+      progresiv_od: (activeRecord as any).progresiv_od,
+      progresiv_os: (activeRecord as any).progresiv_os,
+      bifocal_od: (activeRecord as any).bifocal_od,
+      bifocal_os: (activeRecord as any).bifocal_os,
+      degresiv_od: (activeRecord as any).degresiv_od,
+      degresiv_os: (activeRecord as any).degresiv_os,
+      isControl: activeRecord.isControl,
+      isGratis: activeRecord.isGratis,
+      isConsultComplet: activeRecord.isConsultComplet,
     };
 
-    if (activePrescriptionIndex !== null) {
-      newHistory[activePrescriptionIndex] = currentItem;
+    if (effectivePrescriptionIndex !== null) {
+      newHistory[effectivePrescriptionIndex] = currentItem;
     } else {
       const hasData =
-        currentMedicalRecord.od.sph ||
-        currentMedicalRecord.od.cyl ||
-        currentMedicalRecord.os.sph ||
-        currentMedicalRecord.os.cyl ||
-        currentMedicalRecord.dp ||
-        currentMedicalRecord.axialLength?.od ||
-        currentMedicalRecord.axialLength?.os ||
-        currentMedicalRecord.examinations ||
-        currentMedicalRecord.treatment ||
-        currentMedicalRecord.diagnostic ||
-        currentMedicalRecord.symptoms ||
-        currentMedicalRecord.history ||
-        currentMedicalRecord.medications ||
-        currentMedicalRecord.lensType ||
-        currentMedicalRecord.lensMaterial ||
-        currentMedicalRecord.lensTreatment ||
-        (currentMedicalRecord as any).lensHeliomat ||
-        currentMedicalRecord.examinationInterpretation ||
-        currentMedicalRecord.anteriorSegment?.od ||
-        currentMedicalRecord.anteriorSegment?.os ||
-        currentMedicalRecord.posteriorSegment?.od ||
-        currentMedicalRecord.posteriorSegment?.os ||
-        currentMedicalRecord.keratometry?.od ||
-        currentMedicalRecord.keratometry?.os ||
-        currentMedicalRecord.contrastSensitivity ||
-        currentMedicalRecord.colorVision ||
-        currentMedicalRecord.binocularVision ||
-        currentMedicalRecord.otherEyeDiseases ||
-        currentMedicalRecord.isConsultComplet ||
-        currentMedicalRecord.isControl ||
-        currentMedicalRecord.isGratis;
+        activeRecord.od.sph ||
+        activeRecord.od.cyl ||
+        activeRecord.os.sph ||
+        activeRecord.os.cyl ||
+        activeRecord.dp ||
+        activeRecord.axialLength?.od ||
+        activeRecord.axialLength?.os ||
+        activeRecord.examinations ||
+        activeRecord.treatment ||
+        activeRecord.diagnostic ||
+        activeRecord.symptoms ||
+        activeRecord.history ||
+        activeRecord.medications ||
+        activeRecord.lensType ||
+        activeRecord.lensMaterial ||
+        activeRecord.lensTreatment ||
+        (activeRecord as any).lensHeliomat ||
+        activeRecord.examinationInterpretation ||
+        activeRecord.anteriorSegment?.od ||
+        activeRecord.anteriorSegment?.os ||
+        activeRecord.posteriorSegment?.od ||
+        activeRecord.posteriorSegment?.os ||
+        activeRecord.keratometry?.od ||
+        activeRecord.keratometry?.os ||
+        activeRecord.contrastSensitivity ||
+        activeRecord.colorVision ||
+        activeRecord.binocularVision ||
+        activeRecord.otherEyeDiseases ||
+        activeRecord.isConsultComplet ||
+        activeRecord.isControl ||
+        activeRecord.isGratis;
 
       if (hasData) {
         newHistory = [currentItem, ...newHistory];
       }
     }
 
-    const finalAge = currentMedicalRecord.patientBirthDate
-      ? calculateAge(currentMedicalRecord.patientBirthDate)
-      : currentMedicalRecord.patientAge;
+    const finalAge = activeRecord.patientBirthDate
+      ? calculateAge(activeRecord.patientBirthDate)
+      : activeRecord.patientAge;
 
     if (finalAge !== undefined && finalAge > 110) {
       setBookingError("Vârsta nu poate fi mai mare de 110 ani!");
@@ -10487,8 +10557,8 @@ export default function App() {
       return false;
     }
 
-    if (currentMedicalRecord.patientBirthDate) {
-      const birthDateObj = new Date(currentMedicalRecord.patientBirthDate);
+    if (activeRecord.patientBirthDate) {
+      const birthDateObj = new Date(activeRecord.patientBirthDate);
       const today = new Date();
       const todayEnd = new Date(
         today.getFullYear(),
@@ -10509,12 +10579,12 @@ export default function App() {
     }
 
     const odDistCylNum =
-      parseFloat(String(currentMedicalRecord.od?.cyl || "").replace(",", ".")) ||
+      parseFloat(String(activeRecord.od?.cyl || "").replace(",", ".")) ||
       0;
     if (
-      currentMedicalRecord.od?.cyl &&
+      activeRecord.od?.cyl &&
       odDistCylNum !== 0 &&
-      !currentMedicalRecord.od?.axis
+      !activeRecord.od?.axis
     ) {
       const msg = "Atenție: Ochiul drept (Distanță) are cilindru fără ax completat. Completați axul pentru a putea salva fișa.";
       setBookingError(msg);
@@ -10523,12 +10593,12 @@ export default function App() {
     }
 
     const osDistCylNum =
-      parseFloat(String(currentMedicalRecord.os?.cyl || "").replace(",", ".")) ||
+      parseFloat(String(activeRecord.os?.cyl || "").replace(",", ".")) ||
       0;
     if (
-      currentMedicalRecord.os?.cyl &&
+      activeRecord.os?.cyl &&
       osDistCylNum !== 0 &&
-      !currentMedicalRecord.os?.axis
+      !activeRecord.os?.axis
     ) {
       const msg = "Atenție: Ochiul stâng (Distanță) are cilindru fără ax completat. Completați axul pentru a putea salva fișa.";
       setBookingError(msg);
@@ -10536,16 +10606,16 @@ export default function App() {
       return false;
     }
 
-    if (currentMedicalRecord.od?.add) {
+    if (activeRecord.od?.add) {
       const nearCylOD =
-        currentMedicalRecord.od?.near_cyl !== undefined && currentMedicalRecord.od?.near_cyl !== ""
-          ? currentMedicalRecord.od.near_cyl
-          : currentMedicalRecord.od?.cyl || "";
+        activeRecord.od?.near_cyl !== undefined && activeRecord.od?.near_cyl !== ""
+          ? activeRecord.od.near_cyl
+          : activeRecord.od?.cyl || "";
       const nearCylNumOD = parseFloat(String(nearCylOD).replace(",", ".")) || 0;
       const nearAxisOD =
-        currentMedicalRecord.od?.near_axis !== undefined && currentMedicalRecord.od?.near_axis !== ""
-          ? currentMedicalRecord.od.near_axis
-          : currentMedicalRecord.od?.axis || "";
+        activeRecord.od?.near_axis !== undefined && activeRecord.od?.near_axis !== ""
+          ? activeRecord.od.near_axis
+          : activeRecord.od?.axis || "";
 
       if (nearCylNumOD !== 0 && !nearAxisOD) {
         const msg = "Atenție: Ochiul drept (Aproape) are cilindru fără ax completat. Completați axul pentru a putea salva fișa.";
@@ -10555,16 +10625,16 @@ export default function App() {
       }
     }
 
-    if (currentMedicalRecord.os?.add) {
+    if (activeRecord.os?.add) {
       const nearCylOS =
-        currentMedicalRecord.os?.near_cyl !== undefined && currentMedicalRecord.os?.near_cyl !== ""
-          ? currentMedicalRecord.os.near_cyl
-          : currentMedicalRecord.os?.cyl || "";
+        activeRecord.os?.near_cyl !== undefined && activeRecord.os?.near_cyl !== ""
+          ? activeRecord.os.near_cyl
+          : activeRecord.os?.cyl || "";
       const nearCylNumOS = parseFloat(String(nearCylOS).replace(",", ".")) || 0;
       const nearAxisOS =
-        currentMedicalRecord.os?.near_axis !== undefined && currentMedicalRecord.os?.near_axis !== ""
-          ? currentMedicalRecord.os.near_axis
-          : currentMedicalRecord.os?.axis || "";
+        activeRecord.os?.near_axis !== undefined && activeRecord.os?.near_axis !== ""
+          ? activeRecord.os.near_axis
+          : activeRecord.os?.axis || "";
 
       if (nearCylNumOS !== 0 && !nearAxisOS) {
         const msg = "Atenție: Ochiul stâng (Aproape) are cilindru fără ax completat. Completați axul pentru a putea salva fișa.";
@@ -10576,11 +10646,11 @@ export default function App() {
 
     if (isInterEnabledForSave) {
       const interOdCylNum =
-        parseFloat(String(currentMedicalRecord.od?.intermediate_cyl || "").replace(",", ".")) || 0;
+        parseFloat(String(activeRecord.od?.intermediate_cyl || "").replace(",", ".")) || 0;
       if (
-        currentMedicalRecord.od?.intermediate_cyl &&
+        activeRecord.od?.intermediate_cyl &&
         interOdCylNum !== 0 &&
-        !currentMedicalRecord.od?.intermediate_axis
+        !activeRecord.od?.intermediate_axis
       ) {
         const msg = "Atenție: Ochiul drept (Intermediar) are cilindru fără ax completat. Completați axul pentru a putea salva fișa.";
         setBookingError(msg);
@@ -10589,11 +10659,11 @@ export default function App() {
       }
 
       const interOsCylNum =
-        parseFloat(String(currentMedicalRecord.os?.intermediate_cyl || "").replace(",", ".")) || 0;
+        parseFloat(String(activeRecord.os?.intermediate_cyl || "").replace(",", ".")) || 0;
       if (
-        currentMedicalRecord.os?.intermediate_cyl &&
+        activeRecord.os?.intermediate_cyl &&
         interOsCylNum !== 0 &&
-        !currentMedicalRecord.os?.intermediate_axis
+        !activeRecord.os?.intermediate_axis
       ) {
         const msg = "Atenție: Ochiul stâng (Intermediar) are cilindru fără ax completat. Completați axul pentru a putea salva fișa.";
         setBookingError(msg);
@@ -10609,28 +10679,28 @@ export default function App() {
     };
 
     const hasDioptersOnRecord = !!(
-      checkDiopterVal(currentMedicalRecord.od?.sph) ||
-      checkDiopterVal(currentMedicalRecord.od?.cyl) ||
-      checkDiopterVal(currentMedicalRecord.od?.axis) ||
-      checkDiopterVal(currentMedicalRecord.od?.add) ||
-      checkDiopterVal(currentMedicalRecord.od?.prism) ||
-      checkDiopterVal(currentMedicalRecord.os?.sph) ||
-      checkDiopterVal(currentMedicalRecord.os?.cyl) ||
-      checkDiopterVal(currentMedicalRecord.os?.axis) ||
-      checkDiopterVal(currentMedicalRecord.os?.add) ||
-      checkDiopterVal(currentMedicalRecord.os?.prism) ||
-      checkDiopterVal(currentMedicalRecord.od?.near_sph) ||
-      checkDiopterVal(currentMedicalRecord.od?.near_cyl) ||
-      checkDiopterVal(currentMedicalRecord.od?.near_axis) ||
-      checkDiopterVal(currentMedicalRecord.os?.near_sph) ||
-      checkDiopterVal(currentMedicalRecord.os?.near_cyl) ||
-      checkDiopterVal(currentMedicalRecord.os?.near_axis) ||
-      checkDiopterVal(currentMedicalRecord.od?.intermediate_sph) ||
-      checkDiopterVal(currentMedicalRecord.od?.intermediate_cyl) ||
-      checkDiopterVal(currentMedicalRecord.od?.intermediate_axis) ||
-      checkDiopterVal(currentMedicalRecord.os?.intermediate_sph) ||
-      checkDiopterVal(currentMedicalRecord.os?.intermediate_cyl) ||
-      checkDiopterVal(currentMedicalRecord.os?.intermediate_axis)
+      checkDiopterVal(activeRecord.od?.sph) ||
+      checkDiopterVal(activeRecord.od?.cyl) ||
+      checkDiopterVal(activeRecord.od?.axis) ||
+      checkDiopterVal(activeRecord.od?.add) ||
+      checkDiopterVal(activeRecord.od?.prism) ||
+      checkDiopterVal(activeRecord.os?.sph) ||
+      checkDiopterVal(activeRecord.os?.cyl) ||
+      checkDiopterVal(activeRecord.os?.axis) ||
+      checkDiopterVal(activeRecord.os?.add) ||
+      checkDiopterVal(activeRecord.os?.prism) ||
+      checkDiopterVal(activeRecord.od?.near_sph) ||
+      checkDiopterVal(activeRecord.od?.near_cyl) ||
+      checkDiopterVal(activeRecord.od?.near_axis) ||
+      checkDiopterVal(activeRecord.os?.near_sph) ||
+      checkDiopterVal(activeRecord.os?.near_cyl) ||
+      checkDiopterVal(activeRecord.os?.near_axis) ||
+      checkDiopterVal(activeRecord.od?.intermediate_sph) ||
+      checkDiopterVal(activeRecord.od?.intermediate_cyl) ||
+      checkDiopterVal(activeRecord.od?.intermediate_axis) ||
+      checkDiopterVal(activeRecord.os?.intermediate_sph) ||
+      checkDiopterVal(activeRecord.os?.intermediate_cyl) ||
+      checkDiopterVal(activeRecord.os?.intermediate_axis)
     );
 
     const checkDpVal = (v: any) => {
@@ -10640,17 +10710,17 @@ export default function App() {
     };
 
     const hasDpOnRecord = !!(
-      checkDpVal(currentMedicalRecord.dp) ||
-      checkDpVal(currentMedicalRecord.dp_od) ||
-      checkDpVal(currentMedicalRecord.dp_os) ||
-      checkDpVal(currentMedicalRecord.dp_aproape) ||
-      checkDpVal(currentMedicalRecord.dp_aproape_od) ||
-      checkDpVal(currentMedicalRecord.dp_aproape_os) ||
-      checkDpVal(currentMedicalRecord.intermediate_dp) ||
-      checkDpVal(currentMedicalRecord.intermediate_dp_od) ||
-      checkDpVal(currentMedicalRecord.intermediate_dp_os) ||
-      checkDpVal(currentMedicalRecord.od?.pd) ||
-      checkDpVal(currentMedicalRecord.os?.pd)
+      checkDpVal(activeRecord.dp) ||
+      checkDpVal(activeRecord.dp_od) ||
+      checkDpVal(activeRecord.dp_os) ||
+      checkDpVal(activeRecord.dp_aproape) ||
+      checkDpVal(activeRecord.dp_aproape_od) ||
+      checkDpVal(activeRecord.dp_aproape_os) ||
+      checkDpVal(activeRecord.intermediate_dp) ||
+      checkDpVal(activeRecord.intermediate_dp_od) ||
+      checkDpVal(activeRecord.intermediate_dp_os) ||
+      checkDpVal(activeRecord.od?.pd) ||
+      checkDpVal(activeRecord.os?.pd)
     );
 
     if (!allowSkipDpCheck && hasDioptersOnRecord && !hasDpOnRecord) {
@@ -10660,8 +10730,8 @@ export default function App() {
       return false;
     }
 
-    if (currentMedicalRecord.patientCnp) {
-      const trimmedCnp = currentMedicalRecord.patientCnp.trim();
+    if (activeRecord.patientCnp) {
+      const trimmedCnp = activeRecord.patientCnp.trim();
       if (trimmedCnp) {
         if (trimmedCnp.length === 13 && !validateCNP(trimmedCnp)) {
           setErrorMessage("Atenție: CNP-ul introdus nu respectă cifra de control.");
@@ -10671,7 +10741,7 @@ export default function App() {
           (r) =>
             r.patientCnp &&
             r.patientCnp.trim() === trimmedCnp &&
-            r.id !== currentMedicalRecord.id
+            r.id !== activeRecord.id
         );
 
         if (duplicate) {
@@ -10686,20 +10756,20 @@ export default function App() {
     setLoading(true);
     const existingRec =
         findPatientMedicalRecord(
-          currentMedicalRecord.patientName,
-          currentMedicalRecord.patientPhone,
-          currentMedicalRecord.patientCnp,
+          activeRecord.patientName,
+          activeRecord.patientPhone,
+          activeRecord.patientCnp,
           medicalRecords,
         ) ||
         medicalRecords.find(
           (r) =>
-            r.id === currentMedicalRecord.id ||
+            r.id === activeRecord.id ||
             (r.patientName &&
-              currentMedicalRecord.patientName &&
+              activeRecord.patientName &&
               r.patientName.toLowerCase().trim() ===
-                currentMedicalRecord.patientName.toLowerCase().trim() &&
+                activeRecord.patientName.toLowerCase().trim() &&
               (r.patientPhone || "").trim() ===
-                (currentMedicalRecord.patientPhone || "").trim()),
+                (activeRecord.patientPhone || "").trim()),
         );
 
       // Merge any existing history entries from existingRec that might not be in newHistory
@@ -10716,10 +10786,15 @@ export default function App() {
         );
       }
 
-      const oldPatientName = (originalPatientNameRef.current || existingRec?.patientName || currentMedicalRecord.patientName || "").trim();
-      const oldRecordId = currentMedicalRecord.id;
-      const phone = (currentMedicalRecord.patientPhone || "").trim();
-      const newPatientName = (currentMedicalRecord.patientName || "").trim();
+      const oldPatientName = (
+        (!isExternalOverride ? originalPatientNameRef.current : "") ||
+        existingRec?.patientName ||
+        activeRecord.patientName ||
+        ""
+      ).trim();
+      const oldRecordId = activeRecord.id;
+      const phone = (activeRecord.patientPhone || "").trim();
+      const newPatientName = (activeRecord.patientName || "").trim();
       const newRecordId = `${newPatientName}_${phone}`
         .replace(/\s+/g, "_")
         .toLowerCase();
@@ -10729,31 +10804,31 @@ export default function App() {
           oldPatientName,
           newPatientName,
           phone,
-          currentMedicalRecord.patientCnp,
+          activeRecord.patientCnp,
           oldRecordId,
         ).catch(() => {});
       }
 
       // Curățare câmpuri semidistanță dacă butonul a fost deselectat
-      const isInterActive = !!currentMedicalRecord.intermediate_enabled;
+      const isInterActive = !!activeRecord.intermediate_enabled;
       const sanitizedRecord: MedicalRecord = {
-        ...currentMedicalRecord,
+        ...activeRecord,
         intermediate_enabled: isInterActive,
-        intermediate_distance: isInterActive ? (currentMedicalRecord.intermediate_distance || "") : "",
-        intermediate_dp: isInterActive ? (currentMedicalRecord.intermediate_dp || "") : "",
-        intermediate_dp_od: isInterActive ? (currentMedicalRecord.intermediate_dp_od || "") : "",
-        intermediate_dp_os: isInterActive ? (currentMedicalRecord.intermediate_dp_os || "") : "",
+        intermediate_distance: isInterActive ? (activeRecord.intermediate_distance || "") : "",
+        intermediate_dp: isInterActive ? (activeRecord.intermediate_dp || "") : "",
+        intermediate_dp_od: isInterActive ? (activeRecord.intermediate_dp_od || "") : "",
+        intermediate_dp_os: isInterActive ? (activeRecord.intermediate_dp_os || "") : "",
         od: {
-          ...currentMedicalRecord.od,
-          intermediate_sph: isInterActive ? (currentMedicalRecord.od.intermediate_sph || "") : "",
-          intermediate_cyl: isInterActive ? (currentMedicalRecord.od.intermediate_cyl || "") : "",
-          intermediate_axis: isInterActive ? (currentMedicalRecord.od.intermediate_axis || "") : "",
+          ...activeRecord.od,
+          intermediate_sph: isInterActive ? (activeRecord.od.intermediate_sph || "") : "",
+          intermediate_cyl: isInterActive ? (activeRecord.od.intermediate_cyl || "") : "",
+          intermediate_axis: isInterActive ? (activeRecord.od.intermediate_axis || "") : "",
         },
         os: {
-          ...currentMedicalRecord.os,
-          intermediate_sph: isInterActive ? (currentMedicalRecord.os.intermediate_sph || "") : "",
-          intermediate_cyl: isInterActive ? (currentMedicalRecord.os.intermediate_cyl || "") : "",
-          intermediate_axis: isInterActive ? (currentMedicalRecord.os.intermediate_axis || "") : "",
+          ...activeRecord.os,
+          intermediate_sph: isInterActive ? (activeRecord.os.intermediate_sph || "") : "",
+          intermediate_cyl: isInterActive ? (activeRecord.os.intermediate_cyl || "") : "",
+          intermediate_axis: isInterActive ? (activeRecord.os.intermediate_axis || "") : "",
         },
       };
 
@@ -10768,6 +10843,8 @@ export default function App() {
 
       // 1. Optimistic instant React state update
       setCurrentMedicalRecord(updatedRecord);
+      draftBaselineSnapshotRef.current = JSON.stringify(updatedRecord);
+      setLastLocalSavedAt(null);
       setMedicalRecords((prev) => {
         const filtered = prev.filter(
           (r) => r.id !== oldRecordId && r.id !== newRecordId,
@@ -10880,8 +10957,8 @@ export default function App() {
           const appointmentsRef = collection(db, "appointments");
           const uniqueAppDocs = new Map<string, any>();
 
-          if (activeAppointment?.id) {
-            uniqueAppDocs.set(activeAppointment.id, activeAppointment);
+          if (effectiveAppointment?.id) {
+            uniqueAppDocs.set(effectiveAppointment.id, effectiveAppointment);
           }
 
           const appQueries = [];
@@ -10902,9 +10979,9 @@ export default function App() {
             });
           }
 
-          const isConsultCompletVal = !!currentMedicalRecord.isConsultComplet;
-          const isControlVal = !!currentMedicalRecord.isControl;
-          const isGratisVal = !!currentMedicalRecord.isGratis;
+          const isConsultCompletVal = !!activeRecord.isConsultComplet;
+          const isControlVal = !!activeRecord.isControl;
+          const isGratisVal = !!activeRecord.isGratis;
 
           const updatePromises = Array.from(uniqueAppDocs.keys()).map((docId) =>
             updateDoc(
@@ -10912,10 +10989,10 @@ export default function App() {
               removeUndefined({
                 patientName: newPatientName,
                 patientPhone: phone || undefined,
-                patientCnp: currentMedicalRecord.patientCnp || undefined,
+                patientCnp: activeRecord.patientCnp || undefined,
                 patientAge: finalAge !== undefined ? finalAge : uniqueAppDocs.get(docId)?.patientAge,
-                patientBirthDate: currentMedicalRecord.patientBirthDate || "",
-                patientSex: currentMedicalRecord.patientSex || "",
+                patientBirthDate: activeRecord.patientBirthDate || "",
+                patientSex: activeRecord.patientSex || "",
                 medicalRecordId: newRecordId,
                 isConsultComplet: isConsultCompletVal,
                 isControl: isControlVal,
@@ -10934,7 +11011,7 @@ export default function App() {
               const isPhoneMatch =
                 phone && (app.patientPhone || "").replace(/\D/g, "") === phone.replace(/\D/g, "");
               const isActiveMatch =
-                activeAppointment && app.id === activeAppointment.id;
+                effectiveAppointment && app.id === effectiveAppointment.id;
 
               if (
                 isOldNameMatch ||
@@ -10946,10 +11023,10 @@ export default function App() {
                   ...app,
                   patientName: newPatientName,
                   patientPhone: phone || app.patientPhone,
-                  patientCnp: currentMedicalRecord.patientCnp || app.patientCnp,
+                  patientCnp: activeRecord.patientCnp || app.patientCnp,
                   patientAge: finalAge !== undefined ? finalAge : app.patientAge,
-                  patientBirthDate: currentMedicalRecord.patientBirthDate || app.patientBirthDate,
-                  patientSex: (currentMedicalRecord.patientSex as any) || app.patientSex,
+                  patientBirthDate: activeRecord.patientBirthDate || app.patientBirthDate,
+                  patientSex: (activeRecord.patientSex as any) || app.patientSex,
                   medicalRecordId: newRecordId,
                   isConsultComplet: isConsultCompletVal,
                   isControl: isControlVal,
@@ -10960,15 +11037,15 @@ export default function App() {
             }),
           );
 
-          if (activeAppointment) {
+          if (effectiveAppointment) {
             setActiveAppointment((prev) =>
               prev
                 ? {
                     ...prev,
                     patientName: newPatientName,
                     patientAge: finalAge !== undefined ? finalAge : prev.patientAge,
-                    patientBirthDate: currentMedicalRecord.patientBirthDate || prev.patientBirthDate,
-                    patientSex: (currentMedicalRecord.patientSex as any) || prev.patientSex,
+                    patientBirthDate: activeRecord.patientBirthDate || prev.patientBirthDate,
+                    patientSex: (activeRecord.patientSex as any) || prev.patientSex,
                     medicalRecordId: newRecordId,
                     isConsultComplet: isConsultCompletVal,
                     isControl: isControlVal,
@@ -10993,6 +11070,8 @@ export default function App() {
       try {
         localStorage.removeItem(`opticenter_draft_mr_${oldRecordId}`);
         localStorage.removeItem(`opticenter_draft_mr_${newRecordId}`);
+        localStorage.removeItem(`opticenter_draft_backup_${oldRecordId}`);
+        localStorage.removeItem(`opticenter_draft_backup_${newRecordId}`);
         setDraftRestoredNotice(null);
       } catch (e) {}
 
@@ -11129,15 +11208,15 @@ export default function App() {
             {
               patientName: newPatientName,
               patientPhone: phone,
-              patientCnp: currentMedicalRecord.patientCnp,
-              recordId: currentMedicalRecord.id,
+              patientCnp: updatedRecord.patientCnp,
+              recordId: updatedRecord.id,
             },
             {
               patientName: newPatientName,
               patientPhone: phone,
-              patientCnp: currentMedicalRecord.patientCnp,
-              patientBirthDate: currentMedicalRecord.patientBirthDate,
-              patientSex: currentMedicalRecord.patientSex,
+              patientCnp: updatedRecord.patientCnp,
+              patientBirthDate: updatedRecord.patientBirthDate,
+              patientSex: updatedRecord.patientSex,
               patientAge: finalAge,
             },
           );
@@ -19215,11 +19294,14 @@ export default function App() {
     );
 
     if (scheduledPatients.length > 0 && !skipConfirm) {
-      const confirmed = confirm(
+      const confirmed = await requestConfirmation(
         `Data ${format(
           parseISO(dateStr),
           "dd.MM.yyyy",
         )} are ${scheduledPatients.length} pacient(ți) programați.\n\nSigur doriți să o eliminați din lista de date unice active? Pacienții vor RĂMÂNE salvați în calendar.`,
+        "Eliminare dată activă",
+        "Elimină data",
+        true,
       );
       if (!confirmed) return false;
     }
@@ -19718,8 +19800,11 @@ export default function App() {
         }
 
         if (
-          window.confirm(
+          await requestConfirmation(
             "ATENȚIE: Sunteți sigur că doriți să importați aceste date? Această acțiune va încerca să suprascrie datele actuale din baza de date.",
+            "Confirmare import date",
+            "Importă datele",
+            true,
           )
         ) {
           setLoading(true);
@@ -21768,7 +21853,7 @@ export default function App() {
                                     a.patientName === record.patientName &&
                                     a.patientPhone === record.patientPhone
                                 );
-                                setCurrentMedicalRecord(checkAndRestoreDraftForRecord(record));
+                                setCurrentMedicalRecord(checkAndRestoreDraftForRecord(record, true));
                                 setActiveAppointment(apt || null);
                                 setActivePrescriptionIndex(null);
                                 setActiveOrderIndex(null);
@@ -32745,6 +32830,84 @@ export default function App() {
                 className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs transition-all shadow-md shadow-rose-900/20 border border-rose-500 cursor-pointer"
               >
                 Șterge Măsurătoarea
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global In-App Confirmation Modal (replaces native confirm/window.confirm in iframe) */}
+      {inAppConfirm && (
+        <div
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[300] flex items-center justify-center p-4"
+          onClick={() => {
+            inAppConfirm.resolve(false);
+            setInAppConfirm(null);
+          }}
+        >
+          <div
+            className={cn(
+              "w-full max-w-md p-6 rounded-3xl border shadow-2xl transition-all flex flex-col gap-4",
+              darkMode
+                ? "bg-slate-900 border-slate-700 text-slate-100"
+                : "bg-white border-slate-200 text-slate-900",
+            )}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div
+                className={cn(
+                  "w-11 h-11 rounded-2xl flex items-center justify-center shrink-0",
+                  inAppConfirm.isDanger !== false
+                    ? "bg-rose-500/10 text-rose-500"
+                    : "bg-blue-500/10 text-blue-500",
+                )}
+              >
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-base font-bold">{inAppConfirm.title}</h3>
+                <p
+                  className={cn(
+                    "text-xs mt-1.5 whitespace-pre-line leading-relaxed",
+                    darkMode ? "text-slate-300" : "text-slate-600",
+                  )}
+                >
+                  {inAppConfirm.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  inAppConfirm.resolve(false);
+                  setInAppConfirm(null);
+                }}
+                className={cn(
+                  "flex-1 py-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer",
+                  darkMode
+                    ? "border-slate-700 hover:bg-slate-800 text-slate-300"
+                    : "border-slate-200 hover:bg-slate-100 text-slate-700",
+                )}
+              >
+                Anulează
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  inAppConfirm.resolve(true);
+                  setInAppConfirm(null);
+                }}
+                className={cn(
+                  "flex-1 py-2.5 text-white font-bold rounded-xl text-xs transition-all shadow-md border cursor-pointer",
+                  inAppConfirm.isDanger !== false
+                    ? "bg-rose-600 hover:bg-rose-700 shadow-rose-900/20 border-rose-500"
+                    : "bg-blue-600 hover:bg-blue-700 shadow-blue-900/20 border-blue-500",
+                )}
+              >
+                {inAppConfirm.confirmLabel || "Confirmă"}
               </button>
             </div>
           </div>

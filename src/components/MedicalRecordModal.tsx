@@ -277,7 +277,7 @@ export interface MedicalRecordModalProps {
   setAppointments: any;
   activeAppointment: Appointment | null;
   setActiveAppointment: React.Dispatch<React.SetStateAction<Appointment | null>>;
-  saveMedicalRecord: (shouldClose?: boolean, allowSkipDpCheck?: boolean) => Promise<boolean>;
+  saveMedicalRecord: (shouldClose?: boolean, allowSkipDpCheck?: boolean, recordOverride?: MedicalRecord | null) => Promise<boolean>;
   handleDiscardDraft: () => void;
   lastLocalSavedAt: Date | null;
   lastServerSavedAt?: Date | null;
@@ -468,6 +468,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
   } = props;
 
   const [isSavingAndPrinting, setIsSavingAndPrinting] = useState(false);
+  const [confirmDiscardDraft, setConfirmDiscardDraft] = useState(false);
   const [isDraftRecoveryOpen, setIsDraftRecoveryOpen] = useState(false);
   const [availableDrafts, setAvailableDrafts] = useState<Array<{
     key: string;
@@ -1286,9 +1287,12 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                     <button
                       type="button"
                       onClick={async () => {
-                        await saveMedicalRecord(false, true);
-                        setDraftRestoredNotice(null);
-                        setSuccessMessage("Ciorna a fost salvată și sincronizată cu succes pe server!");
+                        const ok = await saveMedicalRecord(false, true);
+                        if (ok) {
+                          setDraftRestoredNotice(null);
+                          setConfirmDiscardDraft(false);
+                          setSuccessMessage("Ciorna a fost salvată și sincronizată cu succes pe server!");
+                        }
                       }}
                       className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-[11px] uppercase tracking-wider transition-all shadow-md cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
                       title="Salvează imediat această ciornă pe serverul Firebase"
@@ -1298,26 +1302,48 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                     </button>
                     <button
                       type="button"
-                      onClick={() => setDraftRestoredNotice(null)}
+                      onClick={() => {
+                        setDraftRestoredNotice(null);
+                        setConfirmDiscardDraft(false);
+                      }}
                       className="px-3 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 active:scale-95 text-slate-800 dark:text-slate-200 font-bold text-[10px] uppercase tracking-wider transition-all cursor-pointer border border-slate-300 dark:border-slate-700 whitespace-nowrap"
                       title="Păstrează datele recuperate în fișă pentru editare"
                     >
                       ✓ Păstrează în fișă
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const confirmDiscard = window.confirm(
-                          "Atenție: Dacă renunțați la ciornă, datele redactate local vor fi înlocuite cu cele existente pe server. Sunteți sigur?"
-                        );
-                        if (!confirmDiscard) return;
-                        handleDiscardDraft();
-                      }}
-                      className="px-2.5 py-1.5 rounded-xl text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap"
-                      title="Renunță la ciorna locală"
-                    >
-                      Renunță la ciornă
-                    </button>
+                    {confirmDiscardDraft ? (
+                      <div className="flex items-center gap-1.5 bg-rose-500/10 border border-rose-500/30 rounded-xl px-2 py-1">
+                        <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap">
+                          Sigur renunțați?
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setConfirmDiscardDraft(false);
+                            handleDiscardDraft();
+                          }}
+                          className="px-2 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase cursor-pointer"
+                        >
+                          Da
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDiscardDraft(false)}
+                          className="px-2 py-1 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-[10px] font-bold cursor-pointer"
+                        >
+                          Nu
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDiscardDraft(true)}
+                        className="px-2.5 py-1.5 rounded-xl text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-[10px] font-bold transition-all cursor-pointer whitespace-nowrap"
+                        title="Renunță la ciorna locală și revino la datele de pe server"
+                      >
+                        Renunță la ciornă
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -8742,10 +8768,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               <button
                                 type="button"
                                 onClick={async () => {
-                                  setCurrentMedicalRecord({ ...d.record });
-                                  await saveMedicalRecord(false, true);
-                                  setIsDraftRecoveryOpen(false);
-                                  setSuccessMessage(`Fișa pacientului "${d.patientName}" a fost restabilită și sincronizată cu succes pe server!`);
+                                  const targetRec = { ...d.record };
+                                  setCurrentMedicalRecord(targetRec);
+                                  const ok = await saveMedicalRecord(false, true, targetRec);
+                                  if (ok) {
+                                    setIsDraftRecoveryOpen(false);
+                                    setDraftRestoredNotice(null);
+                                    setSuccessMessage(`Fișa pacientului "${d.patientName}" a fost restabilită și sincronizată cu succes pe server!`);
+                                  }
                                 }}
                                 className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-wider shrink-0 cursor-pointer shadow-xs active:scale-95 transition-all"
                               >

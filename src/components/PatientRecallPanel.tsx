@@ -523,7 +523,7 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
     // Mark as notified in Firestore and memory
     const nowIso = new Date().toISOString();
     try {
-      await updateDoc(doc(db, "medical_records", item.recordId), {
+      await updateDoc(doc(db, "medicalRecords", item.recordId), {
         recallNotifiedAt: nowIso,
       });
 
@@ -571,7 +571,7 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
     // Mark as notified
     const nowIso = new Date().toISOString();
     try {
-      await updateDoc(doc(db, "medical_records", item.recordId), {
+      await updateDoc(doc(db, "medicalRecords", item.recordId), {
         recallNotifiedAt: nowIso,
       });
 
@@ -589,45 +589,48 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
   };
 
   // Dismiss single item from recall
-  const handleDismissSingle = async (item: RecallPatientItem, e: React.MouseEvent) => {
+  const handleDismissSingle = (item: RecallPatientItem, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (
-      !window.confirm(
-        `Eliminați pacientul "${item.patientName}" din lista curentă de rechemare? Fișa medicală rămâne intactă.`
-      )
-    ) {
-      return;
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: "Eliminare din Lista de Rechemare",
+      description: `Eliminați pacientul "${item.patientName}" din lista curentă de rechemare? Fișa medicală rămâne intactă.`,
+      action: async () => {
+        setIsProcessingBulk(true);
+        const nowIso = new Date().toISOString();
+        try {
+          await updateDoc(doc(db, "medicalRecords", item.recordId), {
+            recallDismissed: true,
+            recallDismissedAt: nowIso,
+          });
 
-    const nowIso = new Date().toISOString();
-    try {
-      await updateDoc(doc(db, "medical_records", item.recordId), {
-        recallDismissed: true,
-        recallDismissedAt: nowIso,
-      });
+          setMedicalRecords((prev) =>
+            prev.map((r) =>
+              r.id === item.recordId
+                ? { ...r, recallDismissed: true, recallDismissedAt: nowIso }
+                : r
+            )
+          );
 
-      setMedicalRecords((prev) =>
-        prev.map((r) =>
-          r.id === item.recordId
-            ? { ...r, recallDismissed: true, recallDismissedAt: nowIso }
-            : r
-        )
-      );
+          setSelectedIds((prev) => {
+            const next = new Set(prev);
+            next.delete(item.recordId);
+            return next;
+          });
 
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(item.recordId);
-        return next;
-      });
-
-      logActivity(
-        "Alerte Rechemare (Recall)",
-        `Eliminat din lista de rechemare: ${item.patientName}`
-      );
-    } catch (err) {
-      showNotification("A apărut o eroare la actualizarea fișei.", "error");
-      console.error(err);
-    }
+          logActivity(
+            "Alerte Rechemare (Recall)",
+            `Eliminat din lista de rechemare: ${item.patientName}`
+          );
+        } catch (err) {
+          showNotification("A apărut o eroare la actualizarea fișei.", "error");
+          console.error(err);
+        } finally {
+          setIsProcessingBulk(false);
+          setConfirmModal(null);
+        }
+      },
+    });
   };
 
   // Bulk dismissal handler with specific criteria
@@ -676,7 +679,7 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
             const chunk = targets.slice(i, i + chunkSize);
             await Promise.all(
               chunk.map((item) =>
-                updateDoc(doc(db, "medical_records", item.recordId), {
+                updateDoc(doc(db, "medicalRecords", item.recordId), {
                   recallDismissed: true,
                   recallDismissedAt: nowIso,
                 }).catch((e) => console.warn("Failed update doc", item.recordId, e))
