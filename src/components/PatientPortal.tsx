@@ -10,16 +10,11 @@ import {
   setMinutes, 
   addMinutes, 
   isSameDay, 
-  startOfWeek, 
-  eachDayOfInterval,
-  isBefore,
   differenceInYears
 } from "date-fns";
 import { 
   Calendar, 
   Clock, 
-  User, 
-  Phone, 
   Check, 
   Lock, 
   Shield, 
@@ -27,12 +22,7 @@ import {
   Moon, 
   Sun, 
   Stethoscope, 
-  ChevronLeft, 
-  ChevronRight, 
-  Info, 
   Sparkles,
-  Mail,
-  HeartHandshake
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { collection, addDoc, doc, setDoc } from "firebase/firestore";
@@ -421,9 +411,16 @@ export function PatientPortal({
             startTime: appData.startTime,
             doctorName: getDoctorName(appData.doctorId),
           }),
-        }).catch((e) => {
-          console.error("Fetch email booking error:", e);
-        });
+        })
+          .then(async (res) => {
+            const data = await res.json().catch(() => null);
+            if (!res.ok || data?.success === false) {
+              console.warn("Avertisment notificare email programare:", data || res.status);
+            }
+          })
+          .catch((e) => {
+            console.error("Fetch email booking error:", e);
+          });
       } catch (e) {
         console.error("Send email error:", e);
       }

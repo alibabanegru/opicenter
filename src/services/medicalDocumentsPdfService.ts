@@ -1,6 +1,5 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { format } from "date-fns";
 import {
   cleanStr,
   cleanStrExceptTAndS,
@@ -26,7 +25,7 @@ export interface MedicalDocPrintOptions {
 
 export const generateAdeverintaMedicalaPdf = (
   documentForm: any,
-  currentMedicalRecord: any = {},
+  _currentMedicalRecord: any = {},
   options?: MedicalDocPrintOptions
 ) => {
   const triggerPdfPrint = options?.triggerPdfPrint || ((doc: any, name?: string) => doc.save(name));
@@ -37,7 +36,6 @@ export const generateAdeverintaMedicalaPdf = (
       });
 
     const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
 
     doc.setFontSize(9);
     doc.setFont("helvetica", "normal");
@@ -770,27 +768,6 @@ export const generateRaportMedicalPdf = (
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
 
-    const drawDottedLine = (startX: number, endX: number, yPos: number) => {
-      const dots = ".".repeat(Math.floor((endX - startX) / 1.5));
-      doc.text(dots, startX, yPos);
-    };
-
-    const truncateToWidth = (text: string, maxWidth: number): string => {
-      if (!text) return "";
-      const lines = doc.splitTextToSize(text, maxWidth);
-      if (lines.length > 1) {
-        let candidate = lines[0];
-        while (
-          candidate.length > 0 &&
-          doc.getTextWidth(candidate + "...") > maxWidth
-        ) {
-          candidate = candidate.slice(0, -1);
-        }
-        return candidate.trim() + "...";
-      }
-      return lines[0];
-    };
-
     doc.setFontSize(7.5);
     doc.setFont("helvetica", "normal");
     doc.text(
@@ -941,15 +918,6 @@ export const generateRaportMedicalPdf = (
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     drawPdfTextWithDiacritics(doc, "EXAMEN OBIECTIV", pageWidth / 2, y, { align: "center" });
-
-    const cl_od_desc =
-      documentForm.clOdSph || documentForm.clOdCyl
-        ? `SF: ${documentForm.clOdSph || "0"} / CYL: ${documentForm.clOdCyl || "0"} / AX: ${documentForm.clOdAxis || "0"} / BC: ${documentForm.clOdBase || "-"} / DIA: ${documentForm.clOdRadius || "-"} / ${documentForm.clOdBrand || ""}`
-        : "-";
-    const cl_os_desc =
-      documentForm.clOsSph || documentForm.clOsCyl
-        ? `SF: ${documentForm.clOsSph || "0"} / CYL: ${documentForm.clOsCyl || "0"} / AX: ${documentForm.clOsAxis || "0"} / BC: ${documentForm.clOsBase || "-"} / DIA: ${documentForm.clOsRadius || "-"} / ${documentForm.clOsBrand || ""}`
-        : "-";
 
     const tableData = [
       {
@@ -1580,7 +1548,7 @@ export const generateRaportMedicalPdf = (
 
 export const generateCertificatPdf = (
   documentForm: any,
-  currentMedicalRecord: any = {},
+  _currentMedicalRecord: any = {},
   options?: MedicalDocPrintOptions
 ) => {
   const triggerPdfPrint = options?.triggerPdfPrint || ((doc: any, name?: string) => doc.save(name));
@@ -1876,7 +1844,7 @@ export const generateCertificatPdf = (
 
 export const generateExpertizaPdf = (
   documentForm: any,
-  currentMedicalRecord: any = {},
+  _currentMedicalRecord: any = {},
   options?: MedicalDocPrintOptions
 ) => {
   const triggerPdfPrint = options?.triggerPdfPrint || ((doc: any, name?: string) => doc.save(name));
@@ -1886,7 +1854,6 @@ export const generateExpertizaPdf = (
         format: "a4",
       });
     const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
 
     const drawDottedLine = (startX: number, endX: number, yPos: number) => {
       const dots = ".".repeat(Math.floor((endX - startX) / 1.15));

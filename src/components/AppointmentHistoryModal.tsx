@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   X,
@@ -16,9 +16,7 @@ import {
   format,
   parseISO,
   isSameDay,
-  isAfter,
   isBefore,
-  addHours,
   startOfDay,
   differenceInYears,
 } from "date-fns";
@@ -37,7 +35,6 @@ export interface AppointmentHistoryModalProps {
   darkMode: boolean;
   appointments: any[];
   medicalRecords: any[];
-  medicalDocuments: any[];
   profile: UserProfile | null;
   isDoctor: boolean;
   openMedicalRecord: (app: any) => void;
@@ -63,7 +60,6 @@ export const AppointmentHistoryModal: React.FC<
   darkMode,
   appointments,
   medicalRecords,
-  medicalDocuments,
   profile,
   isDoctor,
   openMedicalRecord,
@@ -92,6 +88,16 @@ export const AppointmentHistoryModal: React.FC<
     useState("all");
   const [appointmentHistoryDateFilter, setAppointmentHistoryDateFilter] =
     useState("");
+
+  useEffect(() => {
+    if (isOpen) {
+      if (profile?.role?.startsWith("doctor")) {
+        setAppointmentHistoryDoctorFilter(profile.role);
+      } else {
+        setAppointmentHistoryDoctorFilter("all");
+      }
+    }
+  }, [isOpen, profile?.role]);
 
   const handleAppointmentHistorySort = (
     key: "startTime" | "patientName" | "doctorId" | "status" | "createdAt"
@@ -477,80 +483,6 @@ export const AppointmentHistoryModal: React.FC<
                     </thead>
                     <tbody>
                       {filteredAppointmentHistory.map((app, idx) => {
-                        const patientRecordForToday = medicalRecords.find(
-                          (r) =>
-                            r.patientName === app.patientName &&
-                            r.patientPhone === app.patientPhone &&
-                            isSameDay(
-                              parseISO(r.updatedAt),
-                              parseISO(app.startTime)
-                            )
-                        );
-
-                        const hasMedicalReportToday = app
-                          ? medicalDocuments.some((d) => {
-                              if (d.isDeleted || !d.date) return false;
-                              const docPhone = (
-                                d.patientPhone || ""
-                              ).replace(/\D/g, "");
-                              const appPhone = (
-                                app.patientPhone || ""
-                              ).replace(/\D/g, "");
-
-                              const matchesPhone =
-                                appPhone !== "" &&
-                                docPhone !== "" &&
-                                docPhone === appPhone;
-
-                              const cleanString = (s: string) =>
-                                s
-                                  .normalize("NFD")
-                                  .replace(/[\u0300-\u036f]/g, "")
-                                  .toLowerCase()
-                                  .replace(/[^a-z0-9]/g, "")
-                                  .trim();
-
-                              const docName = cleanString(
-                                d.patientName || ""
-                              );
-                              const appName = cleanString(
-                                app.patientName || ""
-                              );
-                              const matchesName =
-                                appName !== "" &&
-                                docName !== "" &&
-                                docName === appName;
-
-                              if (!matchesName) return false;
-                              if (
-                                appPhone !== "" &&
-                                docPhone !== "" &&
-                                docPhone !== appPhone
-                              )
-                                return false;
-                              return isSameDay(
-                                parseISO(d.date),
-                                parseISO(app.startTime)
-                              );
-                            })
-                          : false;
-
-                        const isControlToday =
-                          patientRecordForToday?.isControl;
-                        const isGratisToday =
-                          patientRecordForToday?.isGratis;
-                        const isConsultedToday =
-                          ((!!patientRecordForToday || hasMedicalReportToday) ||
-                            app?.forceSeen) &&
-                          !app?.ignoreSeen;
-
-                        const isNoShow =
-                          !isConsultedToday &&
-                          isAfter(
-                            new Date(),
-                            addHours(parseISO(app.startTime), 1)
-                          );
-
                         return (
                           <tr
                             key={app.id}

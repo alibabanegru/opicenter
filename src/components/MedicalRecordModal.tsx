@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Fragment, useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   AlertCircle,
   Cake,
@@ -56,9 +56,7 @@ import {
   Protractor,
   Appointment,
   MedicalRecord,
-  GlassesOrder,
   UserProfile,
-  FrameStockItem,
   TREATMENT_SHORTCUTS,
 } from "../appConstants";
 
@@ -346,7 +344,6 @@ export interface MedicalRecordModalProps {
   setIsObjectiveExamExpanded: (val: boolean | ((prev: boolean) => boolean)) => void;
   getKFieldStyle: (val: string) => any;
   setIsMyopiaChartOpen: (val: boolean) => void;
-  setMyopiaChartEye: (eye: "OD" | "OS") => void;
   getIopInputClass: any;
   isExaminationsExpanded: boolean;
   setIsExaminationsExpanded: (val: boolean | ((prev: boolean) => boolean)) => void;
@@ -456,7 +453,6 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
     setIsObjectiveExamExpanded,
     getKFieldStyle,
     setIsMyopiaChartOpen,
-    setMyopiaChartEye,
     getIopInputClass,
     isExaminationsExpanded,
     setIsExaminationsExpanded,
@@ -471,7 +467,6 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
     setIsMedicalRecordModalOpen = onClose,
   } = props;
 
-  const isMedicalRecordModalOpen = isOpen;
   const [isSavingAndPrinting, setIsSavingAndPrinting] = useState(false);
   const [isDraftRecoveryOpen, setIsDraftRecoveryOpen] = useState(false);
   const [availableDrafts, setAvailableDrafts] = useState<Array<{
@@ -1204,10 +1199,15 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           <RefreshCw className="w-2.5 h-2.5 text-blue-500 animate-spin" />
                           <span className="text-blue-600 dark:text-blue-400 font-bold">Salvare Server...</span>
                         </>
-                      ) : lastServerSavedAt ? (
+                      ) : lastServerSavedAt && (!lastLocalSavedAt || lastServerSavedAt >= lastLocalSavedAt) ? (
                         <>
                           <Cloud className="w-2.5 h-2.5 text-emerald-500" />
                           <span className="text-emerald-600 dark:text-emerald-400 font-black">Salvat pe Server</span>
+                        </>
+                      ) : lastLocalSavedAt ? (
+                        <>
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                          <span className="text-amber-600 dark:text-amber-400 font-black">Ciornă Locală</span>
                         </>
                       ) : (
                         <>
@@ -1216,8 +1216,15 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                         </>
                       )}
                     </span>
-                    <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-tight truncate">
-                      {lastServerSavedAt
+                    <span className={cn(
+                      "text-[10px] font-black uppercase tracking-tight truncate",
+                      lastLocalSavedAt && (!lastServerSavedAt || lastLocalSavedAt > lastServerSavedAt) && !(isServerSaving || loading)
+                        ? "text-amber-600 dark:text-amber-400"
+                        : "text-emerald-600 dark:text-emerald-400"
+                    )}>
+                      {lastLocalSavedAt && (!lastServerSavedAt || lastLocalSavedAt > lastServerSavedAt)
+                        ? `Local: ${lastLocalSavedAt.toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
+                        : lastServerSavedAt
                         ? `${lastServerSavedAt.toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
                         : "Optimizat Firebase"}
                     </span>
@@ -1832,7 +1839,6 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     <button
                                       type="button"
                                       onClick={() => {
-                                        setMyopiaChartEye("OD");
                                         setIsMyopiaChartOpen(true);
                                       }}
                                       className="ml-auto flex items-center justify-center px-4 py-2 rounded-xl bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-200 transition-all shrink-0"
@@ -4658,7 +4664,6 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     <button
                                       type="button"
                                       onClick={() => {
-                                        setMyopiaChartEye("OS");
                                         setIsMyopiaChartOpen(true);
                                       }}
                                       className="ml-auto flex items-center justify-center px-4 py-2 rounded-xl bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-200 transition-all shrink-0"

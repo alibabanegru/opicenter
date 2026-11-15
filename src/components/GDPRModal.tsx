@@ -3,7 +3,7 @@ import SignaturePad from "signature_pad";
 import { compressSignatureCanvas } from "../lib/signatureUtils";
 import jsPDF from "jspdf";
 import { format } from "date-fns";
-import { X, Download, Trash2, Shield, Monitor, Calendar, ShieldOff } from "lucide-react";
+import { X, Download, Trash2, Monitor, Calendar, ShieldOff } from "lucide-react";
 
 interface GDPRModalProps {
   isOpen: boolean;

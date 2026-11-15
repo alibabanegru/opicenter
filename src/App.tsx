@@ -12,6 +12,7 @@ import { FrameModal } from "./components/FrameModal";
 import { OrderTypeSelectionModal } from "./components/OrderTypeSelectionModal";
 import { MedicalRegistryModal } from "./components/MedicalRegistryModal";
 import { PhoneEditModal } from "./components/PhoneEditModal";
+import { BufferedPhoneInput } from "./components/BufferedPhoneInput";
 import { compressSignatureDataUrl } from "./lib/signatureUtils";
 import React, {
   useState,
@@ -22,13 +23,11 @@ import React, {
   Suspense,
   ChangeEvent,
   useRef,
-  Fragment,
 } from "react";
 import {
   Calendar,
   Clock as ClockIcon,
   User,
-  UserCircle,
   Phone,
   Camera,
   ChevronLeft,
@@ -44,7 +43,6 @@ import {
   Trash2,
   Check,
   Activity,
-  Layout,
   X,
   Search,
   FileText,
@@ -53,8 +51,6 @@ import {
   HeartPulse,
   Eye,
   EyeOff,
-  Edit,
-  Edit2,
   Pencil,
   CalendarClock,
   CalendarPlus,
@@ -63,51 +59,25 @@ import {
   Download,
   AlertCircle,
   AlertTriangle,
-  Package,
   Store,
   CheckCircle2,
-  CircleDot,
   Glasses,
-  Layers,
-  Droplet,
-  DropletOff,
-  Triangle,
   Cake,
-  Gift,
   Save,
   CalendarCheck,
   ChevronUp,
-  Sun,
   Cloud,
-  CloudRain,
-  CloudSnow,
-  CloudLightning,
-  CloudFog,
-  CloudDrizzle,
-  Thermometer,
-  Wind,
-  Droplets,
   RefreshCw,
   Landmark,
-  Banknote,
-  TrendingUp,
-  TrendingDown,
-  Calculator,
-  Printer,
-  ExternalLink,
   MessageSquare,
-  Send,
   RotateCcw,
   Ban,
   Monitor,
   Undo2,
   UserX,
   History,
-  Sparkles,
   Unlock,
   Key,
-  Zap,
-  SlidersHorizontal,
   UserCheck,
   CreditCard,
   Wifi,
@@ -121,7 +91,6 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import html2canvas from "html2canvas-pro";
 import { QR_CODE_REVIEW_BASE64 } from "./assets/qrCodeReview";
 import {
   format,
@@ -129,7 +98,6 @@ import {
   addMonths,
   subDays,
   subMonths,
-  subYears,
   startOfMonth,
   endOfMonth,
   startOfDay,
@@ -140,8 +108,6 @@ import {
   isBefore,
   isAfter,
   addMinutes,
-  differenceInYears,
-  differenceInCalendarDays,
   addHours,
   startOfWeek,
   endOfWeek,
@@ -151,24 +117,10 @@ import {
 } from "date-fns";
 import { ro } from "date-fns/locale";
 import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
-} from "recharts";
-import {
   signInWithPopup,
   GoogleAuthProvider,
   onAuthStateChanged,
   signOut,
-  signInWithEmailAndPassword,
   setPersistence,
   browserLocalPersistence,
   browserSessionPersistence,
@@ -194,13 +146,10 @@ import {
   runTransaction,
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
 
 import MyopiaChart from "./components/MyopiaChart";
 import { WacomSignaturePad } from "./components/WacomSignaturePad";
 import { PatientPortal } from "./components/PatientPortal";
-import { FrameConfigurator, FRAME_SHAPES, SHAPE_BOUNDS } from "./components/FrameConfigurator";
 
 // Lazy-loaded heavy modal components (Point 1.A) for optimal bundle splitting and instant initial page load
 const DocumentConfiguratorModal = React.lazy(() => import("./components/DocumentConfiguratorModal"));
@@ -227,9 +176,6 @@ import {
   generateExpertizaPdf,
 } from "./services/medicalDocumentsPdfService";
 import {
-  cleanStrForMyopia,
-  drawMyopiaGraph,
-  generateMyopiaChartPdf,
   generateBothMyopiaChartsA4Pdf,
   getComprehensivePatientAxialData as getComprehensivePatientAxialDataService,
 } from "./services/myopiaPdfService";
@@ -237,22 +183,15 @@ import {
 import {
   cn,
   OperationType,
-  FirestoreErrorInfo,
   setGlobalDbErrorHandler,
   handleFirestoreError,
   capitalizeWords,
   normalizeForPDF,
   cleanStr,
   cleanStrExceptTAndS,
-  truncateTextToWidth,
-  drawPdfTextWithDiacritics,
   escapeCsvField,
   getImageFormatForPdf,
-  recalculateContactLensCylinder,
   checkEmailPermissionForAccount,
-  vertexCompensation,
-  normalizeDiacritics,
-  normalizeNameWords,
   matchPatientName,
   Role,
   UserProfile,
@@ -260,7 +199,6 @@ import {
   EyePrescription,
   ContactLensPrescription,
   GlassesOrder,
-  Examinations,
   Cycloplegia,
   PrescriptionHistoryItem,
   WeatherData,
@@ -278,60 +216,39 @@ import {
   DEFAULT_ANTERIOR_SEGMENT,
   DEFAULT_POSTERIOR_SEGMENT,
   ROLE_COLORS,
-  capitalizeFirstLetter,
   WeatherIcon,
-  getWeatherDescription,
   TREATMENT_CATEGORIES,
   TREATMENT_PROTOCOLS,
-  TREATMENT_SHORTCUTS,
-  calculateNearSphereDefault,
-  getEyeDiag,
-  appendTreatment,
-  updateDiagnosticSuggestions,
   calculateAge,
   validateCNP,
   getSexFromCNP,
   getBirthDateFromCNP,
   calculateDetailedAge,
-  calculateTurningAge,
   isValidPhone,
   formatPhoneNumber,
   DEFAULT_EXAMINATIONS,
-  TODAY_STR,
   MYOPIA_GIRLS_DATA,
   MYOPIA_BOYS_DATA,
-  getExpectedAxialLength,
-  sanitizeAxialLengthInput,
-  validateAxialLengthOnBlur,
   GIRLS_RISK,
   BOYS_RISK,
   USERS_DATA,
   getDoctorDisplayName,
-  Protractor,
   ROLE_TEXT_COLORS,
   ROLE_PULSE_CLASSES,
   removeUndefined,
-  CurrencyRow,
-  WindowsScreenSaverProps,
   WindowsScreenSaver,
   DEFAULT_RECAPTCHA_KEY,
   sanitizeSiteKey,
   loadRecaptchaScript,
   executeRecaptcha,
   getRomanianPublicHoliday,
-  deformPath,
-  getPointOnPathAtAngle,
-  getBottomYAtX,
   FrameStockItem,
-  getEstimatedAddByAge,
   MONTHS_RO,
   SlotLock,
 } from "./appConstants";
 import {
-  cleanWhatsAppPhone,
   buildWhatsAppUrl,
   openWhatsAppUrl,
-  buildGlassesReadyMessage,
   normalizeRomanianDiacritics,
   stripDiacritics,
 } from "./utils/whatsappUtils";
@@ -345,44 +262,6 @@ const cleanString = (s: string) =>
         .replace(/[^a-z0-9]/g, "")
         .trim()
     : "";
-
-const processTreatmentValue = (newVal: string): string => {
-  const header = "Medicamentele se utilizeaza in ordinea prescrisa :";
-  let processed = newVal;
-
-  Object.entries(TREATMENT_SHORTCUTS).forEach(([key, shortcut]) => {
-    const lastChar = processed.slice(-1);
-    if (lastChar === " ") {
-      const beforeLast = processed.slice(0, -1);
-      if (
-        beforeLast.endsWith(` ${key}`) ||
-        beforeLast === key ||
-        beforeLast.endsWith(`\n${key}`)
-      ) {
-        const base = beforeLast.slice(0, beforeLast.length - key.length);
-
-        if (!base.includes(header)) {
-          processed = header + "\n1. " + shortcut + " ";
-        } else {
-          let currentLines = base
-            .split("\n")
-            .map((l) => l.trim())
-            .filter((l) => l !== "");
-          let itemCount = 0;
-          currentLines.forEach((l) => {
-            if (/^\d+\./.test(l)) itemCount++;
-          });
-          processed =
-            currentLines.join("\n") +
-            `\n${itemCount + 1}. ` +
-            shortcut +
-            " ";
-        }
-      }
-    }
-  });
-  return processed;
-};
 
 interface CustomDateItemRowProps {
   role: Role;
@@ -999,174 +878,6 @@ const BufferedBirthDateInput: React.FC<{
   );
 };
 
-const BufferedPhoneInput: React.FC<{
-  value: string;
-  onChange: (val: string) => void;
-  disabled?: boolean;
-  className?: string;
-  placeholder?: string;
-  inputRef?: React.RefObject<HTMLInputElement | null>;
-}> = ({ value, onChange, disabled, className, placeholder, inputRef }) => {
-  const [localValue, setLocalValue] = useState(value);
-  const isFocused = useRef(false);
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
-
-  useEffect(() => {
-    if (!isFocused.current) {
-      setLocalValue(value);
-    }
-  }, [value]);
-
-  useEffect(() => {
-    if (localValue === value) return;
-    const timer = setTimeout(() => {
-      onChangeRef.current(localValue);
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [localValue, value]);
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const rawDigits = e.target.value.replace(/\D/g, "");
-    setLocalValue(rawDigits);
-  };
-
-  const handleFocus = () => {
-    isFocused.current = true;
-  };
-
-  const handleBlur = () => {
-    isFocused.current = false;
-    if (localValue !== value) {
-      onChangeRef.current(localValue);
-    }
-  };
-
-  return (
-    <input
-      ref={inputRef}
-      type="tel"
-      disabled={disabled}
-      value={disabled ? "" : formatPhoneNumber(localValue)}
-      onChange={handleChange}
-      onFocus={handleFocus}
-      onBlur={handleBlur}
-      className={className}
-      placeholder={placeholder}
-    />
-  );
-};
-
-const NameSearchInput = ({
-  initialValue,
-  onSearch,
-  onSync,
-  darkMode,
-}: {
-  initialValue: string;
-  onSearch: (val: string) => void;
-  onSync: (val: string) => void;
-  darkMode: boolean;
-}) => {
-  const [localVal, setLocalVal] = useState(initialValue);
-  const onSyncRef = useRef(onSync);
-  onSyncRef.current = onSync;
-
-  useEffect(() => {
-    setLocalVal(initialValue);
-  }, [initialValue]);
-
-  useEffect(() => {
-    if (localVal === initialValue) return;
-    const timer = setTimeout(() => {
-      onSyncRef.current(localVal);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [localVal, initialValue]);
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setLocalVal(e.target.value);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      onSearch(localVal);
-    }
-  };
-
-  return (
-    <input
-      type="text"
-      value={localVal}
-      onChange={handleChange}
-      onKeyDown={handleKeyDown}
-      onBlur={() => onSync(localVal)}
-      placeholder="Caută după nume..."
-      className={cn(
-        "pl-9 pr-3 py-1.5 border rounded-lg text-xs outline-none transition-all duration-300 w-36 focus:w-44 shadow-sm",
-        darkMode
-          ? "bg-slate-800 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-          : "bg-white border-slate-200 text-slate-900 placeholder-slate-450 focus:border-blue-500 focus:ring-1 focus:ring-blue-500",
-      )}
-    />
-  );
-};
-
-const PhoneSearchInput = ({
-  initialValue,
-  onSearch,
-  onSync,
-  darkMode,
-}: {
-  initialValue: string;
-  onSearch: (val: string) => void;
-  onSync: (val: string) => void;
-  darkMode: boolean;
-}) => {
-  const [localVal, setLocalVal] = useState(initialValue);
-  const onSyncRef = useRef(onSync);
-  onSyncRef.current = onSync;
-
-  useEffect(() => {
-    setLocalVal(initialValue);
-  }, [initialValue]);
-
-  useEffect(() => {
-    if (localVal === initialValue) return;
-    const timer = setTimeout(() => {
-      onSyncRef.current(localVal);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [localVal, initialValue]);
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setLocalVal(e.target.value.replace(/\D/g, ""));
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      onSearch(localVal);
-    }
-  };
-
-  return (
-    <input
-      type="text"
-      value={formatPhoneNumber(localVal)}
-      onChange={handleChange}
-      onKeyDown={handleKeyDown}
-      onBlur={() => onSync(localVal)}
-      placeholder="Caută după telefon..."
-      className={cn(
-        "pl-9 pr-3 py-1.5 border rounded-lg text-xs outline-none transition-all duration-300 w-36 focus:w-44 shadow-sm",
-        darkMode
-          ? "bg-slate-800 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-          : "bg-white border-slate-200 text-slate-900 placeholder-slate-450 focus:border-blue-500 focus:ring-1 focus:ring-blue-500",
-      )}
-    />
-  );
-};
-
 const ModalSearchNameInput = ({
   value,
   onSearch,
@@ -1439,7 +1150,6 @@ export default function App() {
       return "patient";
     }
   });
-  const [patientLoginEmail, setPatientLoginEmail] = useState("");
   const [googleUser, setGoogleUser] = useState<FirebaseUser | null>(() => {
     try {
       const saved = sessionStorage.getItem("clinic_user") || localStorage.getItem("clinic_user");
@@ -1462,7 +1172,6 @@ export default function App() {
   const [bannedEmails, setBannedEmails] = useState<any[]>([]);
   const [showScreenSaver, setShowScreenSaver] = useState(false);
   const [isAutoClosedForInactivity, setIsAutoClosedForInactivity] = useState(false);
-  const [printMyopiaToo, setPrintMyopiaToo] = useState(false);
   const [connectionFilterDate, setConnectionFilterDate] = useState<string>(
     () => {
       const d = new Date();
@@ -2098,49 +1807,12 @@ export default function App() {
     return "Bună ziua, *{pacient}*! Vă contactăm din partea Clinicii Oftalmologice Negreanu. Vă dorim o zi minunată!";
   });
 
-  const [isDayWhatsAppModalOpen, setIsDayWhatsAppModalOpen] = useState(false);
   const [isDistanceFrameConfigOpen, setIsDistanceFrameConfigOpen] = useState(false);
   const [isNearFrameConfigOpen, setIsNearFrameConfigOpen] = useState(false);
-  const [dayWhatsAppDate, setDayWhatsAppDate] = useState<Date | null>(null);
-  const [dayWhatsAppAppointments, setDayWhatsAppAppointments] = useState<
-    Appointment[]
-  >([]);
-  const [selectedDayPatientIds, setSelectedDayPatientIds] = useState<string[]>(
-    [],
-  );
-  const [dayWhatsAppTemplateType, setDayWhatsAppTemplateType] = useState<
-    "next_appointment" | "simple_reminder" | "custom"
-  >("next_appointment");
-  const [dayWhatsAppMessageText, setDayWhatsAppMessageText] = useState("");
-  const [sentPatientIds, setSentPatientIds] = useState<string[]>([]);
   const [axialDeleteConfirm, setAxialDeleteConfirm] = useState<{
     isOpen: boolean;
     item: any;
   }>({ isOpen: false, item: null });
-
-  const saveWhatsAppTemplates = async (
-    nextAppTemp: string,
-    simpleRemTemp: string,
-  ) => {
-    try {
-      setNextAppointmentTemplate(nextAppTemp);
-      setSimpleReminderTemplate(simpleRemTemp);
-      try {
-        localStorage.setItem("clinic_setting_whatsapp_next_app", JSON.stringify(nextAppTemp));
-        localStorage.setItem("clinic_setting_whatsapp_simple_rem", JSON.stringify(simpleRemTemp));
-      } catch {}
-      await setDoc(
-        doc(db, "settings", "whatsappTemplates"),
-        {
-          nextAppointmentTemplate: nextAppTemp,
-          simpleReminderTemplate: simpleRemTemp,
-        },
-        { merge: true },
-      );
-    } catch (err) {
-      console.error("Failed to save WhatsApp templates:", err);
-    }
-  };
 
   const fetchWeather = useCallback(async () => {
     setWeatherLoading(true);
@@ -3292,6 +2964,36 @@ export default function App() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isMedicalRecordModalOpen, currentMedicalRecord]);
 
+  // Debounced local draft auto-save while editing a medical record
+  useEffect(() => {
+    if (!isMedicalRecordModalOpen || !currentMedicalRecord) return;
+    const timer = setTimeout(() => {
+      try {
+        const targetId =
+          currentMedicalRecord.id ||
+          `${currentMedicalRecord.patientName}_${currentMedicalRecord.patientPhone}`
+            .replace(/\s+/g, "_")
+            .toLowerCase();
+        const payload = {
+          recordId: targetId,
+          patientName: currentMedicalRecord.patientName,
+          savedAt: new Date().toISOString(),
+          record: currentMedicalRecord,
+        };
+        localStorage.setItem(
+          `opticenter_draft_mr_${targetId || "new"}`,
+          JSON.stringify(payload),
+        );
+        localStorage.setItem(
+          `opticenter_draft_backup_${targetId || "new"}`,
+          JSON.stringify(payload),
+        );
+        setLastLocalSavedAt(new Date());
+      } catch {}
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [isMedicalRecordModalOpen, currentMedicalRecord]);
+
   const checkAndRestoreDraftForRecord = (rec: MedicalRecord): MedicalRecord => {
     if (!rec) return rec;
     const cleanName = (rec.patientName || "").trim().toLowerCase();
@@ -3416,34 +3118,6 @@ export default function App() {
       } catch (e) {}
     }
     setDraftRestoredNotice(null);
-  };
-
-  const applySuggestedAdd = (addVal: string) => {
-    if (!currentMedicalRecord) return;
-    const updatedOD = {
-      ...currentMedicalRecord.od,
-      add: addVal,
-      near_sph: undefined,
-      near_cyl: undefined,
-      near_axis: undefined,
-    };
-    const updatedOS = {
-      ...currentMedicalRecord.os,
-      add: addVal,
-      near_sph: undefined,
-      near_cyl: undefined,
-      near_axis: undefined,
-    };
-    setCurrentMedicalRecord({
-      ...currentMedicalRecord,
-      od: updatedOD,
-      os: updatedOS,
-      diagnostic: updateDiagnosticSuggestions(
-        currentMedicalRecord.diagnostic || "",
-        updatedOD,
-        updatedOS,
-      ),
-    });
   };
 
   const currentPatientMedicalRecords = useMemo(() => {
@@ -3645,9 +3319,6 @@ export default function App() {
 
   const [editingAppointment, setEditingAppointment] =
     useState<Appointment | null>(null);
-  const [isCancelOptionsModalOpen, setIsCancelOptionsModalOpen] =
-    useState(false);
-  const [printFallback, setPrintFallback] = useState<{ url: string; filename?: string } | null>(null);
   const printFallbackTimerRef = useRef<any>(null);
   const [isDeleteConfirmModalOpen, setIsDeleteConfirmModalOpen] =
     useState(false);
@@ -3696,7 +3367,6 @@ export default function App() {
   const [newAxialValueOs, setNewAxialValueOs] = useState("");
   const [newAxialDateOs, setNewAxialDateOs] = useState("");
   const myopiaChartRef = useRef<HTMLDivElement>(null);
-  const [myopiaChartEye, setMyopiaChartEye] = useState<"OD" | "OS">("OD");
   const [isMyopiaCombinedView, setIsMyopiaCombinedView] = useState<boolean>(() => {
     try {
       return localStorage.getItem("myopia_chart_combined_view") === "true";
@@ -3716,16 +3386,6 @@ export default function App() {
   const [isOrdersModalOpen, setIsOrdersModalOpen] = useState(false);
   const [isAppointmentHistoryModalOpen, setIsAppointmentHistoryModalOpen] =
     useState(false);
-  const [appointmentHistorySearchQuery, setAppointmentHistorySearchQuery] =
-    useState("");
-  const [appointmentHistoryDoctorFilter, setAppointmentHistoryDoctorFilter] =
-    useState<string>("all");
-  const [appointmentHistoryDateFilter, setAppointmentHistoryDateFilter] =
-    useState<string>("");
-  const [
-    appointmentHistoryCelebratingFilter,
-    setAppointmentHistoryCelebratingFilter,
-  ] = useState(false);
 
   const getKFieldStyle = (valStr: string) => {
     const val = parseFloat(valStr || "");
@@ -3793,22 +3453,13 @@ export default function App() {
   ]);
 
   const [isBirthdayModalOpen, setIsBirthdayModalOpen] = useState(false);
-  const [birthdaySelectedPatientID, setBirthdaySelectedPatientID] = useState<
-    string | null
-  >(null);
-  const [birthdayCustomMessage, setBirthdayCustomMessage] =
-    useState<string>("");
-  const [birthdaySearchQuery, setBirthdaySearchQuery] = useState<string>("");
   const [sentBirthdayPatients, setSentBirthdayPatients] = useState<string[]>(
     [],
   );
-  const [birthdayTemplate, setBirthdayTemplate] = useState<string>(() => {
+  const [birthdayTemplate] = useState<string>(() => {
     const saved = localStorage.getItem("clinic_birthday_template");
     return saved || "La mulți ani cu ocazia împlinirii frumoasei vârste de {varsta} de ani, {nume}! 🎂🥳 echipa opticii Negreanu vă dorește din tot sufletul multă sănătate, fericire, bucurii și o vedere limpede spre toate minunile vieții! Să aveți o zi minunată! 🎈🥂✨";
   });
-  const [isEditingTemplate, setIsEditingTemplate] = useState<boolean>(false);
-  const [eqSfericActiveOD, setEqSfericActiveOD] = useState(false);
-  const [eqSfericActiveOS, setEqSfericActiveOS] = useState(false);
 
   const [symptomSelect, setSymptomSelect] = useState("");
   const [symptomText, setSymptomText] = useState("");
@@ -4097,12 +3748,6 @@ export default function App() {
   const [ordersTab, setOrdersTab] = useState<
     "in-progress" | "ready" | "with-balance" | "completed" | "stats" | "deleted"
   >("in-progress");
-  const [statsYear, setStatsYear] = useState<number>(new Date().getFullYear());
-  const [statsMonth, setStatsMonth] = useState<number>(
-    new Date().getMonth() + 1,
-  );
-  const [statsView, setStatsView] = useState<"general" | "items">("general");
-  const [ordersSellerFilter, setOrdersSellerFilter] = useState<string>("all");
   const [selectedDeletedOrders, setSelectedDeletedOrders] = useState<string[]>([]);
   const [selectedCompletedOrders, setSelectedCompletedOrders] = useState<string[]>([]);
   const [bulkSoftDeleteMode, setBulkSoftDeleteMode] = useState<"selected" | "all" | null>(null);
@@ -4152,15 +3797,10 @@ export default function App() {
                       ? !isCompleted
                       : true);
 
-        const sellerMatch =
-          ordersSellerFilter === "all" ||
-          order.sellerId === ordersSellerFilter;
-
         return (
           matchesOrderNum &&
           matchesPatient &&
-          matchesTab &&
-          sellerMatch
+          matchesTab
         );
       })
       .sort((a, b) => {
@@ -4181,7 +3821,6 @@ export default function App() {
     ordersSearchQuery,
     patientOrdersSearchQuery,
     ordersTab,
-    ordersSellerFilter,
   ]);
   const hasOverdueOrders = useMemo(() => {
     return (medicalRecords || []).some((r) => {
@@ -4202,300 +3841,12 @@ export default function App() {
       );
     });
   }, [medicalRecords]);
-
-  const filteredStatsOrders = useMemo(() => {
-    return (medicalRecords || [])
-      .flatMap((record) => {
-        const history = record.orderHistory || [];
-        const current = record.glassesOrder ? [record.glassesOrder] : [];
-        const combined = [...history];
-        current.forEach((c) => {
-          if (!combined.some((h) => h.orderNumber === c.orderNumber)) {
-            combined.push(c);
-          }
-        });
-        return combined.map((order) => ({
-          ...order,
-          patientId: record.id,
-          patientName: record.patientName,
-          patientPhone: record.patientPhone,
-        }));
-      })
-      .filter((order) => !order.isDeleted)
-      .filter((order) => {
-        const date = new Date(order.createdAt || order.deliveryDate);
-        const yearMatch = date.getFullYear() === statsYear;
-        const monthMatch =
-          statsMonth === 0 || date.getMonth() + 1 === statsMonth;
-        const sellerMatch =
-          ordersSellerFilter === "all" ||
-          order.sellerId === ordersSellerFilter;
-        return yearMatch && monthMatch && sellerMatch;
-      });
-  }, [medicalRecords, statsYear, statsMonth, ordersSellerFilter]);
-
-  const sendWhatsAppGlassesReady = async (order: {
-    patientName?: string;
-    patientPhone?: string;
-    orderNumber?: string;
-    patientId?: string;
-    [key: string]: any;
-  }) => {
-    let rawPhone = (order.patientPhone || "").trim();
-    let phoneVal = cleanWhatsAppPhone(rawPhone);
-
-    if (!phoneVal.isValid) {
-      const inputPhone = window.prompt(
-        "Introduceți numărul de telefon al pacientului pentru notificarea WhatsApp:",
-        rawPhone
-      );
-      if (!inputPhone) return;
-      phoneVal = cleanWhatsAppPhone(inputPhone);
-      if (!phoneVal.isValid) {
-        alert("Numărul de telefon introdus nu este valid.");
-        return;
-      }
-    }
-
-    const stripDiacriticsPref = localStorage.getItem("clinic_setting_whatsapp_strip_diacritics") === "true";
-    const message = buildGlassesReadyMessage({
-      patientName: order.patientName,
-      removeDiacritics: stripDiacriticsPref,
-    });
-    const { url } = buildWhatsAppUrl(phoneVal.cleanPhone, message, { removeDiacritics: stripDiacriticsPref });
-    const opened = openWhatsAppUrl(url);
-    if (!opened) {
-      navigator.clipboard?.writeText(message);
-      alert(
-        "Fereastra pop-up WhatsApp a fost blocată de browser. Mesajul a fost copiat în clipboard! Puteți deschide manual WhatsApp și lipi mesajul."
-      );
-    }
-
-    // Salvare automată confirmare notificare WhatsApp & trecere pe ready_for_pickup
-    try {
-      const nowIso = new Date().toISOString();
-      const notifierName = profile?.displayName || (profile as any)?.name || "Recepție";
-
-      const targetRecord = (medicalRecords || []).find(
-        (r) =>
-          (order.patientId && r.id === order.patientId) ||
-          r.glassesOrder?.orderNumber === order.orderNumber ||
-          (r.orderHistory || []).some((o) => o.orderNumber === order.orderNumber),
-      );
-
-      const patientDocId = order.patientId || targetRecord?.id;
-      if (patientDocId) {
-        const docRef = doc(db, "medicalRecords", patientDocId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data() as MedicalRecord;
-          const history = [...(data.orderHistory || [])];
-          const orderIdx = history.findIndex(
-            (o) => o.orderNumber === order.orderNumber,
-          );
-
-          let updatedOrder: any = null;
-          if (orderIdx !== -1) {
-            const currentOrd = history[orderIdx];
-            const newStatus = currentOrd.status === "completed" ? "completed" : "ready_for_pickup";
-            updatedOrder = {
-              ...currentOrd,
-              status: newStatus,
-              whatsappNotifiedAt: nowIso,
-              whatsappNotifiedBy: notifierName,
-            };
-            history[orderIdx] = updatedOrder;
-          }
-
-          const isMainOrder = data.glassesOrder?.orderNumber === order.orderNumber;
-          let updatedMainGlasses = data.glassesOrder;
-          if (isMainOrder && data.glassesOrder) {
-            const newStatus = data.glassesOrder.status === "completed" ? "completed" : "ready_for_pickup";
-            updatedMainGlasses = {
-              ...data.glassesOrder,
-              status: newStatus,
-              whatsappNotifiedAt: nowIso,
-              whatsappNotifiedBy: notifierName,
-            };
-            if (!updatedOrder) updatedOrder = updatedMainGlasses;
-          }
-
-          await updateDoc(
-            docRef,
-            removeUndefined({
-              orderHistory: history,
-              ...(isMainOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
-            }),
-          );
-
-          setMedicalRecords((prev) =>
-            prev.map((r) =>
-              r.id === patientDocId
-                ? {
-                    ...r,
-                    orderHistory: history,
-                    ...(isMainOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
-                  }
-                : r,
-            ),
-          );
-
-          setCurrentMedicalRecord((prev) => {
-            if (!prev || prev.id !== patientDocId) return prev;
-            return {
-              ...prev,
-              orderHistory: history,
-              ...(isMainOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
-            };
-          });
-
-          try {
-            const qStandalone = query(
-              collection(db, "glasses_orders"),
-              where("orderNumber", "==", order.orderNumber),
-            );
-            const snapStandalone = await getDocs(qStandalone);
-            if (!snapStandalone.empty) {
-              const batch = writeBatch(db);
-              snapStandalone.docs.forEach((d) => {
-                const cur = d.data();
-                const newStatus = cur.status === "completed" ? "completed" : "ready_for_pickup";
-                batch.update(d.ref, {
-                  status: newStatus,
-                  whatsappNotifiedAt: nowIso,
-                  whatsappNotifiedBy: notifierName,
-                });
-              });
-              await batch.commit();
-            }
-          } catch (e) {
-            console.warn("Could not update standalone glasses_orders:", e);
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Error setting whatsapp notification status:", err);
-    }
-  };
-
-  const handleHandoverAndCollect = async (order: any) => {
-    setLoading(true);
-    try {
-      const nowIso = new Date().toISOString();
-      const handlerName = profile?.displayName || (profile as any)?.name || "Recepție";
-      const targetRecord = (medicalRecords || []).find(
-        (r) =>
-          (order.patientId && r.id === order.patientId) ||
-          r.glassesOrder?.orderNumber === order.orderNumber ||
-          (r.orderHistory || []).some((o) => o.orderNumber === order.orderNumber),
-      );
-
-      const patientDocId = order.patientId || targetRecord?.id;
-      if (!patientDocId) {
-        alert("Fișa pacientului nu a putut fi identificată.");
-        return;
-      }
-
-      const docRef = doc(db, "medicalRecords", patientDocId);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        const data = docSnap.data() as MedicalRecord;
-        const history = [...(data.orderHistory || [])];
-        const orderIdx = history.findIndex(
-          (o) => o.orderNumber === order.orderNumber,
-        );
-
-        const currentTotal = orderIdx !== -1 ? (history[orderIdx].total || 0) : (order.total || 0);
-        const updatedOrder = orderIdx !== -1 
-          ? {
-              ...history[orderIdx],
-              status: "completed" as const,
-              advance: currentTotal,
-              balance: 0,
-              deliveredAt: nowIso,
-              deliveredBy: handlerName,
-            }
-          : {
-              ...order,
-              status: "completed" as const,
-              advance: currentTotal,
-              balance: 0,
-              deliveredAt: nowIso,
-              deliveredBy: handlerName,
-            };
-
-        if (orderIdx !== -1) {
-          history[orderIdx] = updatedOrder;
-        }
-
-        const isMainGlassesOrder = data.glassesOrder?.orderNumber === order.orderNumber;
-        const mainGlassesUpdated = isMainGlassesOrder ? updatedOrder : data.glassesOrder;
-
-        await updateDoc(
-          docRef,
-          removeUndefined({
-            orderHistory: history,
-            ...(isMainGlassesOrder ? { glassesOrder: updatedOrder } : {}),
-          }),
-        );
-
-        try {
-          const qStandalone = query(
-            collection(db, "glasses_orders"),
-            where("orderNumber", "==", order.orderNumber),
-          );
-          const snapStandalone = await getDocs(qStandalone);
-          if (!snapStandalone.empty) {
-            const batch = writeBatch(db);
-            snapStandalone.docs.forEach((d) => {
-              batch.update(d.ref, {
-                status: "completed",
-                advance: currentTotal,
-                balance: 0,
-                deliveredAt: nowIso,
-                deliveredBy: handlerName,
-              });
-            });
-            await batch.commit();
-          }
-        } catch (e) {
-          console.warn("Could not update standalone glasses_orders:", e);
-        }
-
-        setMedicalRecords((prev) =>
-          prev.map((r) =>
-            r.id === patientDocId
-              ? {
-                  ...r,
-                  orderHistory: history,
-                  ...(isMainGlassesOrder ? { glassesOrder: updatedOrder } : {}),
-                }
-              : r,
-          ),
-        );
-
-        setCurrentMedicalRecord((prev) => {
-          if (!prev || prev.id !== patientDocId) return prev;
-          return {
-            ...prev,
-            orderHistory: history,
-            ...(isMainGlassesOrder ? { glassesOrder: updatedOrder } : {}),
-          };
-        });
-      }
-    } catch (err) {
-      console.error("Error in handover & collect:", err);
-      alert("A apărut o eroare la predarea comenzii.");
-    } finally {
-      setLoading(false);
-    }
-  };
   const birthDateInputRef = useRef<HTMLInputElement>(null);
   const phoneInputRef = useRef<HTMLInputElement>(null);
   const [editingPrescriptionDateIndex, setEditingPrescriptionDateIndex] =
     useState<number | null>(null);
   const [tempPrescriptionDate, setTempPrescriptionDate] = useState<string>("");
-  const [patientForNewAppointment, setPatientForNewAppointment] =
+  const [patientForNewAppointment] =
     useState<Appointment | null>(null);
   const [quickBookingPatient, setQuickBookingPatient] = useState<{
     name: string;
@@ -4795,7 +4146,6 @@ export default function App() {
 
     if (activeAppointment) {
       const activeName = cleanString(activeAppointment.patientName || "");
-      const activePhone = cleanString(activeAppointment.patientPhone || "");
       if (recName && activeName && recName === activeName) {
         const foundInState = appointments.find(
           (a) => a.id === activeAppointment.id
@@ -4842,7 +4192,6 @@ export default function App() {
   const [deleteDate, setDeleteDate] = useState(
     format(new Date(), "yyyy-MM-dd"),
   );
-  const [isPasswordsExpanded, setIsPasswordsExpanded] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showPatientsDeleteConfirm, setShowPatientsDeleteConfirm] =
     useState(false);
@@ -4929,8 +4278,6 @@ export default function App() {
       );
     }
   }, [deletedAppointmentsBackup]);
-  const [isOrderDeleteConfirmOpen, setIsOrderDeleteConfirmOpen] =
-    useState(false);
   const [bulkDeleteMode, setBulkDeleteMode] = useState<"selected" | "all" | null>(null);
   const [isPermanentDelete, setIsPermanentDelete] = useState(false);
   const [orderToDelete, setOrderToDelete] = useState<{
@@ -4938,10 +4285,6 @@ export default function App() {
     orderNumber: string;
     patientName: string;
   } | null>(null);
-
-  const formatWhatsAppPhone = (phone: string) => {
-    return cleanWhatsAppPhone(phone).cleanPhone;
-  };
 
   const getDoctorName = (doctorId: string): string => {
     const doctorObj = availableUsers.find(
@@ -6758,7 +6101,7 @@ export default function App() {
     string | null
   >(null);
 
-  const [loginLockData, setLoginLockData] = useState<{
+  const [, setLoginLockData] = useState<{
     failedAttempts: number;
     blockedUntil: number;
   }>({ failedAttempts: 0, blockedUntil: 0 });
@@ -7241,21 +6584,6 @@ export default function App() {
     }
   };
 
-  const updatePassword = async (userId: string, newPass: string) => {
-    try {
-      await setDoc(
-        doc(db, "users", userId),
-        {
-          pass: newPass,
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true },
-      );
-    } catch (e) {
-      console.error("Error updating password", e);
-    }
-  };
-
   const renamePatientEverywhere = async (
     oldName: string,
     newName: string,
@@ -7617,7 +6945,6 @@ export default function App() {
   ) => {
     const rawTargetName = (target.patientName || "").trim();
     const cleanTargetName = normalizePatientName(target.patientName);
-    const rawTargetPhone = (target.patientPhone || "").trim();
     const cleanTargetPhone = normalizePhone(target.patientPhone);
     const cleanTargetCnp = (target.patientCnp || "").trim();
     const targetRecordId = target.recordId || "";
@@ -7998,12 +7325,12 @@ export default function App() {
   };
 
   const [patientName, setPatientName] = useState("");
-  const [patientAge, setPatientAge] = useState("");
+  const [, setPatientAge] = useState("");
   const [patientBirthDate, setPatientBirthDate] = useState("");
   const [patientPhone, setPatientPhone] = useState("");
   const [patientCnp, setPatientCnp] = useState("");
   const [faraTelefon, setFaraTelefon] = useState(true);
-  const [hasStoredPhone, setHasStoredPhone] = useState(false);
+  const [, setHasStoredPhone] = useState(false);
   const [patientSex, setPatientSex] = useState<"M" | "F" | "">("");
   const [patientNotes, setPatientNotes] = useState("");
   const [bookingConsultType, setBookingConsultType] = useState<"consult" | "control" | "gratis" | null>(null);
@@ -8570,14 +7897,6 @@ export default function App() {
   }, [profile?.role, isConfigModalOpen]);
 
   useEffect(() => {
-    if (profile?.role.startsWith("doctor")) {
-      setAppointmentHistoryDoctorFilter(profile.role);
-    } else {
-      setAppointmentHistoryDoctorFilter("all");
-    }
-  }, [profile, isAppointmentHistoryModalOpen]);
-
-  useEffect(() => {
     localStorage.setItem("clinic_dark_mode_preference", darkMode.toString());
     try {
       localStorage.removeItem("clinic_dark_mode");
@@ -8675,10 +7994,6 @@ export default function App() {
           setIsDeleteConfirmModalOpen(false);
           return;
         }
-        if (isCancelOptionsModalOpen) {
-          setIsCancelOptionsModalOpen(false);
-          return;
-        }
         if (isRescheduleInfoModalOpen) {
           setIsRescheduleInfoModalOpen(false);
           return;
@@ -8743,7 +8058,6 @@ export default function App() {
     isConfigModalOpen,
     isDeletePrescriptionConfirmModalOpen,
     isDeleteConfirmModalOpen,
-    isCancelOptionsModalOpen,
     isRescheduleInfoModalOpen,
     isGdprModalOpen,
     isExportModalOpen,
@@ -9033,9 +8347,6 @@ export default function App() {
     const cleanDigits = queryStr.replace(/\D/g, "");
 
     const appResults = appointments.filter((app) => {
-      const canSeeAll = true;
-      const isVisible = true;
-      if (!isVisible) return false;
 
       if (type === "name") {
         return (
@@ -9468,9 +8779,16 @@ export default function App() {
               userName: user.name,
               userRole: user.role,
             }),
-          }).catch((apiErr) => {
-            console.error("Eroare trimitere notificare email:", apiErr);
-          });
+          })
+            .then(async (res) => {
+              const data = await res.json().catch(() => null);
+              if (!res.ok || data?.success === false) {
+                console.warn("Avertisment notificare email autentificare:", data || res.status);
+              }
+            })
+            .catch((apiErr) => {
+              console.error("Eroare trimitere notificare email:", apiErr);
+            });
         } catch (logErr) {
           console.error("Eroare salvare raport conectare:", logErr);
         }
@@ -9517,15 +8835,6 @@ export default function App() {
       medicalRecords,
       medicalDocuments
     );
-
-  const handlePrintMyopiaChart = () => {
-    if (!currentMedicalRecord) return;
-    generateMyopiaChartPdf({
-      currentMedicalRecord,
-      myopiaChartEye,
-      getActiveDate,
-    });
-  };
 
   const handlePrintBothMyopiaChartsA4 = (recordToUse?: MedicalRecord | React.MouseEvent) => {
     const record = (recordToUse && typeof recordToUse === "object" && "id" in recordToUse)
@@ -9995,48 +9304,6 @@ export default function App() {
     }
   };
 
-  const syncMedicalRecord = async (
-    name: string,
-    phone: string,
-    age: number,
-    birthDate: string,
-    sex?: string,
-    oldName?: string,
-    oldPhone?: string,
-    cnp?: string,
-  ) => {
-    try {
-      const cleanName = (name || "").trim();
-      const cleanOldName = (oldName || "").trim();
-      const cleanPhone = (phone || "").trim();
-      const cleanOldPhone = (oldPhone || "").trim();
-      const cleanCnp = (cnp || "").trim();
-
-      if (cleanOldName && cleanOldName !== cleanName) {
-        await renamePatientEverywhere(cleanOldName, cleanName, cleanPhone || cleanOldPhone, cleanCnp);
-        return;
-      }
-
-      await syncPatientUniversal(
-        {
-          patientName: cleanName || cleanOldName,
-          patientPhone: cleanPhone || cleanOldPhone,
-          patientCnp: cleanCnp,
-        },
-        {
-          patientName: cleanName || undefined,
-          patientPhone: cleanPhone || undefined,
-          patientCnp: cleanCnp || undefined,
-          patientAge: age || undefined,
-          patientBirthDate: birthDate || undefined,
-          patientSex: sex || undefined,
-        },
-      );
-    } catch (err) {
-      console.warn("Could not sync medical record:", err);
-    }
-  };
-
   const openMedicalRecord = async (
     appointment: Appointment,
     initialPrescriptionIndex?: number,
@@ -10046,8 +9313,6 @@ export default function App() {
     setActivePrescriptionIndex(null);
     setIsEditingPatientName(false);
     setActiveAppointment(appointment);
-    setEqSfericActiveOD(false);
-    setEqSfericActiveOS(false);
     let defaultVisitDate = new Date();
     try {
       if (appointment?.startTime) {
@@ -11512,6 +10777,7 @@ export default function App() {
       originalPatientNameRef.current = newPatientName;
 
       // 2. Direct Firestore update for medical record (awaited to guarantee all other connected accounts see it instantly)
+      setIsServerSaving(true);
       try {
         const granularMedicalPayload = removeUndefined({
           od: updatedRecord.od,
@@ -11586,24 +10852,28 @@ export default function App() {
           updatedAt: now,
         });
 
-        if (oldRecordId !== newRecordId) {
-          // Patient identity or phone changed, transfer full record to new doc ID
-          await setDoc(doc(db, "medicalRecords", newRecordId), updatedRecord, { merge: true });
-          try {
-            await deleteDoc(doc(db, "medicalRecords", oldRecordId));
-          } catch (delErr) {
-            console.warn("Could not delete old medicalRecord doc:", delErr);
+        try {
+          if (oldRecordId !== newRecordId) {
+            // Patient identity or phone changed, transfer full record to new doc ID
+            await setDoc(doc(db, "medicalRecords", newRecordId), updatedRecord, { merge: true });
+            try {
+              await deleteDoc(doc(db, "medicalRecords", oldRecordId));
+            } catch (delErr) {
+              console.warn("Could not delete old medicalRecord doc:", delErr);
+            }
+          } else {
+            // Target existing doc: use updateDoc to preserve reception edits (orders, contacts, GDPR)
+            try {
+              await updateDoc(doc(db, "medicalRecords", oldRecordId), granularMedicalPayload);
+            } catch (upErr: any) {
+              // If document does not exist yet, fallback to setDoc with merge
+              await setDoc(doc(db, "medicalRecords", oldRecordId), updatedRecord, { merge: true });
+            }
           }
-        } else {
-          // Target existing doc: use updateDoc to preserve reception edits (orders, contacts, GDPR)
-          try {
-            await updateDoc(doc(db, "medicalRecords", oldRecordId), granularMedicalPayload);
-          } catch (upErr: any) {
-            // If document does not exist yet, fallback to setDoc with merge
-            await setDoc(doc(db, "medicalRecords", oldRecordId), updatedRecord, { merge: true });
-          }
+          setLastServerSavedAt(new Date());
+        } finally {
+          setIsServerSaving(false);
         }
-        setLastServerSavedAt(new Date());
 
         // SINCRONIZARE GARANTATĂ ÎN TIMP REAL CU APPOINTMENTS ÎN FIRESTORE
         try {
@@ -13256,16 +12526,6 @@ export default function App() {
     }
   }, [selectedDate]);
 
-  const isSlotBooked = (doctorId: string, time: Date) => {
-    return appointments.some(
-      (app) =>
-        app.doctorId === doctorId &&
-        isSameDay(parseISO(app.startTime), time) &&
-        format(parseISO(app.startTime), "HH:mm") === format(time, "HH:mm") &&
-        (app.status === "scheduled" || app.status === "pending_validation"),
-    );
-  };
-
   const appointmentsBySlotMap = useMemo(() => {
     const map = new Map<string, Appointment>();
     if (!appointments || appointments.length === 0) return map;
@@ -13848,7 +13108,6 @@ export default function App() {
           `Comanda nr. #${orderToDelete.orderNumber} pentru pacientul ${orderToDelete.patientName} a fost mutată în coș.`
         );
 
-        setIsOrderDeleteConfirmOpen(false);
         setOrderToDelete(null);
         alert("Comanda a fost marcată ca ștearsă.");
       }
@@ -13926,7 +13185,6 @@ export default function App() {
           `Comanda nr. #${orderToDelete.orderNumber} pentru pacientul ${orderToDelete.patientName} a fost ștearsă DEFINITIV din server.`
         );
 
-        setIsOrderDeleteConfirmOpen(false);
         setOrderToDelete(null);
         alert("Comanda a fost ștearsă definitiv.");
       }
@@ -15294,7 +14552,6 @@ export default function App() {
     await deleteDoc(doc(db, "appointments", appointmentToCancel.id));
     // Eliminare garantată și instantanee din starea calendarului din memorie (pentru programări de la orice dată din trecut)
     setAppointments((prev) => prev.filter((a) => a.id !== appointmentToCancel.id));
-    setIsCancelOptionsModalOpen(false);
     setIsDeleteConfirmModalOpen(false);
     setAppointmentToCancel(null);
     setIsBookingModalOpen(false);
@@ -15528,16 +14785,6 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const rescheduleAppointment = () => {
-    if (!appointmentToCancel) return;
-    setReschedulingAppointment(appointmentToCancel);
-    setIsCancelOptionsModalOpen(false);
-    setIsBookingModalOpen(false);
-    setIsMedicalRecordModalOpen(false);
-    setIsSearchModalOpen(false);
-    setAppointmentToCancel(null);
   };
 
   const saveAndSwitchPrescription = (newIndex: number | null) => {
@@ -16513,7 +15760,6 @@ export default function App() {
     }
 
     let y = 64;
-    const lineSpacing = 6;
 
     const referenceDate =
       activePrescriptionIndex !== null &&
@@ -18067,7 +17313,6 @@ export default function App() {
       const sideGraphWidth = sideBySide
         ? (pageWidth - 40 - graphGap) / 2
         : pageWidth - 40; // Narrower graphs by increasing side padding
-      const horizontalOffset = 10; // Extra padding to move them inward
 
       if (finalY + 15 + graphHeight + (isDual ? 35 : 20) > pageHeight) {
         doc.addPage();
@@ -19758,136 +19003,6 @@ export default function App() {
     setIsBookingModalOpen(true);
   };
 
-  const generateSlotsForDayConfig = (date: Date, dayConfig: DayConfig) => {
-    if (!dayConfig || !dayConfig.isAvailable || dayConfig.intervalMinutes <= 0)
-      return [];
-
-    const slots = [];
-    let current = setMinutes(
-      setHours(startOfDay(date), dayConfig.startHour || 9),
-      0,
-    );
-    const end = setMinutes(
-      setHours(startOfDay(date), dayConfig.endHour || 11),
-      0,
-    );
-
-    let iterations = 0;
-    while (!isAfter(current, end) && iterations < 100) {
-      slots.push(new Date(current));
-      current = addMinutes(current, dayConfig.intervalMinutes);
-      iterations++;
-    }
-    return slots;
-  };
-
-  const autoAlignAppointmentsForDoctor = async (
-    doctorId: string,
-    newConfig: ScheduleConfig,
-  ) => {
-    try {
-      const todayStr = format(startOfDay(new Date()), "yyyy-MM-dd");
-      const doctorApps = appointments.filter(
-        (app) => app.doctorId === doctorId && app.status === "scheduled",
-      );
-
-      if (doctorApps.length === 0) return;
-
-      const appsByDate: Record<string, Appointment[]> = {};
-      for (const app of doctorApps) {
-        try {
-          const d = parseISO(app.startTime);
-          if (!isNaN(d.getTime())) {
-            const dateStr = format(d, "yyyy-MM-dd");
-            // Only process future appointments
-            if (dateStr >= todayStr) {
-              if (!appsByDate[dateStr]) {
-                appsByDate[dateStr] = [];
-              }
-              appsByDate[dateStr].push(app);
-            }
-          }
-        } catch (e) {
-          console.error("Error parsing appointment date:", e);
-        }
-      }
-
-      for (const [dateStr, apps] of Object.entries(appsByDate)) {
-        const dateObj = parseISO(dateStr);
-        const dayOfWeek = getDay(dateObj);
-        const dayCfg = newConfig.dayConfigs[dayOfWeek];
-
-        if (!dayCfg || !dayCfg.isAvailable || dayCfg.intervalMinutes <= 0) {
-          continue;
-        }
-
-        const newSlots = generateSlotsForDayConfig(dateObj, dayCfg);
-        if (newSlots.length === 0) continue;
-
-        const sortedApps = [...apps].sort((a, b) =>
-          a.startTime.localeCompare(b.startTime),
-        );
-
-        const updatedApps: { app: Appointment; newTime: Date }[] = [];
-        let lastAssignedSlotIdx = -1;
-
-        for (const app of sortedApps) {
-          const origTime = parseISO(app.startTime);
-
-          let targetSlotIdx = newSlots.findIndex(
-            (slot) => !isBefore(slot, origTime),
-          );
-          if (targetSlotIdx === -1) {
-            targetSlotIdx = newSlots.length - 1;
-          }
-
-          if (targetSlotIdx <= lastAssignedSlotIdx) {
-            targetSlotIdx = lastAssignedSlotIdx + 1;
-          }
-
-          let assignedTime: Date;
-          if (targetSlotIdx < newSlots.length) {
-            assignedTime = newSlots[targetSlotIdx];
-            lastAssignedSlotIdx = targetSlotIdx;
-          } else {
-            const referenceTime =
-              lastAssignedSlotIdx < newSlots.length && lastAssignedSlotIdx >= 0
-                ? newSlots[lastAssignedSlotIdx]
-                : newSlots[newSlots.length - 1];
-            const overflowOffset =
-              (targetSlotIdx - Math.max(0, lastAssignedSlotIdx)) *
-              dayCfg.intervalMinutes;
-            assignedTime = addMinutes(referenceTime, overflowOffset);
-            lastAssignedSlotIdx = targetSlotIdx;
-          }
-
-          if (assignedTime.getTime() !== origTime.getTime()) {
-            updatedApps.push({
-              app,
-              newTime: assignedTime,
-            });
-          }
-        }
-
-        // Limit to max 15 updates per save to protect Firestore quota
-        for (const update of updatedApps.slice(0, 15)) {
-          try {
-            const appDocRef = doc(db, "appointments", update.app.id);
-            const newEndTime = addMinutes(update.newTime, dayCfg.intervalMinutes);
-            await updateDoc(appDocRef, {
-              startTime: update.newTime.toISOString(),
-              endTime: newEndTime.toISOString(),
-            });
-          } catch (err) {
-            console.error("Error shifting appointment:", err);
-          }
-        }
-      }
-    } catch (alignErr) {
-      console.warn("Notice: Non-critical appointment realignment skipped:", alignErr);
-    }
-  };
-
   const updateConfig = async (
     doctorId: string,
     updates: Partial<ScheduleConfig>,
@@ -19966,24 +19081,6 @@ export default function App() {
     }
   };
 
-  const doctorNamesMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    availableUsers.forEach((u) => {
-      if (u.role && u.name) {
-        map[u.role] = u.name;
-      }
-    });
-    DOCTOR_ROLES.forEach((r) => {
-      if (!map[r]) {
-        map[r] = getDoctorDisplayName(r);
-      }
-    });
-    if (!map["admin"]) {
-      map["admin"] = getDoctorDisplayName("admin" as Role);
-    }
-    return map;
-  }, [availableUsers]);
-
   const updateDayConfig = async (
     doctorId: string,
     dayIdx: number,
@@ -20044,37 +19141,6 @@ export default function App() {
           : `Data ${dateStr} a fost marcată ca absență (blocată)!`,
       );
     }
-  };
-
-  const toggleActiveSaturday = async (doctorId: string, dateStr: string) => {
-    const config = getDoctorConfig(doctorId);
-    const currentActive = config.activeSaturdays || [];
-
-    const otherDoctors = DOCTOR_ROLES.filter((r) => r !== doctorId);
-    const isAlreadyClaimed = otherDoctors.some((role) =>
-      getDoctorConfig(role).activeSaturdays?.includes(dateStr),
-    );
-
-    if (isAlreadyClaimed && !currentActive.includes(dateStr)) {
-      alert("Această sâmbătă este deja rezervată de un alt medic!");
-      return;
-    }
-
-    const newActive = currentActive.includes(dateStr)
-      ? currentActive.filter((d) => d !== dateStr)
-      : [...currentActive, dateStr];
-
-    if (isConfigModalOpen) {
-      setTempConfigs((prev) =>
-        prev.map((c) =>
-          c.doctorId === doctorId || c.id === doctorId
-            ? { ...c, activeSaturdays: newActive, id: doctorId, doctorId }
-            : c,
-        ),
-      );
-    }
-
-    await updateConfig(doctorId, { activeSaturdays: newActive });
   };
 
   const activateSpecificDate = async (
@@ -20712,32 +19778,6 @@ export default function App() {
   };
 
   if (!googleUser) {
-    const handlePatientEmailLogin = (e: React.FormEvent) => {
-      e.preventDefault();
-      const email = patientLoginEmail.trim().toLowerCase();
-      if (!email || !email.includes("@")) {
-        alert("Vă rugăm să introduceți o adresă de email validă!");
-        return;
-      }
-      const mockUser = {
-        email: email,
-        displayName: email,
-        uid: "patient_" + email,
-        emailVerified: true,
-      } as any;
-      setGoogleUser(mockUser);
-      const newProfile: UserProfile = {
-        uid: "patient_" + email,
-        displayName: email,
-        role: "patient" as Role,
-        color: "bg-blue-600",
-        email: email,
-      };
-      setProfile(newProfile);
-      sessionStorage.setItem("clinic_user", JSON.stringify(newProfile));
-      localStorage.setItem("clinic_user", JSON.stringify(newProfile));
-    };
-
     return (
       <div
         className={cn(
@@ -20823,12 +19863,11 @@ export default function App() {
 
           <AnimatePresence mode="wait">
             {loginTab === "patient" ? (
-              <motion.form
+              <motion.div
                 key="patient-login"
                 initial={{ opacity: 0, y: 5 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -5 }}
-                onSubmit={handlePatientEmailLogin}
                 className="space-y-4"
               >
                 <button
@@ -20875,7 +19914,7 @@ export default function App() {
                 </p>
 
 
-              </motion.form>
+              </motion.div>
             ) : (
               <motion.div
                 key="staff-login"
@@ -21460,48 +20499,6 @@ export default function App() {
     );
   }
 
-  const isBirthdayOnConsultDay = (() => {
-    if (!currentMedicalRecord) return false;
-    const patientBirthDateStr = currentMedicalRecord.patientBirthDate;
-    if (!patientBirthDateStr) return false;
-
-    const consultDateStr =
-      currentMedicalRecord.prescriptionHistory?.[activePrescriptionIndex]
-        ?.date ||
-      currentMedicalRecord.updatedAt ||
-      currentMedicalRecord.createdAt ||
-      new Date().toISOString();
-
-    let birthDate: Date;
-    if (patientBirthDateStr.includes("-")) {
-      const parts = patientBirthDateStr.split("-");
-      if (parts[0].length === 4) {
-        birthDate = new Date(
-          parseInt(parts[0]),
-          parseInt(parts[1]) - 1,
-          parseInt(parts[2]),
-        );
-      } else {
-        birthDate = new Date(
-          parseInt(parts[2]),
-          parseInt(parts[1]) - 1,
-          parseInt(parts[0]),
-        );
-      }
-    } else {
-      birthDate = new Date(patientBirthDateStr);
-    }
-
-    const consultDate = new Date(consultDateStr);
-    if (isNaN(birthDate.getTime()) || isNaN(consultDate.getTime()))
-      return false;
-
-    return (
-      birthDate.getMonth() === consultDate.getMonth() &&
-      birthDate.getDate() === consultDate.getDate()
-    );
-  })();
-
   const isWacomMode = window.location.search.includes("wacom=true") || window.location.hash === "#wacom";
   if (isWacomMode) {
     return <WacomSignaturePad />;
@@ -22014,8 +21011,8 @@ export default function App() {
                                   <div
                                     key={item.id}
                                     className={cn(
-                                      "p-3 flex flex-col gap-2 group border-l-[3px] border-l-transparent hover:border-l-blue-600",
-                                      darkMode ? "hover:bg-slate-800/50" : "hover:bg-slate-50/90"
+                                      "p-3 flex flex-col gap-2.5 group",
+                                      darkMode ? "hover:bg-slate-800/50" : "hover:bg-blue-50/40"
                                     )}
                                   >
                                     {/* Top Row: Patient Info + Quick Action Buttons */}
@@ -22027,7 +21024,7 @@ export default function App() {
                                             {item.patientName}
                                           </span>
                                           {item.patientAge && (
-                                            <span className="text-[10px] font-mono tabular-nums font-semibold text-slate-500 dark:text-slate-400">
+                                            <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
                                               {item.patientAge} ani
                                             </span>
                                           )}
@@ -22037,14 +21034,14 @@ export default function App() {
                                             </span>
                                           )}
                                         </div>
-                                        <div className="flex items-center gap-2.5 mt-0.5 text-[11px] text-slate-500 dark:text-slate-400 flex-wrap font-mono tabular-nums">
+                                        <div className="flex items-center gap-2.5 mt-0.5 text-[11px] text-slate-500 dark:text-slate-400 flex-wrap">
                                           {item.patientPhone ? (
                                             <span className="font-medium flex items-center gap-1">
                                               <Phone className="w-2.5 h-2.5 opacity-60" />
                                               {formatPhoneNumber(item.patientPhone)}
                                             </span>
                                           ) : (
-                                            <span className="italic text-[10px] font-sans opacity-70">Fără telefon</span>
+                                            <span className="italic text-[10px] opacity-70">Fără telefon</span>
                                           )}
                                           {item.patientCnp && (
                                             <span className="text-[10px] opacity-75">
@@ -22054,7 +21051,7 @@ export default function App() {
                                         </div>
                                       </div>
 
-                                      {/* Quick Actions (Unified 60-30-10) */}
+                                      {/* Quick Actions */}
                                       <div className="flex items-center gap-1 shrink-0">
                                         <button
                                           type="button"
@@ -22065,12 +21062,12 @@ export default function App() {
                                           className={cn(
                                             "flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider border cursor-pointer",
                                             darkMode
-                                              ? "bg-slate-900 border-slate-700 text-slate-200 hover:bg-slate-800 hover:border-blue-500/60"
-                                              : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-blue-400"
+                                              ? "bg-emerald-950/40 border-emerald-800/60 text-emerald-400 hover:bg-emerald-900/50"
+                                              : "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
                                           )}
                                           title="Programează pacientul"
                                         >
-                                          <CalendarPlus className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+                                          <CalendarPlus className="w-3 h-3" />
                                           <span className="hidden sm:inline">Programează</span>
                                         </button>
 
@@ -22121,12 +21118,12 @@ export default function App() {
                                             className={cn(
                                               "flex items-center gap-1 p-1.5 sm:px-2 sm:py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider border cursor-pointer",
                                               darkMode
-                                                ? "bg-slate-900 border-slate-700 text-slate-200 hover:bg-slate-800"
-                                                : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                                                ? "bg-indigo-950/40 border-indigo-800/60 text-indigo-400 hover:bg-indigo-900/50"
+                                                : "bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100"
                                             )}
                                             title="Deschide Comandă Nouă Ochelari"
                                           >
-                                            <Glasses className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                                            <Glasses className="w-3.5 h-3.5" />
                                             <span className="hidden sm:inline">Comenzi</span>
                                           </button>
                                         )}
@@ -22145,8 +21142,8 @@ export default function App() {
                                             className={cn(
                                               "flex items-center gap-1 p-1.5 sm:px-2 sm:py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider border cursor-pointer",
                                               darkMode
-                                                ? "bg-slate-900 border-slate-800 text-rose-400 hover:bg-rose-950/40 hover:border-rose-800"
-                                                : "bg-white border-slate-200 text-rose-600 hover:bg-rose-50 hover:border-rose-300"
+                                                ? "bg-rose-950/30 border-rose-800/60 text-rose-400 hover:bg-rose-950/50"
+                                                : "bg-rose-50 border-rose-200 text-rose-600 hover:bg-rose-100"
                                             )}
                                             title="Ștergere Definitivă Pacient (Elimină definitiv toate fișele, rețetele, programările și comenzile acestui pacient)"
                                           >
@@ -22157,15 +21154,8 @@ export default function App() {
                                       </div>
                                     </div>
 
-                                    {/* Simplified Quick Patient Strip */}
-                                    <div
-                                      className={cn(
-                                        "rounded-lg border grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x text-xs overflow-hidden",
-                                        darkMode
-                                          ? "bg-slate-950/60 border-slate-800 divide-slate-800 text-slate-300"
-                                          : "bg-slate-50/70 border-slate-200 divide-slate-200 text-slate-700"
-                                      )}
-                                    >
+                                    {/* Quick Patient Summary Cards */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                                       {/* 1. Ultima vizită */}
                                       <div
                                         onClick={() => {
@@ -22173,8 +21163,10 @@ export default function App() {
                                           setIsOmniboxOpen(false);
                                         }}
                                         className={cn(
-                                          "flex flex-col gap-0.5 min-w-0 px-2.5 py-2 cursor-pointer group/visit",
-                                          darkMode ? "hover:bg-slate-900/70" : "hover:bg-white"
+                                          "flex flex-col gap-0.5 min-w-0 px-2.5 py-2 rounded-xl border cursor-pointer group/visit",
+                                          darkMode
+                                            ? "bg-slate-900/70 border-slate-800 hover:border-blue-700/60 text-slate-300"
+                                            : "bg-blue-50/50 border-blue-100 hover:bg-blue-50 text-slate-700"
                                         )}
                                         title="Click pentru a deschide fișa / ultima vizită a pacientului"
                                       >
@@ -22187,7 +21179,7 @@ export default function App() {
                                         </div>
                                         {item.quickCard?.lastVisit ? (
                                           <div className="min-w-0">
-                                            <p className="font-semibold text-[11px] font-mono tabular-nums text-slate-800 dark:text-slate-100 truncate">
+                                            <p className="font-semibold text-[11px] text-slate-800 dark:text-slate-100 truncate">
                                               {new Date(item.quickCard.lastVisit.date).toLocaleDateString("ro-RO", {
                                                 day: "2-digit",
                                                 month: "short",
@@ -22211,14 +21203,16 @@ export default function App() {
                                           setIsOrdersModalOpen(true);
                                         }}
                                         className={cn(
-                                          "flex flex-col gap-0.5 min-w-0 px-2.5 py-2 cursor-pointer group/orders",
-                                          darkMode ? "hover:bg-slate-900/70" : "hover:bg-white"
+                                          "flex flex-col gap-0.5 min-w-0 px-2.5 py-2 rounded-xl border cursor-pointer group/orders",
+                                          darkMode
+                                            ? "bg-slate-900/70 border-slate-800 hover:border-amber-700/60 text-slate-300"
+                                            : "bg-amber-50/40 border-amber-100 hover:bg-amber-50/80 text-slate-700"
                                         )}
                                         title="Click pentru a vizualiza comenzile de ochelari ale pacientului"
                                       >
                                         <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400 group-hover/orders:text-blue-600">
                                           <span className="flex items-center gap-1">
-                                            <Glasses className="w-3 h-3 text-slate-500 shrink-0" />
+                                            <Glasses className="w-3 h-3 text-amber-500 shrink-0" />
                                             Comandă & Sold
                                           </span>
                                           <span className="text-[9px] opacity-0 group-hover/orders:opacity-100 text-blue-600">↗</span>
@@ -22234,14 +21228,14 @@ export default function App() {
                                               )}>
                                                 {item.quickCard.activeOrder.isReady ? "✓ Gata de ridicare" : "În lucru"}
                                               </span>
-                                              <span className="font-mono tabular-nums text-slate-400 shrink-0">
+                                              <span className="text-slate-400 shrink-0">
                                                 #{item.quickCard.activeOrder.orderNumber}
                                               </span>
                                             </div>
                                             <div className="flex items-center justify-between gap-1 flex-wrap">
                                               {item.quickCard.activeOrder.balance > 0 ? (
                                                 <>
-                                                  <span className="text-[10px] font-bold font-mono tabular-nums text-rose-600 dark:text-rose-400">
+                                                  <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400">
                                                     Rest: {item.quickCard.activeOrder.balance.toFixed(2)} RON
                                                   </span>
                                                   <button
@@ -22250,7 +21244,7 @@ export default function App() {
                                                       e.stopPropagation();
                                                       handleQuickCollectRemainingBalance(item.quickCard!.activeOrder!, item);
                                                     }}
-                                                    className="px-2 py-0.5 bg-[#FFFFFF] dark:bg-[#111827] border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded text-[9px] font-bold uppercase flex items-center gap-1 cursor-pointer ml-auto"
+                                                    className="px-2 py-0.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-[9px] font-bold uppercase flex items-center gap-1 cursor-pointer ml-auto"
                                                     title={`Încasează direct restul de ${item.quickCard.activeOrder.balance.toFixed(0)} RON`}
                                                   >
                                                     <CreditCard className="w-2.5 h-2.5" />
@@ -22258,7 +21252,7 @@ export default function App() {
                                                   </button>
                                                 </>
                                               ) : (
-                                                <span className="text-[10px] font-semibold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                                                <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
                                                   Achitat integral (0 RON)
                                                 </span>
                                               )}
@@ -22268,7 +21262,7 @@ export default function App() {
                                           <div className="min-w-0 space-y-1">
                                             <p className="text-[10px] text-slate-500">Sold restant</p>
                                             <div className="flex items-center justify-between gap-1 flex-wrap">
-                                              <span className="text-[10px] font-bold font-mono tabular-nums text-rose-600 dark:text-rose-400">
+                                              <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400">
                                                 {item.quickCard.totalUnpaidBalance.toFixed(2)} RON
                                               </span>
                                               <button
@@ -22280,7 +21274,7 @@ export default function App() {
                                                   setPatientOrdersSearchQuery(item.patientName || "");
                                                   setIsOrdersModalOpen(true);
                                                 }}
-                                                className="px-2 py-0.5 bg-[#FFFFFF] dark:bg-[#111827] border border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded text-[9px] font-bold uppercase flex items-center gap-1 cursor-pointer ml-auto"
+                                                className="px-2 py-0.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-[9px] font-bold uppercase flex items-center gap-1 cursor-pointer ml-auto"
                                                 title="Deschide centralizatorul pentru încasare"
                                               >
                                                 <CreditCard className="w-2.5 h-2.5" />
@@ -22305,14 +21299,16 @@ export default function App() {
                                           }
                                         }}
                                         className={cn(
-                                          "flex flex-col gap-0.5 min-w-0 px-2.5 py-2 cursor-pointer group/sched",
-                                          darkMode ? "hover:bg-slate-900/70" : "hover:bg-white"
+                                          "flex flex-col gap-0.5 min-w-0 px-2.5 py-2 rounded-xl border cursor-pointer group/sched",
+                                          darkMode
+                                            ? "bg-slate-900/70 border-slate-800 hover:border-emerald-700/60 text-slate-300"
+                                            : "bg-emerald-50/40 border-emerald-100 hover:bg-emerald-50/80 text-slate-700"
                                         )}
                                         title={item.quickCard?.futureAppointment ? "Click pentru a deschide programarea în calendar" : "Click pentru a programa pacientul"}
                                       >
                                         <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400 group-hover/sched:text-blue-600">
                                           <span className="flex items-center gap-1">
-                                            <CalendarClock className="w-3 h-3 text-blue-500 shrink-0" />
+                                            <CalendarClock className="w-3 h-3 text-emerald-500 shrink-0" />
                                             Programare viitoare
                                           </span>
                                           <span className="text-[9px] opacity-0 group-hover/sched:opacity-100 text-blue-600">
@@ -22321,7 +21317,7 @@ export default function App() {
                                         </div>
                                         {item.quickCard?.futureAppointment ? (
                                           <div className="min-w-0">
-                                            <p className="font-semibold text-[11px] font-mono tabular-nums text-blue-600 dark:text-blue-400 truncate">
+                                            <p className="font-semibold text-[11px] text-blue-600 dark:text-blue-400 truncate">
                                               {new Date(item.quickCard.futureAppointment.startTime).toLocaleDateString("ro-RO", {
                                                 day: "2-digit",
                                                 month: "short",
@@ -22353,7 +21349,7 @@ export default function App() {
                                   <button
                                     type="button"
                                     onClick={() => handleUniversalSearch(universalSearchQuery)}
-                                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#2563EB] hover:bg-blue-700 text-white cursor-pointer"
+                                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
                                   >
                                     Caută aprofundat în baza de date
                                   </button>
@@ -22363,7 +21359,7 @@ export default function App() {
                                       setIsOmniboxOpen(false);
                                       openNewPatientModal(universalSearchQuery);
                                     }}
-                                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#FFFFFF] dark:bg-[#111827] border border-[#059669] text-[#059669] dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer"
+                                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
                                   >
                                     + Pacient Nou
                                   </button>
@@ -22392,10 +21388,10 @@ export default function App() {
                     </AnimatePresence>
                   </div>
 
-                  {/* Quick Pacient Nou button (10% primary Cobalt clinical accent) */}
+                  {/* Quick Pacient Nou button */}
                   <button
                     onClick={() => openNewPatientModal(universalSearchQuery)}
-                    className="px-2.5 py-1.5 rounded-lg border border-[#2563EB] bg-[#2563EB] hover:bg-blue-700 text-white text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shrink-0 cursor-pointer"
+                    className="px-2.5 py-1.5 rounded-lg border border-emerald-600 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shrink-0 cursor-pointer shadow-xs"
                     title="Adaugă Pacient Nou"
                   >
                     <UserPlus className="w-3.5 h-3.5" />
@@ -22413,8 +21409,8 @@ export default function App() {
                       className={cn(
                         "p-2 rounded-lg border flex items-center justify-center shrink-0 relative cursor-pointer",
                         darkMode
-                          ? "bg-[#111827] border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-slate-100"
-                          : "bg-[#FFFFFF] border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+                          ? "bg-slate-800 border-slate-700 text-blue-400 hover:bg-slate-700"
+                          : "bg-blue-50 border-blue-200 text-blue-600 hover:bg-blue-100",
                       )}
                       title="Istoric Programări"
                     >
@@ -22430,17 +21426,17 @@ export default function App() {
                       className={cn(
                         "px-2.5 py-1.5 rounded-lg border text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 shrink-0 relative cursor-pointer",
                         darkMode
-                          ? "bg-[#111827] border-slate-800 text-slate-200 hover:bg-slate-800"
-                          : "bg-[#FFFFFF] border-slate-200 text-slate-700 hover:bg-slate-50",
+                          ? "bg-emerald-950/40 border-emerald-800/60 text-emerald-400 hover:bg-emerald-900/50"
+                          : "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100",
                       )}
                       title="Prescripție ochelari"
                     >
-                      <Glasses className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+                      <Glasses className="w-3.5 h-3.5" />
                       <span className="text-[10px] tracking-tight">
                         Prescripție ochelari
                       </span>
                       {hasOverdueOrders && (
-                        <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-rose-500 rounded-full border border-white dark:border-[#111827]" />
+                        <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-rose-500 rounded-full border border-white dark:border-slate-900" />
                       )}
                     </button>
                   )}
@@ -22456,8 +21452,8 @@ export default function App() {
                       className={cn(
                         "p-2 rounded-lg border flex items-center justify-center shrink-0 relative cursor-pointer",
                         darkMode
-                          ? "bg-[#111827] border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-slate-100"
-                          : "bg-[#FFFFFF] border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+                          ? "bg-slate-800 border-slate-700 text-indigo-400 hover:bg-slate-700"
+                          : "bg-indigo-50 border-indigo-200 text-indigo-600 hover:bg-indigo-100",
                       )}
                       title="Exportă PDF"
                     >
@@ -22483,8 +21479,8 @@ export default function App() {
                       profile?.role === "seller") &&
                       "md:hidden",
                     darkMode
-                      ? "bg-[#111827] border-slate-800 text-slate-300 hover:bg-slate-800"
-                      : "bg-[#FFFFFF] border-slate-200 text-slate-600 hover:bg-slate-50",
+                      ? "bg-slate-800 border-slate-700 text-indigo-400 hover:bg-slate-700"
+                      : "bg-indigo-50 border-indigo-200 text-indigo-600 hover:bg-indigo-100",
                   )}
                   title="Exportă PDF"
                 >
@@ -22497,8 +21493,8 @@ export default function App() {
                 className={cn(
                   "p-2 rounded-lg border cursor-pointer",
                   darkMode
-                    ? "bg-[#111827] border-slate-800 text-slate-300 hover:bg-slate-800"
-                    : "bg-[#FFFFFF] border-slate-200 text-slate-600 hover:bg-slate-50",
+                    ? "bg-slate-800 border-slate-700 text-amber-400 hover:bg-slate-700"
+                    : "bg-amber-50 border-amber-200 text-amber-600 hover:bg-amber-100",
                 )}
                 title={darkMode ? "Mod Luminos" : "Mod Întunecat"}
               >
@@ -22537,8 +21533,8 @@ export default function App() {
                 className={cn(
                   "p-2 rounded-lg border cursor-pointer",
                   darkMode
-                    ? "bg-[#111827] border-slate-800 text-slate-400 hover:bg-rose-950/30 hover:border-rose-900/50 hover:text-rose-400"
-                    : "bg-[#FFFFFF] border-slate-200 text-slate-500 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600",
+                    ? "bg-rose-950/30 border-rose-900/50 text-rose-400 hover:bg-rose-950/50"
+                    : "bg-rose-50 border-rose-200 text-rose-600 hover:bg-rose-100",
                 )}
                 title="Ieșire"
               >
@@ -23039,8 +22035,8 @@ export default function App() {
                     className={cn(
                       "flex items-center gap-1 p-1 rounded-xl border",
                       darkMode
-                        ? "bg-[#111827] border-slate-800"
-                        : "bg-[#FFFFFF] border-slate-200",
+                        ? "bg-slate-900 border-slate-800"
+                        : "bg-slate-100 border-slate-200",
                     )}
                   >
                     <button
@@ -23048,7 +22044,7 @@ export default function App() {
                       className={cn(
                         "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 cursor-pointer",
                         !showAdminAppointments
-                          ? "bg-[#2563EB] text-white"
+                          ? "bg-blue-600 text-white shadow-xs"
                           : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200",
                       )}
                     >
@@ -23060,7 +22056,7 @@ export default function App() {
                       className={cn(
                         "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 cursor-pointer",
                         showAdminAppointments
-                          ? "bg-[#059669] text-white"
+                          ? "bg-emerald-600 text-white shadow-xs"
                           : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200",
                       )}
                     >
@@ -23075,8 +22071,8 @@ export default function App() {
                       className={cn(
                         "flex items-center justify-center p-2 rounded-xl border shrink-0 cursor-pointer",
                         darkMode
-                          ? "bg-[#111827] border-slate-800 text-slate-300 hover:bg-slate-800"
-                          : "bg-[#FFFFFF] border-slate-200 text-slate-600 hover:bg-slate-50",
+                          ? "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100",
                       )}
                       title="Activează Screen Saver"
                     >
@@ -23090,7 +22086,7 @@ export default function App() {
                   className={cn(
                     "flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border cursor-default",
                     isAppOnline
-                      ? "bg-[#FFFFFF] dark:bg-[#111827] border-slate-200 dark:border-slate-800 text-[#059669] dark:text-emerald-400"
+                      ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400"
                       : "bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400"
                   )}
                   title={
@@ -23101,7 +22097,7 @@ export default function App() {
                 >
                   {isAppOnline ? (
                     <>
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#059669]" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                       <Wifi className="w-3 h-3" />
                       <span>Online</span>
                     </>
@@ -23122,8 +22118,8 @@ export default function App() {
                     className={cn(
                       "flex items-center justify-center p-2 rounded-xl border shrink-0 cursor-pointer",
                       darkMode
-                        ? "bg-[#111827] border-slate-800 text-slate-300 hover:bg-slate-800"
-                        : "bg-[#FFFFFF] border-slate-200 text-slate-600 hover:bg-slate-50",
+                        ? "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
+                        : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100",
                     )}
                     title="Activează Screen Saver"
                   >
@@ -23156,8 +22152,8 @@ export default function App() {
                 className={cn(
                   "flex items-center gap-2 px-3 py-1.5 rounded-xl border cursor-pointer shrink-0",
                   darkMode
-                    ? "bg-[#111827] border-slate-800 hover:bg-slate-800"
-                    : "bg-[#FFFFFF] border-slate-200 hover:bg-slate-50",
+                    ? "bg-slate-900 border-slate-800 hover:bg-slate-800"
+                    : "bg-sky-50/80 border-sky-200 hover:bg-sky-100/80",
                 )}
               >
                 {weather ? (
@@ -23172,7 +22168,7 @@ export default function App() {
                       <div className="flex items-center gap-1">
                         <span
                           className={cn(
-                            "text-lg font-black font-mono tabular-nums leading-none",
+                            "text-lg font-black leading-none",
                             darkMode ? "text-slate-100" : "text-slate-900",
                           )}
                         >
@@ -23217,20 +22213,20 @@ export default function App() {
                   className={cn(
                     "flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border leading-tight shrink-0 cursor-pointer",
                     darkMode
-                      ? "bg-[#111827] border-slate-800 hover:bg-slate-800 text-slate-300"
-                      : "bg-[#FFFFFF] border-slate-200 hover:bg-slate-50 text-slate-600",
+                      ? "bg-amber-950/30 border-amber-800/50 hover:bg-amber-950/50 text-amber-400"
+                      : "bg-amber-50 border-amber-200 hover:bg-amber-100 text-amber-800",
                   )}
                   title="Curs Valutar BNR"
                 >
-                  <Landmark className="w-3.5 h-3.5 shrink-0 text-slate-500 dark:text-slate-400" />
+                  <Landmark className="w-3.5 h-3.5 shrink-0 text-amber-500" />
                   <div className="flex flex-col items-start leading-none">
-                    <span className="text-[8px] font-bold uppercase tracking-tight text-slate-500 dark:text-slate-400">
+                    <span className="text-[8px] font-bold uppercase tracking-tight opacity-75">
                       curs
                     </span>
                     <span
                       className={cn(
-                        "text-[11px] font-black font-mono",
-                        darkMode ? "text-slate-100" : "text-slate-900",
+                        "text-[11px] font-black",
+                        darkMode ? "text-amber-300" : "text-amber-900",
                       )}
                     >
                       BNR
@@ -23243,30 +22239,12 @@ export default function App() {
                 profile?.role === "frontdesk" ||
                 profile?.role === "seller") && (
                 <button
-                  onClick={() => {
-                    setIsBirthdayModalOpen(true);
-                    const all = getAllPatients();
-                    const todayBirthdays = all.filter(
-                      (p) => getBirthdayStatus(p.birthDate)?.isToday,
-                    );
-                    if (todayBirthdays.length > 0) {
-                      setBirthdaySelectedPatientID(todayBirthdays[0].id);
-                      const defaultMsg = generatePatientBirthdayMessage(todayBirthdays[0].name, todayBirthdays[0].birthDate);
-                      setBirthdayCustomMessage(defaultMsg);
-                    } else if (all.length > 0) {
-                      const validOnes = all.filter((p) => p.birthDate);
-                      if (validOnes.length > 0) {
-                        setBirthdaySelectedPatientID(validOnes[0].id);
-                        const defaultMsg = generatePatientBirthdayMessage(validOnes[0].name, validOnes[0].birthDate);
-                        setBirthdayCustomMessage(defaultMsg);
-                      }
-                    }
-                  }}
+                  onClick={() => setIsBirthdayModalOpen(true)}
                   className={cn(
                     "flex items-center justify-center p-2 rounded-xl border relative shrink-0 cursor-pointer",
                     darkMode
-                      ? "bg-[#111827] border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-rose-400"
-                      : "bg-[#FFFFFF] border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-rose-600",
+                      ? "bg-pink-950/30 border-pink-800/50 hover:bg-pink-950/50 text-pink-400"
+                      : "bg-pink-50 border-pink-200 hover:bg-pink-100 text-pink-600",
                   )}
                   title="Aniversări Pacienți (Astăzi & În curând)"
                 >
@@ -23279,7 +22257,7 @@ export default function App() {
                     }).length;
                     if (todayCount > 0) {
                       return (
-                        <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white font-black font-mono tabular-nums text-[9px] w-4.5 h-4.5 rounded-full flex items-center justify-center border border-white dark:border-[#111827]">
+                        <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white font-black text-[9px] w-4.5 h-4.5 rounded-full flex items-center justify-center border border-white dark:border-slate-900">
                           {todayCount}
                         </span>
                       );
@@ -23299,12 +22277,12 @@ export default function App() {
                     className={cn(
                       "flex items-center gap-1 px-2 py-0.5 rounded-lg border text-[10px] font-bold shrink-0 cursor-pointer disabled:opacity-50",
                       hasLoadedAllHistory
-                        ? (darkMode ? "bg-[#111827] border-emerald-700/60 text-emerald-400" : "bg-[#FFFFFF] border-emerald-300 text-[#059669]")
-                        : (darkMode ? "bg-[#111827] border-slate-800 hover:bg-slate-800 text-slate-300" : "bg-[#FFFFFF] border-slate-200 hover:bg-slate-50 text-slate-600")
+                        ? (darkMode ? "bg-emerald-950/40 border-emerald-700/60 text-emerald-400" : "bg-emerald-50 border-emerald-300 text-emerald-700")
+                        : (darkMode ? "bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300" : "bg-white border-slate-200 hover:bg-slate-50 text-slate-600")
                     )}
                     title="Smart Loading Total: Descarcă toată arhiva clinică din baza de date"
                   >
-                    <Database className={cn("w-3 h-3", isLoadingAllHistory && "animate-spin text-blue-500", hasLoadedAllHistory && "text-[#059669]")} />
+                    <Database className={cn("w-3 h-3", isLoadingAllHistory && "animate-spin text-blue-500", hasLoadedAllHistory && "text-emerald-600 dark:text-emerald-400")} />
                     <span>
                       {isLoadingAllHistory ? "Se încarcă..." : hasLoadedAllHistory ? "Arhivă Totală Activă" : "Smart Loading Total"}
                     </span>
@@ -23318,12 +22296,12 @@ export default function App() {
                     className={cn(
                       "flex items-center gap-1 px-2 py-0.5 rounded-lg border text-[10px] font-bold shrink-0 cursor-pointer disabled:opacity-50",
                       !hasLoadedAllHistory
-                        ? (darkMode ? "bg-[#111827] border-blue-700/60 text-blue-400" : "bg-[#FFFFFF] border-blue-300 text-[#2563EB]")
-                        : (darkMode ? "bg-[#111827] border-slate-800 hover:bg-slate-800 text-slate-300" : "bg-[#FFFFFF] border-slate-200 hover:bg-slate-50 text-slate-600")
+                        ? (darkMode ? "bg-blue-950/40 border-blue-700/60 text-blue-400" : "bg-blue-50 border-blue-300 text-blue-700")
+                        : (darkMode ? "bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300" : "bg-white border-slate-200 hover:bg-slate-50 text-slate-600")
                     )}
                     title="Smart Loading 30 Zile: Sincronizează doar ultimele 30 zile pentru a economisi credite Firebase"
                   >
-                    <ClockIcon className={cn("w-3 h-3", isLoading30Days && "animate-spin text-blue-500", !hasLoadedAllHistory && "text-[#2563EB]")} />
+                    <ClockIcon className={cn("w-3 h-3", isLoading30Days && "animate-spin text-blue-500", !hasLoadedAllHistory && "text-blue-600 dark:text-blue-400")} />
                     <span>
                       {isLoading30Days ? "Sincronizare..." : !hasLoadedAllHistory ? "Smart Loading 30 Zile (Activ)" : "Smart Loading 30 Zile"}
                     </span>
@@ -23344,13 +22322,13 @@ export default function App() {
               className={cn(
                 "relative flex items-center justify-center gap-2 h-9 px-3 rounded-xl cursor-pointer border select-none text-xs font-bold",
                 darkMode
-                  ? "bg-[#111827] border-slate-800 text-slate-200 hover:bg-slate-800"
-                  : "bg-[#FFFFFF] border-slate-200 text-slate-700 hover:bg-slate-50",
+                  ? "bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800"
+                  : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50",
               )}
               title="Alege săptămâna din calendar"
             >
               <span>Calendar</span>
-              <Calendar className="w-4 h-4 text-[#2563EB] dark:text-blue-400" />
+              <Calendar className="w-4 h-4 text-blue-600 dark:text-blue-400" />
             </button>
 
             {showDatePickerDropdown && (
@@ -23457,7 +22435,6 @@ export default function App() {
                         const isSelected = isSameDay(day, selectedDate);
                         const isToday = isSameDay(day, new Date());
                         const dayOfWeek = getDay(day); // 0 is Sunday, 6 is Saturday
-                        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
                         const holidayName = getRomanianPublicHoliday(day);
 
                         let saturdayDocInitials = "";
@@ -23607,8 +22584,8 @@ export default function App() {
               className={cn(
                 "flex items-center gap-0.5 p-0.5 rounded-xl border",
                 darkMode
-                  ? "bg-[#111827] border-slate-800"
-                  : "bg-[#FFFFFF] border-slate-200",
+                  ? "bg-slate-900 border-slate-800"
+                  : "bg-white border-slate-200",
               )}
             >
               <button
@@ -23659,7 +22636,6 @@ export default function App() {
               const isToday = isSameDay(day, new Date());
               const isSaturday = getDay(day) === 6;
               const dateStr = format(day, "yyyy-MM-dd");
-              const isSunday = getDay(day) === 0;
 
               const visibleDoctorRoles = showAdminAppointments
                 ? ["admin" as Role]
@@ -23703,15 +22679,15 @@ export default function App() {
                   className={cn(
                     "rounded-2xl border overflow-hidden flex flex-col w-[85vw] md:w-full shrink-0",
                     profile?.role === "tv" ? "h-fit" : "min-h-[600px] h-full",
-                    darkMode ? "bg-[#111827]" : "bg-[#FFFFFF]",
+                    darkMode ? "bg-slate-900" : "bg-white",
                     isSaturday
                       ? darkMode
-                        ? "border-slate-700 border-2"
-                        : "border-slate-300 border-2"
+                        ? "border-amber-700/60 border-2"
+                        : "border-amber-300 border-2"
                       : isToday
                         ? darkMode
-                          ? "border-blue-500/70 ring-1 ring-blue-500/20"
-                          : "border-[#2563EB] ring-1 ring-blue-500/20"
+                          ? "border-blue-500/80 ring-2 ring-blue-500/20"
+                          : "border-blue-500 ring-2 ring-blue-500/20"
                         : darkMode
                           ? "border-slate-800"
                           : "border-slate-200",
@@ -23723,11 +22699,11 @@ export default function App() {
                       profile?.role !== "tv" && "border-b",
                       isToday
                         ? darkMode
-                          ? "bg-[#111827] border-slate-800"
-                          : "bg-[#FFFFFF] border-slate-200"
+                          ? "bg-blue-950/30 border-blue-900/50"
+                          : "bg-blue-50/70 border-blue-100"
                         : darkMode
-                          ? "bg-[#111827] border-slate-800"
-                          : "bg-[#FFFFFF] border-slate-200",
+                          ? "bg-slate-900 border-slate-800"
+                          : "bg-slate-50/60 border-slate-200",
                     )}
                   >
                     <div className="flex items-center justify-center gap-1.5 mb-0.5">
@@ -23735,14 +22711,14 @@ export default function App() {
                         className={cn(
                           "text-[13px] font-black uppercase tracking-widest",
                           isToday
-                            ? (darkMode ? "text-blue-400 font-black" : "text-[#2563EB] font-black")
+                            ? (darkMode ? "text-blue-400 font-black" : "text-blue-600 font-black")
                             : (darkMode ? "text-slate-400" : "text-slate-600"),
                         )}
                       >
                         {format(day, "EEEE", { locale: ro })}
                       </p>
                       {isToday && (
-                        <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded-full bg-[#2563EB] text-white tracking-wider">
+                        <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded-full bg-blue-600 text-white tracking-wider">
                           Azi
                         </span>
                       )}
@@ -23757,8 +22733,8 @@ export default function App() {
                         <div className={cn(
                           "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border",
                           darkMode
-                            ? "bg-[#0B1120] border-slate-800 text-slate-300"
-                            : "bg-[#F8FAFC] border-slate-200 text-slate-600"
+                            ? "bg-blue-950/40 border-blue-800/60 text-blue-300"
+                            : "bg-blue-50 border-blue-200 text-blue-700"
                         )}>
                           Total: {appointmentsForDay.length} {appointmentsForDay.length === 1 ? "programare" : "programări"}
                         </div>
@@ -23770,10 +22746,10 @@ export default function App() {
                         "inline-flex items-baseline justify-center gap-1.5 px-3.5 py-1 mx-auto rounded-xl border",
                         workingDoctors.length > 1 ? "mb-1" : "mb-1.5",
                         isToday
-                          ? "bg-[#2563EB] border-[#2563EB] text-white"
+                          ? "bg-blue-600 border-blue-600 text-white shadow-sm"
                           : darkMode
-                            ? "bg-[#0B1120] border-slate-800 text-slate-200"
-                            : "bg-[#F8FAFC] border-slate-200 text-slate-800",
+                            ? "bg-slate-800 border-slate-700 text-slate-200"
+                            : "bg-white border-slate-200 text-slate-800",
                       )}
                     >
                       <span className="text-2xl font-black leading-none">
@@ -23839,44 +22815,44 @@ export default function App() {
                                   {isTv ? docLabel : (workingDoctors.length > 1 ? getRoleLabel(role).split(" ")[1] : docLabel)}
                                 </span>
 
-                                {/* Badges C, R, G compacte, aliniate tabular (60-30-10) */}
-                                <div className="flex items-center justify-center gap-1 flex-nowrap shrink-0 font-mono tabular-nums">
+                                {/* Badges C, R, G */}
+                                <div className="flex items-center justify-center gap-1 flex-nowrap shrink-0">
                                   <div
                                     className={cn(
-                                      "flex items-center gap-0.5 px-1.5 py-0.5 rounded border text-[10.5px] font-bold",
+                                      "flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border text-[10.5px] font-bold",
                                       darkMode
-                                        ? "bg-slate-800/80 border-slate-700 text-slate-200"
-                                        : "bg-white border-slate-200 text-slate-700",
+                                        ? "bg-blue-950/50 border-blue-800/70 text-blue-300"
+                                        : "bg-blue-50 border-blue-200 text-blue-700",
                                     )}
                                     title={`Consult complet (${docLabel}): ${dCounts.countC}`}
                                   >
-                                    <span className="text-blue-600 dark:text-blue-400 font-black">C</span>
+                                    <span className="font-black">C</span>
                                     <span>{dCounts.countC}</span>
                                   </div>
 
                                   <div
                                     className={cn(
-                                      "flex items-center gap-0.5 px-1.5 py-0.5 rounded border text-[10.5px] font-bold",
+                                      "flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border text-[10.5px] font-bold",
                                       darkMode
-                                        ? "bg-slate-800/80 border-slate-700 text-slate-200"
-                                        : "bg-white border-slate-200 text-slate-700",
+                                        ? "bg-amber-950/50 border-amber-800/70 text-amber-300"
+                                        : "bg-amber-50 border-amber-200 text-amber-700",
                                     )}
                                     title={`Revenire (${docLabel}): ${dCounts.countR}`}
                                   >
-                                    <span className="text-amber-600 dark:text-amber-400 font-black">R</span>
+                                    <span className="font-black">R</span>
                                     <span>{dCounts.countR}</span>
                                   </div>
 
                                   <div
                                     className={cn(
-                                      "flex items-center gap-0.5 px-1.5 py-0.5 rounded border text-[10.5px] font-bold",
+                                      "flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border text-[10.5px] font-bold",
                                       darkMode
-                                        ? "bg-slate-800/80 border-slate-700 text-slate-200"
-                                        : "bg-white border-slate-200 text-slate-700",
+                                        ? "bg-emerald-950/50 border-emerald-800/70 text-emerald-300"
+                                        : "bg-emerald-50 border-emerald-200 text-emerald-700",
                                     )}
                                     title={`Gratis (${docLabel}): ${dCounts.countG}`}
                                   >
-                                    <span className="text-emerald-600 dark:text-emerald-400 font-black">G</span>
+                                    <span className="font-black">G</span>
                                     <span>{dCounts.countG}</span>
                                   </div>
                                 </div>
@@ -23943,7 +22919,7 @@ export default function App() {
                     <div
                       className={cn(
                         "p-2 space-y-1 flex-1 overflow-y-auto",
-                        darkMode ? "bg-[#0B1120]/60" : "bg-[#F8FAFC]",
+                        darkMode ? "bg-slate-950/60" : "bg-slate-50/70",
                       )}
                     >
                     {visibleDoctorRoles.map((role) => {
@@ -23961,8 +22937,8 @@ export default function App() {
                                 "py-1 px-2 mt-2 mb-1 rounded-lg text-[9px] font-black uppercase tracking-widest text-center border",
                                 ROLE_TEXT_COLORS[role as Role],
                                 darkMode
-                                  ? "bg-[#111827] border-slate-800"
-                                  : "bg-[#FFFFFF] border-slate-200",
+                                  ? "bg-slate-900 border-slate-800"
+                                  : "bg-white border-slate-200",
                               )}
                             >
                               {getRoleLabel(role as Role)}
@@ -24061,18 +23037,9 @@ export default function App() {
                               !!appointment?.isGratis ||
                               !!historyItemForSlot?.isGratis;
 
-                            const isControlToday =
-                              patientRecordForToday?.isControl;
-                            const isGratisToday =
-                              patientRecordForToday?.isGratis;
                             const isConsultedToday =
                               ((!!patientRecordForToday || hasMedicalReportToday || !!appointment?.isConsultComplet || !!appointment?.isControl || !!appointment?.isGratis || isConsultCompletStatus || isControlStatus || isGratisStatus) || appointment?.forceSeen) &&
                               !appointment?.ignoreSeen;
-
-                            const isNoShow =
-                              appointment &&
-                              !isConsultedToday &&
-                              isAfter(new Date(), addHours(time, 1));
 
                             const isPast =
                               isBefore(time, new Date()) &&
@@ -24137,18 +23104,18 @@ export default function App() {
                                   "w-full rounded-xl text-left border flex flex-col group relative cursor-pointer",
                                   appointment
                                     ? cn(
-                                        "p-2 gap-1 border-l-[3px]",
+                                        "p-2 gap-1",
                                         appointment.status === "cancelled"
                                           ? darkMode
-                                            ? "bg-[#111827]/50 border-slate-800 border-l-slate-600 text-slate-500 opacity-60"
-                                            : "bg-slate-100/80 border-slate-200 border-l-slate-300 text-slate-400 opacity-65"
+                                            ? "bg-slate-900/50 border-slate-800 text-slate-500 opacity-60"
+                                            : "bg-slate-100/80 border-slate-200 text-slate-400 opacity-65"
                                           : isConsultedToday
                                             ? darkMode
-                                              ? "bg-[#111827]/70 border-slate-800 border-l-[#059669] text-slate-400 opacity-80 hover:opacity-100"
-                                              : "bg-[#FFFFFF]/80 border-slate-200 border-l-[#059669] text-slate-500 opacity-85 hover:opacity-100"
+                                              ? "bg-emerald-950/35 border-emerald-800/60 text-emerald-200 hover:bg-emerald-950/50"
+                                              : "bg-emerald-50/90 border-emerald-200 text-emerald-900 hover:bg-emerald-100/70"
                                             : darkMode
-                                              ? "bg-[#111827] border-slate-800 border-l-[#2563EB] text-slate-100 hover:bg-slate-800/80"
-                                              : "bg-[#FFFFFF] border-slate-200 border-l-[#2563EB] text-slate-800 hover:border-slate-300",
+                                              ? "bg-rose-950/30 border-rose-900/50 text-rose-100 hover:bg-rose-950/45"
+                                              : "bg-rose-50/85 border-rose-200 text-rose-950 hover:bg-rose-100/70",
                                       )
                                     : isLockedByOther
                                       ? darkMode
@@ -24165,8 +23132,8 @@ export default function App() {
                                                 ? "bg-amber-900/10 border-amber-900/30 text-amber-500 hover:bg-amber-900/20"
                                                 : "bg-amber-50/70 border-amber-200 text-amber-700 hover:bg-amber-100/70"
                                               : darkMode
-                                                ? "bg-[#111827]/60 border-slate-800/80 text-slate-300 hover:border-blue-500/70 hover:bg-[#111827]"
-                                                : "bg-[#FFFFFF] border-slate-200/80 text-slate-600 hover:border-blue-400 hover:bg-slate-50",
+                                                ? "bg-slate-900/60 border-slate-800/80 text-slate-300 hover:border-blue-500/70 hover:bg-slate-800/80"
+                                                : "bg-white border-slate-200/80 text-slate-600 hover:border-blue-400 hover:bg-blue-50/30",
                                           ),
                                   isLockedByOther && "p-1.5 px-2.5 opacity-90",
                                   isLockedByMe && "p-1.5 px-2.5",
@@ -24214,7 +23181,7 @@ export default function App() {
                                   <div className="flex items-center gap-1 min-w-0">
                                     <span
                                       className={cn(
-                                        "text-[13px] font-semibold font-mono tabular-nums shrink-0",
+                                        "text-[13px] font-bold shrink-0",
                                         appointment
                                           ? (darkMode ? "text-slate-100" : "text-slate-900")
                                           : (darkMode ? "text-slate-300" : "text-slate-600"),
@@ -24415,7 +23382,7 @@ export default function App() {
                                        {(() => {
                                          const ageStr = calculateDetailedAge(appointment.patientBirthDate || "") || (appointment.patientAge ? appointment.patientAge + "ani" : "");
                                          return ageStr ? (
-                                           <span className="text-[10px] font-medium font-mono tabular-nums opacity-65 ml-1 whitespace-nowrap">
+                                           <span className="text-[10px] font-medium opacity-70 ml-1 whitespace-nowrap">
                                              {ageStr}
                                            </span>
                                          ) : null;
@@ -24448,7 +23415,7 @@ export default function App() {
                                      {!isDoctor && appointment.patientPhone && (
                                        <div className="flex items-center justify-between gap-1.5">
                                          <span className={cn(
-                                           "font-medium font-mono tabular-nums text-[10.5px] whitespace-nowrap shrink-0",
+                                           "font-medium text-[10.5px] whitespace-nowrap shrink-0",
                                            darkMode ? "text-slate-400" : "text-slate-500"
                                          )}>
                                            {appointment.patientPhone}
@@ -24727,14 +23694,14 @@ export default function App() {
                       <div
                         key={app.id}
                         className={cn(
-                          "p-3.5 rounded-xl border border-l-[3px]",
+                          "p-4 rounded-2xl border",
                           isBefore(parseISO(app.startTime), new Date())
                             ? darkMode
-                              ? "bg-slate-900/40 border-slate-800 border-l-slate-600 opacity-70"
-                              : "bg-slate-50 border-slate-200 border-l-slate-300 opacity-75"
+                              ? "bg-slate-900/40 border-slate-800 opacity-70"
+                              : "bg-slate-50 border-slate-200 opacity-75"
                             : darkMode
-                              ? "bg-slate-800/80 border-slate-700 border-l-blue-500 hover:border-slate-600"
-                              : "bg-white border-slate-200 border-l-blue-600 shadow-2xs hover:border-slate-300",
+                              ? "bg-slate-800/80 border-slate-700 hover:border-slate-600"
+                              : "bg-white border-slate-200 shadow-sm hover:border-blue-300",
                         )}
                       >
                         <div className="flex justify-between items-start mb-1 gap-2">
@@ -24871,12 +23838,7 @@ export default function App() {
                                 onClick={() =>
                                   handleNewAppointmentFromSearch(app)
                                 }
-                                className={cn(
-                                  "flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border cursor-pointer",
-                                  darkMode
-                                    ? "bg-slate-900 hover:bg-slate-800 border-slate-700 text-emerald-400"
-                                    : "bg-white hover:bg-emerald-50 border-slate-200 text-emerald-700",
-                                )}
+                                className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm cursor-pointer"
                                 title="Programare Nouă"
                               >
                                 <CalendarPlus className="w-4 h-4" />
@@ -24891,7 +23853,7 @@ export default function App() {
                                     setIsSearchModalOpen(false);
                                     openMedicalRecord(app);
                                   }}
-                                  className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-blue-600 hover:bg-blue-700 border border-blue-600 text-white shadow-xs cursor-pointer"
+                                  className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-blue-600 hover:bg-blue-700 text-white shadow-sm cursor-pointer"
                                   title="Deschide Fișa Pacientului"
                                 >
                                   <FileText className="w-4 h-4" />
@@ -24917,12 +23879,12 @@ export default function App() {
                                     className={cn(
                                       "flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border cursor-pointer",
                                       darkMode
-                                        ? "bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-200"
-                                        : "bg-white hover:bg-slate-50 border-slate-200 text-slate-700",
+                                        ? "bg-indigo-950/40 hover:bg-indigo-900/50 border-indigo-800/60 text-indigo-300"
+                                        : "bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700",
                                     )}
                                     title="Generare Documente Oficiale pentru pacient"
                                   >
-                                    <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                                    <FileText className="w-4 h-4" />
                                     <span>Referate</span>
                                     <ChevronDown
                                       className={cn(
@@ -25014,15 +23976,15 @@ export default function App() {
                                     "flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border cursor-pointer",
                                     expandedHistories[app.id]
                                       ? darkMode
-                                        ? "bg-amber-950/40 border-amber-700 text-amber-300"
-                                        : "bg-amber-50 border-amber-300 text-amber-800"
+                                        ? "bg-amber-600 border-amber-500 text-white"
+                                        : "bg-amber-500 border-amber-500 text-white"
                                       : darkMode
-                                        ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-700"
-                                        : "bg-white hover:bg-slate-50 text-slate-700 border-slate-200"
+                                        ? "bg-amber-950/40 hover:bg-amber-900/50 text-amber-300 border-amber-800/60"
+                                        : "bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200"
                                   )}
                                   title="Vizualizează istoricul consultațiilor"
                                 >
-                                  <History className="w-4 h-4 shrink-0 text-amber-500" />
+                                  <History className="w-4 h-4 shrink-0" />
                                   <span>Istoric</span>
                                 </button>
 
@@ -25064,8 +24026,8 @@ export default function App() {
                                     className={cn(
                                       "flex items-center justify-center p-2 rounded-xl border cursor-pointer",
                                       darkMode
-                                        ? "bg-slate-900 hover:bg-slate-800 border-slate-700 text-emerald-400"
-                                        : "bg-white hover:bg-emerald-50 border-slate-200 text-emerald-600"
+                                        ? "bg-emerald-950/40 hover:bg-emerald-900/50 border-emerald-800/60 text-emerald-400"
+                                        : "bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700"
                                     )}
                                     title="Deschide Comandă Nouă Ochelari"
                                   >
@@ -25086,8 +24048,8 @@ export default function App() {
                                     className={cn(
                                       "flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider border cursor-pointer shrink-0",
                                       darkMode
-                                        ? "bg-slate-900 hover:bg-rose-950/50 border-slate-700 hover:border-rose-700 text-rose-400"
-                                        : "bg-white hover:bg-rose-50 border-slate-200 hover:border-rose-300 text-rose-600"
+                                        ? "bg-rose-950/40 hover:bg-rose-950/60 border-rose-800/60 text-rose-400"
+                                        : "bg-rose-50 hover:bg-rose-100 border-rose-200 text-rose-600"
                                     )}
                                     title="Ștergere Definitivă Pacient (Elimină definitiv toate fișele, rețetele, programările și comenzile acestui pacient)"
                                   >
@@ -25227,11 +24189,6 @@ export default function App() {
                                   const itemAge = patientRecord.patientBirthDate
                                     ? calculateAge(patientRecord.patientBirthDate, itemDate)
                                     : patientRecord.patientAge;
-                                  const itemTurningAge = calculateTurningAge(
-                                    patientRecord.patientBirthDate,
-                                    patientRecord.patientAge,
-                                    itemDate
-                                  );
 
                                   return (
                                     <div
@@ -26129,7 +25086,6 @@ export default function App() {
         setActiveOrderIndex={setActiveOrderIndex}
         setIsGlassesOrderModalOpen={setIsGlassesOrderModalOpen}
         setOrderToDelete={setOrderToDelete}
-        setIsOrderDeleteConfirmOpen={setIsOrderDeleteConfirmOpen}
         setIsPermanentDelete={setIsPermanentDelete}
         availableUsers={availableUsers}
         handleExportData={handleExportData}
@@ -26819,7 +25775,6 @@ export default function App() {
         setIsObjectiveExamExpanded={setIsObjectiveExamExpanded}
         getKFieldStyle={getKFieldStyle}
         setIsMyopiaChartOpen={setIsMyopiaChartOpen}
-        setMyopiaChartEye={setMyopiaChartEye}
         getIopInputClass={getIopInputClass}
         isExaminationsExpanded={isExaminationsExpanded}
         setIsExaminationsExpanded={setIsExaminationsExpanded}
@@ -26959,8 +25914,8 @@ export default function App() {
               "p-3.5 rounded-full border shadow-sm flex items-center justify-center relative",
               deletedAppointments.length === 0
                 ? darkMode
-                  ? "bg-[#111827] border-slate-800 text-slate-500 opacity-50 cursor-not-allowed"
-                  : "bg-[#FFFFFF] border-slate-200 text-slate-400 opacity-50 cursor-not-allowed"
+                  ? "bg-slate-900 border-slate-800 text-slate-500 opacity-50 cursor-not-allowed"
+                  : "bg-white border-slate-200 text-slate-400 opacity-50 cursor-not-allowed"
                 : "bg-rose-600 border-rose-600 text-white hover:bg-rose-700 cursor-pointer",
             )}
             title={
@@ -26983,8 +25938,8 @@ export default function App() {
             className={cn(
               "p-3.5 rounded-full border shadow-sm flex items-center justify-center cursor-pointer",
               darkMode
-                ? "bg-[#111827] border-slate-800 text-slate-200 hover:bg-slate-800"
-                : "bg-[#FFFFFF] border-slate-200 text-slate-700 hover:bg-slate-50"
+                ? "bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800"
+                : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
             )}
             title="Setați Clinica"
           >
@@ -29437,7 +28392,11 @@ export default function App() {
                               ).map((opt) => (
                                 <button
                                   key={`del-opt-${opt.id}`}
-                                  onClick={() => setDeleteOption(opt.id)}
+                                  onClick={() => {
+                                    setDeleteOption(opt.id);
+                                    setShowDeleteConfirm(false);
+                                    setShowPatientsDeleteConfirm(false);
+                                  }}
                                   className={cn(
                                     "px-4 py-2 rounded-xl text-xs font-bold border transition-all",
                                     deleteOption === opt.id
@@ -29510,20 +28469,46 @@ export default function App() {
                                 </p>
                               </div>
                               <div className="space-y-2.5">
-                                <button
-                                  onClick={() => setShowDeleteConfirm(true)}
-                                  disabled={loading}
-                                  className="w-full flex items-center gap-2 px-4 py-3 bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-rose-900/10 disabled:opacity-50 justify-center"
-                                >
-                                  <Trash2 className="w-4 h-4 shrink-0" />
-                                  {loading
-                                    ? "Procesare..."
-                                    : deleteOption === "all"
-                                      ? "Șterge TOATE Comenzile"
-                                      : deleteOption === "today"
-                                        ? "Șterge Comenzile de AZI"
-                                        : `Șterge Comenzile (${ordersToDeleteCount})`}
-                                </button>
+                                {!showDeleteConfirm ? (
+                                  <button
+                                    onClick={() => setShowDeleteConfirm(true)}
+                                    disabled={loading}
+                                    className="w-full flex items-center gap-2 px-4 py-3 bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-rose-900/10 disabled:opacity-50 justify-center"
+                                  >
+                                    <Trash2 className="w-4 h-4 shrink-0" />
+                                    {loading
+                                      ? "Procesare..."
+                                      : deleteOption === "all"
+                                        ? "Șterge TOATE Comenzile"
+                                        : deleteOption === "today"
+                                          ? "Șterge Comenzile de AZI"
+                                          : `Șterge Comenzile (${ordersToDeleteCount})`}
+                                  </button>
+                                ) : (
+                                  <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 space-y-2">
+                                    <p className="text-[11px] font-bold text-rose-700 dark:text-rose-300 text-center">
+                                      Confirmați ștergerea a {ordersToDeleteCount} comenzi pentru perioada selectată?
+                                    </p>
+                                    <div className="flex gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowDeleteConfirm(false)}
+                                        disabled={loading}
+                                        className="flex-1 py-2 px-3 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-300 dark:hover:bg-slate-700 transition-all"
+                                      >
+                                        Anulează
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={handleDeleteAllOrders}
+                                        disabled={loading}
+                                        className="flex-1 py-2 px-3 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-black uppercase transition-all shadow-sm disabled:opacity-50"
+                                      >
+                                        {loading ? "Ștergere..." : "Confirmă"}
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
 
                                 {deletedOrdersBackup && (
                                   <button
@@ -29557,22 +28542,48 @@ export default function App() {
                                 </p>
                               </div>
                               <div className="space-y-2.5">
-                                <button
-                                  onClick={() =>
-                                    setShowPatientsDeleteConfirm(true)
-                                  }
-                                  disabled={loading}
-                                  className="w-full flex items-center gap-2 px-4 py-3 bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-rose-900/10 disabled:opacity-50 justify-center text-center"
-                                >
-                                  <UserX className="w-4 h-4 shrink-0" />
-                                  {loading
-                                    ? "Procesare..."
-                                    : deleteOption === "all"
-                                      ? "Șterge TOȚI Pacienții (+Prog.)"
-                                      : deleteOption === "today"
-                                        ? `Șterge Pacienții de AZI (${patientsToDeleteCount} fișe, ${appointmentsToDeleteCount} progr.)`
-                                        : `Șterge Pacienții (${patientsToDeleteCount} f., ${appointmentsToDeleteCount} p.)`}
-                                </button>
+                                {!showPatientsDeleteConfirm ? (
+                                  <button
+                                    onClick={() =>
+                                      setShowPatientsDeleteConfirm(true)
+                                    }
+                                    disabled={loading}
+                                    className="w-full flex items-center gap-2 px-4 py-3 bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-rose-900/10 disabled:opacity-50 justify-center text-center"
+                                  >
+                                    <UserX className="w-4 h-4 shrink-0" />
+                                    {loading
+                                      ? "Procesare..."
+                                      : deleteOption === "all"
+                                        ? "Șterge TOȚI Pacienții (+Prog.)"
+                                        : deleteOption === "today"
+                                          ? `Șterge Pacienții de AZI (${patientsToDeleteCount} fișe, ${appointmentsToDeleteCount} progr.)`
+                                          : `Șterge Pacienții (${patientsToDeleteCount} f., ${appointmentsToDeleteCount} p.)`}
+                                  </button>
+                                ) : (
+                                  <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 space-y-2">
+                                    <p className="text-[11px] font-bold text-rose-700 dark:text-rose-300 text-center">
+                                      Confirmați ștergerea a {patientsToDeleteCount} fișe pacienți și {appointmentsToDeleteCount} programări?
+                                    </p>
+                                    <div className="flex gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowPatientsDeleteConfirm(false)}
+                                        disabled={loading}
+                                        className="flex-1 py-2 px-3 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-300 dark:hover:bg-slate-700 transition-all"
+                                      >
+                                        Anulează
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={handleDeleteAllPatients}
+                                        disabled={loading}
+                                        className="flex-1 py-2 px-3 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-black uppercase transition-all shadow-sm disabled:opacity-50"
+                                      >
+                                        {loading ? "Ștergere..." : "Confirmă"}
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
 
                                 {(deletedPatientsBackup.length > 0 ||
                                   deletedAppointmentsBackup.length > 0) && (
@@ -32828,7 +31839,6 @@ export default function App() {
         darkMode={darkMode}
         appointments={appointments}
         medicalRecords={medicalRecords}
-        medicalDocuments={medicalDocuments}
         profile={profile}
         isDoctor={isDoctor}
         openMedicalRecord={openMedicalRecord}
@@ -32845,8 +31855,6 @@ export default function App() {
       {/* Delete Confirmation Modals */}
       <DeleteConfirmationModals
         darkMode={darkMode}
-        isOrderDeleteConfirmOpen={isOrderDeleteConfirmOpen}
-        setIsOrderDeleteConfirmOpen={setIsOrderDeleteConfirmOpen}
         isDeleteConfirmModalOpen={isDeleteConfirmModalOpen}
         setIsDeleteConfirmModalOpen={setIsDeleteConfirmModalOpen}
         appointmentToCancel={appointmentToCancel}

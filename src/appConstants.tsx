@@ -13,15 +13,11 @@ import React, { useMemo, useState, useEffect, useRef } from "react";
 import { auth } from "./firebase";
 import { ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { format, parseISO, differenceInDays, differenceInYears } from "date-fns";
 import {
   Cloud,
   CloudRain,
   Sun,
-  Wind,
-  Thermometer,
   CloudLightning,
-  Droplets,
   CloudSnow,
   CloudFog,
   CloudDrizzle,
@@ -1838,7 +1834,7 @@ export const getDoctorDisplayName = (docRole: string) => {
   return found ? found.name : docRole;
 };
 
-export const Protractor = ({ axis, color }: { axis: string; color: string }) => {
+export const Protractor = ({ axis }: { axis: string; color?: string }) => {
   const angle = parseInt(axis) || 0;
   const rad = (angle * Math.PI) / 180;
 
@@ -2146,7 +2142,6 @@ export interface WindowsScreenSaverProps {
 
 export const WindowsScreenSaver: React.FC<WindowsScreenSaverProps> = ({
   onClose,
-  darkMode,
   userAvatar,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);

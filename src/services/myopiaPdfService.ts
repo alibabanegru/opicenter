@@ -238,7 +238,7 @@ export const drawMyopiaGraph = (
 export const generateMyopiaChartPdf = ({
   currentMedicalRecord,
   myopiaChartEye,
-  getActiveDate = (d?: any) => new Date(),
+  getActiveDate = (_d?: any) => new Date(),
 }: MyopiaChartPdfOptions) => {
     if (!currentMedicalRecord) return;
 
@@ -600,7 +600,7 @@ export const generateBothMyopiaChartsA4Pdf = ({
   isMyopiaCombinedView,
   medicalRecords,
   medicalDocuments,
-  getActiveDate = (d?: any) => new Date(),
+  getActiveDate = (_d?: any) => new Date(),
 }: BothMyopiaChartsA4Options) => {
     if (!record) return;
 

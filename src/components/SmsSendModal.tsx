@@ -23,7 +23,6 @@ import {
   DEFAULT_RAW_TEMPLATES,
   getSavedRawTemplates,
   saveCustomRawTemplates,
-  resetCustomRawTemplates,
   renderSmsTemplate,
   type SmsGateDevice,
 } from "../services/smsService";
@@ -347,6 +346,8 @@ export const SmsSendModal: React.FC<SmsSendModalProps> = ({
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
               </span>
+            ) : deviceError ? (
+              <span className="h-2.5 w-2.5 rounded-full bg-rose-500 shrink-0"></span>
             ) : (
               <span className="h-2.5 w-2.5 rounded-full bg-amber-500"></span>
             )}
@@ -360,6 +361,8 @@ export const SmsSendModal: React.FC<SmsSendModalProps> = ({
                 </>
               ) : isCheckingDevice ? (
                 "Se verifică telefonul conectat..."
+              ) : deviceError ? (
+                <span className="text-rose-600 dark:text-rose-400 font-semibold">{deviceError}</span>
               ) : (
                 <span className="text-amber-600 dark:text-amber-400">Conexiune activă Cloud Gateway</span>
               )}

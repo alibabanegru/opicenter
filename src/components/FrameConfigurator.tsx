@@ -1,6 +1,6 @@
 import React from "react";
 import { Glasses, Check, Settings2, Info } from "lucide-react";
-import { cn, GlassesOrder, deformPath, deformPoint, getPointOnPathAtAngle, normalizePath, getBottomYAtX, samplePathPoints } from "../appConstants";
+import { cn, GlassesOrder, deformPath, getPointOnPathAtAngle, normalizePath, getBottomYAtX, samplePathPoints } from "../appConstants";
 
 const BASE_FRAME_SHAPES = [
   {
@@ -136,7 +136,6 @@ export const FrameConfigurator: React.FC<FrameConfiguratorProps> = React.memo(({
 
   const A_val = parseFloat(lensWidth) || 50;
   const B_val = parseFloat(lensHeight) || 38;
-  const DBL_val = parseFloat(bridgeSize) || 16;
   const bridgeAngleField = prefix === "near" ? "nearBridgeAngle" : "bridgeAngle";
   const bridgeAngle = Number(order[bridgeAngleField]) || 0;
 

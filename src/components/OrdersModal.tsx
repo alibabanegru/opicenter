@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence } from "motion/react";
 import {
   Glasses,
   Search,
@@ -16,7 +16,6 @@ import {
   AlertTriangle,
   CalendarClock,
   RotateCcw,
-  Check,
   CheckCircle2,
   CreditCard,
   X,
@@ -26,7 +25,6 @@ import {
 import { ro } from "date-fns/locale";
 import {
   format,
-  parseISO,
   differenceInCalendarDays,
   startOfDay,
 } from "date-fns";
@@ -69,7 +67,7 @@ export interface OrdersModalProps {
   profile: UserProfile | null;
   isDoctor: boolean;
   configs: ScheduleConfig[];
-  clinicConfig: any;
+  clinicConfig?: any;
   setPatientName: (name: string) => void;
   setPatientPhone: (phone: string) => void;
   setPatientBirthDate: (date: string) => void;
@@ -82,7 +80,7 @@ export interface OrdersModalProps {
   setActiveOrderIndex: (index: number | null) => void;
   setIsGlassesOrderModalOpen: (open: boolean) => void;
   setOrderToDelete: (order: any) => void;
-  setIsOrderDeleteConfirmOpen: (open: boolean) => void;
+  setIsOrderDeleteConfirmOpen?: (open: boolean) => void;
   setIsPermanentDelete: (perm: boolean) => void;
   availableUsers?: { id: string; name: string }[];
   handleExportData?: () => void;
@@ -115,7 +113,6 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   profile,
   isDoctor,
   configs,
-  clinicConfig,
   setPatientName,
   setPatientPhone,
   setPatientBirthDate,
@@ -146,9 +143,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   setSelectedDeletedOrders: propSetSelectedDeletedOrders,
   selectedCompletedOrders: propSelectedCompletedOrders,
   setSelectedCompletedOrders: propSetSelectedCompletedOrders,
-  bulkSoftDeleteMode: propBulkSoftDeleteMode,
   setBulkSoftDeleteMode: propSetBulkSoftDeleteMode,
-  bulkDeleteMode: propBulkDeleteMode,
   setBulkDeleteMode: propSetBulkDeleteMode,
 }) => {
   const usersList = availableUsers && availableUsers.length > 0
@@ -217,12 +212,10 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   const selectedCompletedOrders = propSelectedCompletedOrders !== undefined ? propSelectedCompletedOrders : internalSelectedCompletedOrders;
   const setSelectedCompletedOrders = propSetSelectedCompletedOrders || setInternalSelectedCompletedOrders;
 
-  const [internalBulkSoftDeleteMode, setInternalBulkSoftDeleteMode] = useState<"selected" | "all" | null>(null);
-  const bulkSoftDeleteMode = propBulkSoftDeleteMode !== undefined ? propBulkSoftDeleteMode : internalBulkSoftDeleteMode;
+  const [, setInternalBulkSoftDeleteMode] = useState<"selected" | "all" | null>(null);
   const setBulkSoftDeleteMode = propSetBulkSoftDeleteMode || setInternalBulkSoftDeleteMode;
 
-  const [internalBulkDeleteMode, setInternalBulkDeleteMode] = useState<"selected" | "all" | null>(null);
-  const bulkDeleteMode = propBulkDeleteMode !== undefined ? propBulkDeleteMode : internalBulkDeleteMode;
+  const [, setInternalBulkDeleteMode] = useState<"selected" | "all" | null>(null);
   const setBulkDeleteMode = propSetBulkDeleteMode || setInternalBulkDeleteMode;
   const [loading, setLoading] = useState(false);
   const [isLoadingArchive, setIsLoadingArchive] = useState(false);
@@ -576,7 +569,6 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
         }
 
         const isMainGlassesOrder = data.glassesOrder?.orderNumber === order.orderNumber;
-        const mainGlassesUpdated = isMainGlassesOrder ? updatedOrder : data.glassesOrder;
 
         await updateDoc(
           docRef,
@@ -998,6 +990,12 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                 <h2 className="text-xl font-black text-white uppercase tracking-widest flex items-center gap-3">
                   <Glasses className="w-6 h-6" />
                   Gestiune Comenzi de Ochelari
+                  {loading && (
+                    <span className="ml-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/20 text-[11px] font-bold tracking-normal normal-case">
+                      <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                      Se procesează...
+                    </span>
+                  )}
                 </h2>
                 <div className="flex items-center gap-2">
                   <div
@@ -1597,7 +1595,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                 <span className="text-[10px] font-black uppercase text-slate-400 mb-1 leading-none">
                                   Comenzi
                                 </span>
-                                <span className="text-2xl font-black font-mono tabular-nums text-blue-600 leading-tight">
+                                <span className="text-2xl font-black text-blue-600 leading-tight">
                                   {filteredStatsOrders.length}
                                 </span>
                               </div>
@@ -1612,7 +1610,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                 <span className="text-[10px] font-black uppercase text-slate-400 mb-1 leading-none text-center">
                                   Valoare Tot.
                                 </span>
-                                <span className="text-xl font-black font-mono tabular-nums text-slate-700 dark:text-slate-200 leading-tight">
+                                <span className="text-xl font-black text-slate-700 dark:text-slate-200 leading-tight">
                                   {totalAmount}{" "}
                                   <span className="text-[10px] font-sans">RON</span>
                                 </span>
@@ -1628,7 +1626,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                 <span className="text-[10px] font-black uppercase text-slate-400 mb-1 leading-none">
                                   Incasat
                                 </span>
-                                <span className="text-xl font-black font-mono tabular-nums text-emerald-600 leading-tight">
+                                <span className="text-xl font-black text-emerald-600 leading-tight">
                                   {collectedAmount}{" "}
                                   <span className="text-[10px] font-sans">RON</span>
                                 </span>
@@ -1644,7 +1642,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                 <span className="text-[10px] font-black uppercase text-slate-400 mb-1 leading-none text-center">
                                   In Curs
                                 </span>
-                                <span className="text-xl font-black font-mono tabular-nums text-amber-600 leading-tight">
+                                <span className="text-xl font-black text-amber-600 leading-tight">
                                   {
                                     filteredStatsOrders.filter(
                                       (o) => o.status !== "completed",
@@ -1668,7 +1666,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                   <CreditCard className="w-3 h-3 text-amber-500" />
                                   Rest de Plată
                                 </span>
-                                <span className="text-xl font-black font-mono tabular-nums text-rose-600 dark:text-rose-400 leading-tight">
+                                <span className="text-xl font-black text-rose-600 dark:text-rose-400 leading-tight">
                                   {pendingAmount}{" "}
                                   <span className="text-[10px] font-sans">RON</span>
                                 </span>
@@ -2840,20 +2838,20 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                 return (
                                   <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2">
                                     <div className="flex items-center gap-1.5">
-                                      <div className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-xl text-right">
+                                      <div className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-xl text-center">
                                         <div className="text-[9px] font-black uppercase text-slate-400 leading-none mb-0.5">Total</div>
-                                        <span className="text-xs font-black font-mono tabular-nums text-blue-600 dark:text-blue-400">
+                                        <span className="text-xs font-black text-blue-600 dark:text-blue-400">
                                           {orderTotal.toFixed(2)} RON
                                         </span>
                                       </div>
-                                      <div className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-xl text-right">
+                                      <div className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-xl text-center">
                                         <div className="text-[9px] font-black uppercase text-slate-400 leading-none mb-0.5">Avans</div>
-                                        <span className="text-xs font-black font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                                        <span className="text-xs font-black text-emerald-600 dark:text-emerald-400">
                                           {orderAdvance.toFixed(2)} RON
                                         </span>
                                       </div>
                                       <div className={cn(
-                                        "px-2.5 py-1 rounded-xl text-right border",
+                                        "px-2.5 py-1 rounded-xl text-center border",
                                         orderBalance > 0
                                           ? "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400"
                                           : "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400"
@@ -2861,7 +2859,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                         <div className="text-[9px] font-black uppercase opacity-75 leading-none mb-0.5">
                                           {orderBalance > 0 ? "Rest de plată" : "Sold"}
                                         </div>
-                                        <span className="text-xs font-black font-mono tabular-nums">
+                                        <span className="text-xs font-black">
                                           {orderBalance > 0 ? `${orderBalance.toFixed(2)} RON` : "Achitat (0 RON)"}
                                         </span>
                                       </div>

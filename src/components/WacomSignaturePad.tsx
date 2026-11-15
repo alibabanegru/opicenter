@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect } from "react";
 import SignaturePad from "signature_pad";
 import { compressSignatureCanvas } from "../lib/signatureUtils";
 import { Trash2, CheckCircle2, Shield, PenTool, Monitor } from "lucide-react";

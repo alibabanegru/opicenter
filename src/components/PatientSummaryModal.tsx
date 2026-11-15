@@ -12,9 +12,7 @@ import {
   ClipboardList,
   Sparkles,
   FileCheck2,
-  ChevronRight,
   Eye,
-  CheckCircle2,
   Download,
   Loader2,
   Trash2,
@@ -26,7 +24,6 @@ import {
   PrescriptionHistoryItem,
   calculateAge,
   calculateDetailedAge,
-  calculateTurningAge,
   MONTHS_RO,
 } from "../appConstants";
 import MyopiaChart from "./MyopiaChart";
@@ -135,7 +132,6 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
   const [docToDelete, setDocToDelete] = useState<{ id: string; docType: string; docNumber: string; rawDoc?: any } | null>(null);
   const [isDeletingDoc, setIsDeletingDoc] = useState(false);
   const [showA4Modal, setShowA4Modal] = useState<boolean>(false);
-  const [selectedEntryIndex, setSelectedEntryIndex] = useState<number>(0);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState<boolean>(false);
   const [pdfNotification, setPdfNotification] = useState<string | null>(null);
 
@@ -826,29 +822,6 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
     ? `${record.patientAge} ani`
     : "Nespecificat";
 
-  const currentTurningAge = calculateTurningAge(record.patientBirthDate, record.patientAge);
-
-  const activeParsed = parseDateStr(record.createdAt || record.updatedAt || new Date().toISOString());
-  const selectedEntry =
-    timelineEntries[selectedEntryIndex] ||
-    timelineEntries[0] || {
-      id: "active-record",
-      date: record.createdAt || new Date().toISOString(),
-      formattedDate: activeParsed.formatted,
-      timestamp: activeParsed.timestamp,
-      type: "consultation" as const,
-      doctorName: "Dr. Curant",
-      od: record.od,
-      os: record.os,
-      dp: record.dp,
-      dp_od: record.dp_od,
-      dp_os: record.dp_os,
-      treatment: record.treatment,
-      diagnostic: record.diagnostic,
-      recomandari: record.recomandari,
-      specialMentions: record.specialMentions,
-    };
-
   // Helper to extract OD, OS and general diagnostic with smart deduplication
   const getParsedDiagnostics = (entry: any) => {
     let odDiag = (entry.od?.diagnostic || "").trim();
@@ -1343,7 +1316,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
             </div>
           ) : (
             <div className="space-y-4">
-              {timelineEntries.map((entry, idx) => {
+              {timelineEntries.map((entry) => {
                 const showContactLenses = hasContactLenses(entry.cl_od, entry.cl_os);
                 const entryDate = entry.date ? new Date(entry.date) : new Date();
                 const entryAgeYears = record.patientBirthDate
@@ -1354,11 +1327,6 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                   : entryAgeYears !== undefined
                   ? `${entryAgeYears} ani`
                   : null;
-                const entryTurningAge = calculateTurningAge(
-                  record.patientBirthDate,
-                  record.patientAge,
-                  entryDate
-                );
 
                 return (
                   <div
@@ -1913,11 +1881,6 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                 : entryAgeYears !== undefined
                 ? `${entryAgeYears} ani`
                 : null;
-              const entryTurningAge = calculateTurningAge(
-                record.patientBirthDate,
-                record.patientAge,
-                entryDate
-              );
 
               return (
                 <div
@@ -2186,11 +2149,6 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                     : entryAgeYears !== undefined
                     ? `${entryAgeYears} ani`
                     : null;
-                  const entryTurningAge = calculateTurningAge(
-                    record.patientBirthDate,
-                    record.patientAge,
-                    entryDate
-                  );
 
                   return (
                     <div

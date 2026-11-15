@@ -7,22 +7,15 @@ import {
   FileText,
   Trash2,
   CheckCircle2,
-  Clock,
   AlertTriangle,
-  Users,
   Eye,
   Check,
   Phone,
-  RefreshCw,
   ExternalLink,
-  ChevronDown,
   X,
-  Send,
   CalendarCheck,
-  Sparkles,
 } from "lucide-react";
-import { format, parseISO, addMonths, differenceInDays, isBefore } from "date-fns";
-import { ro } from "date-fns/locale";
+import { format, parseISO, addMonths, differenceInDays } from "date-fns";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { MedicalRecord, Appointment, cn } from "../appConstants";
@@ -370,6 +363,21 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
     return items.sort((a, b) => b.daysOverdue - a.daysOverdue);
   }, [medicalRecords, appointments]);
 
+  const availableRecallDoctors = useMemo(() => {
+    const docMap = new Map<string, string>();
+    allRecallItems.forEach((item) => {
+      if (item.doctorId) {
+        docMap.set(
+          item.doctorId,
+          getDoctorDisplayName(item.doctorId) || item.doctorName || item.doctorId
+        );
+      }
+    });
+    return Array.from(docMap.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, "ro"));
+  }, [allRecallItems, getDoctorDisplayName]);
+
   // 2. Filtered list based on user selections
   const filteredItems = useMemo(() => {
     return allRecallItems.filter((item) => {
@@ -501,7 +509,7 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
       return;
     }
 
-    const { cleanPhone, isValid, error } = cleanWhatsAppPhone(item.patientPhone);
+    const { isValid, error } = cleanWhatsAppPhone(item.patientPhone);
     if (!isValid) {
       showNotification(`Numărul de telefon "${item.patientPhone}" nu este valid: ${error}`, "error");
       return;
@@ -931,6 +939,25 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
             <option value="gt_6m">Mai vechi de 6 luni (&gt; 6 luni)</option>
             <option value="gt_1y">Mai vechi de 1 an (&gt; 1 an)</option>
             <option value="gt_2y">Mai vechi de 2 ani (&gt; 2 ani)</option>
+          </select>
+
+          {/* Filtru Medic */}
+          <select
+            value={doctorFilter}
+            onChange={(e) => setDoctorFilter(e.target.value)}
+            className={cn(
+              "px-3 py-2.5 rounded-xl border text-xs font-bold outline-none cursor-pointer",
+              darkMode
+                ? "bg-slate-800 border-slate-700 text-slate-200"
+                : "bg-white border-slate-200 text-slate-700 shadow-2xs"
+            )}
+          >
+            <option value="all">Toți Medicii</option>
+            {availableRecallDoctors.map((docItem) => (
+              <option key={docItem.id} value={docItem.id}>
+                {docItem.name}
+              </option>
+            ))}
           </select>
         </div>
 

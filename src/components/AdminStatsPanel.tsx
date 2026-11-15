@@ -1,7 +1,7 @@
 import React from "react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 import { TrendingUp, RefreshCw } from "lucide-react";
-import { DOCTOR_ROLES, cn } from "../appConstants";
+import { cn } from "../appConstants";
 import { Users } from "lucide-react";
 
 export interface AdminStatsPanelProps {

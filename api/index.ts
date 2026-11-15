@@ -11,10 +11,6 @@ app.use(express.json());
 const KNOWN_API_ENDPOINTS = [
   "/notify-login",
   "/notify-booking",
-  "/users",
-  "/login",
-  "/currency-history",
-  "/bnr-rates",
   "/verify-recaptcha",
   "/send-sms",
   "/sms-status",
@@ -29,22 +25,6 @@ app.use((req, _res, next) => {
   }
   next();
 });
-
-const USERS_DATA: Record<string, { name: string; role: string; pass: string }> = {
-  admin: { name: "Administrator", role: "admin", pass: "123612" },
-  turcanu: { name: "Dr. Turcanu", role: "doctor1", pass: "123" },
-  zorila: { name: "Dr. Zorila", role: "doctor2", pass: "123" },
-  ilie: { name: "Dr. Ilie", role: "doctor3", pass: "123" },
-  vanzator: { name: "Vanzator", role: "frontdesk", pass: "123" },
-};
-
-const ROLE_COLORS: Record<string, string> = {
-  admin: "bg-slate-900",
-  doctor1: "bg-blue-600",
-  doctor2: "bg-emerald-600",
-  doctor3: "bg-purple-600",
-  frontdesk: "bg-amber-600",
-};
 
 // Nodemailer setup
 const getMailTransporter = () => {
@@ -314,82 +294,7 @@ app.post("/api/notify-booking", async (req, res) => {
   }
 });
 
-app.get("/api/users", (req, res) => {
-  const users = Object.entries(USERS_DATA).map(([key, userData]) => ({
-    id: key,
-    name: userData.name,
-    role: userData.role,
-  }));
-  res.json(users);
-});
-
-app.post("/api/login", (req, res) => {
-  const { username, password } = req.body;
-  const userData = USERS_DATA[username];
-
-  if (userData && userData.pass === password) {
-    res.json({
-      success: true,
-      profile: {
-        uid: username,
-        displayName: userData.name,
-        role: userData.role,
-        color: ROLE_COLORS[userData.role],
-      },
-    });
-  } else {
-    res.status(401).json({ success: false, message: "Invalid credentials" });
-  }
-});
-
-app.get("/api/currency-history", async (req, res) => {
-  const { from, to, start, end } = req.query;
-  if (!from || !to || !start || !end) {
-    return res.status(400).json({ error: "Missing parameters" });
-  }
-
-  const primaryUrl = `https://api.frankfurter.app/${start}..${end}?from=${from}&to=${to}`;
-  const fallbackUrl = `https://api.frankfurter.dev/${start}..${end}?from=${from}&to=${to}`;
-
-  try {
-    let data;
-    try {
-      const response = await fetch(primaryUrl);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      data = await response.json();
-    } catch (e: any) {
-      console.warn(`Primary Frankfurter API failed: ${e.message}. Trying fallback...`);
-      try {
-        const response = await fetch(fallbackUrl);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        data = await response.json();
-      } catch (e2: any) {
-        return res.status(502).json({
-          error: "Serviciul de istoric valutar este indisponibil momentan (ambele surse de date au eșuat).",
-        });
-      }
-    }
-
-    res.json(data);
-  } catch (error: any) {
-    console.error("Critical proxy error:", error);
-    res.status(502).json({ error: "Eroare critică la preluarea istoricului." });
-  }
-});
-
-app.get("/api/bnr-rates", async (req, res) => {
-  try {
-    const response = await fetch("https://open.er-api.com/v6/latest/RON");
-    if (!response.ok) {
-      throw new Error(`BNR API returned ${response.status}`);
-    }
-    const data = await response.json();
-    res.json(data);
-  } catch (error: any) {
-    console.error("BNR rates proxy error:", error);
-    res.status(500).json({ error: error.message || "Internal server error" });
-  }
-});
+// Deprecated local auth and currency proxy routes removed (client uses Firebase Auth and BNRModal fetches directly).
 
 app.post("/api/verify-recaptcha", async (req, res) => {
   try {

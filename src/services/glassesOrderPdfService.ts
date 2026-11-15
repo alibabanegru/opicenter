@@ -296,7 +296,6 @@ export const drawGlassesCanvas = (order: any, isNear: boolean): string | null =>
     ctx.lineWidth = 1.1;
 
     // Draw OD Progressive
-    const nearX_OD = X_pupil_OD + 1.5;
     const nearY_OD = Y_pupil_OD + 11;
 
     // Corridor boundaries OD
@@ -332,7 +331,6 @@ export const drawGlassesCanvas = (order: any, isNear: boolean): string | null =>
     ctx.stroke();
 
     // Draw OS Progressive
-    const nearX_OS = X_pupil_OS - 1.5;
     const nearY_OS = Y_pupil_OS + 11;
 
     // Corridor boundaries OS

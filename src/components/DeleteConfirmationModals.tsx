@@ -74,7 +74,6 @@ export const DeleteConfirmationModals: React.FC<DeleteConfirmationModalsProps> =
 
   orderToDelete,
   setOrderToDelete,
-  isOrderDeleteConfirmOpen,
   setIsOrderDeleteConfirmOpen,
   isPermanentDelete,
   setIsPermanentDelete,
