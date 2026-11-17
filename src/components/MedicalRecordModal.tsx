@@ -58,6 +58,8 @@ import {
   MedicalRecord,
   UserProfile,
   TREATMENT_SHORTCUTS,
+  safeParseDate,
+  safeFormatDate,
 } from "../appConstants";
 
 const cleanString = (s: string) =>
@@ -71,7 +73,7 @@ const cleanString = (s: string) =>
     : "";
 
 const processTreatmentValue = (newVal: string): string => {
-  const header = "Medicamentele se utilizeaza in ordinea prescrisa :";
+  const header = "Medicamentele se administreaza in ordinea prescrisa :";
   let processed = newVal;
   Object.entries(TREATMENT_SHORTCUTS).forEach(([key, shortcut]) => {
     const lastChar = processed.slice(-1);
@@ -83,27 +85,52 @@ const processTreatmentValue = (newVal: string): string => {
         beforeLast.endsWith("\n" + key)
       ) {
         const base = beforeLast.slice(0, beforeLast.length - key.length);
-        if (!base.includes(header)) {
-          processed = header + "\n1. " + shortcut + " ";
-        } else {
-          let currentLines = base
-            .split("\n")
-            .map((l) => l.trim())
-            .filter((l) => l !== "");
-          let itemCount = 0;
-          currentLines.forEach((l) => {
-            if (/^\d+\./.test(l)) itemCount++;
-          });
-          processed =
-            currentLines.join("\n") +
-            `\n${itemCount + 1}. ` +
-            shortcut +
-            " ";
+        let currentLines = base
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l !== "");
+
+        const hasHeader = currentLines.some((l) => {
+          const low = l.toLowerCase();
+          return (
+            low.includes("medicamentele se administreaza") ||
+            low.includes("medicamentele se utilizeaza")
+          );
+        });
+
+        if (!hasHeader) {
+          currentLines = [header, ...currentLines];
         }
+
+        const existingItemsCount = currentLines.filter((l) => {
+          const low = l.toLowerCase();
+          return (
+            !low.includes("medicamentele se administreaza") &&
+            !low.includes("medicamentele se utilizeaza")
+          );
+        }).length;
+
+        processed =
+          currentLines.join("\n") +
+          `\n${existingItemsCount + 1}. ` +
+          shortcut +
+          " ";
       }
     }
   });
   return processed;
+};
+
+const bufferedFlushers = new Set<() => void>();
+
+export const flushAllBufferedInputs = () => {
+  bufferedFlushers.forEach((flushFn) => {
+    try {
+      flushFn();
+    } catch (err) {
+      console.error("Flush buffered input error:", err);
+    }
+  });
 };
 
 interface BufferedInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange"> {
@@ -125,26 +152,64 @@ const BufferedInput: React.FC<BufferedInputProps> = ({
   const isFocused = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestLocalValueRef = useRef(localValue);
+  latestLocalValueRef.current = localValue;
+  const latestPropValueRef = useRef(value);
+  latestPropValueRef.current = value;
 
   useEffect(() => {
     if (!isFocused.current) {
       setLocalValue(value);
+      latestLocalValueRef.current = value;
     }
   }, [value]);
 
   useEffect(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
     if (localValue === value) return;
-    const timer = setTimeout(() => {
-      onChangeRef.current(localValue);
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      if (latestLocalValueRef.current !== latestPropValueRef.current) {
+        latestPropValueRef.current = latestLocalValueRef.current;
+        onChangeRef.current(latestLocalValueRef.current);
+      }
     }, 350);
-    return () => clearTimeout(timer);
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, [localValue, value]);
+
+  useEffect(() => {
+    const flush = () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      if (latestLocalValueRef.current !== latestPropValueRef.current) {
+        latestPropValueRef.current = latestLocalValueRef.current;
+        onChangeRef.current(latestLocalValueRef.current);
+      }
+    };
+    bufferedFlushers.add(flush);
+    return () => {
+      bufferedFlushers.delete(flush);
+      flush();
+    };
+  }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let val = e.target.value;
     if (processValue) {
       val = processValue(val);
     }
+    latestLocalValueRef.current = val;
     setLocalValue(val);
   };
 
@@ -157,8 +222,13 @@ const BufferedInput: React.FC<BufferedInputProps> = ({
 
   const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
     isFocused.current = false;
-    if (localValue !== value) {
-      onChangeRef.current(localValue);
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    if (latestLocalValueRef.current !== latestPropValueRef.current) {
+      latestPropValueRef.current = latestLocalValueRef.current;
+      onChangeRef.current(latestLocalValueRef.current);
     }
     if (props.onBlur) {
       props.onBlur(e);
@@ -197,26 +267,64 @@ const BufferedTextarea: React.FC<BufferedTextareaProps> = ({
   const isFocused = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestLocalValueRef = useRef(localValue);
+  latestLocalValueRef.current = localValue;
+  const latestPropValueRef = useRef(value);
+  latestPropValueRef.current = value;
 
   useEffect(() => {
     if (!isFocused.current) {
       setLocalValue(value);
+      latestLocalValueRef.current = value;
     }
   }, [value]);
 
   useEffect(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
     if (localValue === value) return;
-    const timer = setTimeout(() => {
-      onChangeRef.current(localValue);
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      if (latestLocalValueRef.current !== latestPropValueRef.current) {
+        latestPropValueRef.current = latestLocalValueRef.current;
+        onChangeRef.current(latestLocalValueRef.current);
+      }
     }, 350);
-    return () => clearTimeout(timer);
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, [localValue, value]);
+
+  useEffect(() => {
+    const flush = () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      if (latestLocalValueRef.current !== latestPropValueRef.current) {
+        latestPropValueRef.current = latestLocalValueRef.current;
+        onChangeRef.current(latestLocalValueRef.current);
+      }
+    };
+    bufferedFlushers.add(flush);
+    return () => {
+      bufferedFlushers.delete(flush);
+      flush();
+    };
+  }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     let val = e.target.value;
     if (processValue) {
       val = processValue(val);
     }
+    latestLocalValueRef.current = val;
     setLocalValue(val);
   };
 
@@ -229,8 +337,13 @@ const BufferedTextarea: React.FC<BufferedTextareaProps> = ({
 
   const handleBlur = (e: React.FocusEvent<HTMLTextAreaElement>) => {
     isFocused.current = false;
-    if (localValue !== value) {
-      onChangeRef.current(localValue);
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    if (latestLocalValueRef.current !== latestPropValueRef.current) {
+      latestPropValueRef.current = latestLocalValueRef.current;
+      onChangeRef.current(latestLocalValueRef.current);
     }
     if (props.onBlur) {
       props.onBlur(e);
@@ -285,6 +398,7 @@ export interface MedicalRecordModalProps {
   draftRestoredNotice: string | null;
   setDraftRestoredNotice: (msg: string | null) => void;
   bookingError: string | null;
+  setBookingError?: (msg: string | null) => void;
   diagnosticOptionsState: string[];
   recommendationOptionsState: string[];
   treatmentCategoriesState: Record<string, { name: string; full: string; active?: boolean; }[]>;
@@ -394,6 +508,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
     draftRestoredNotice,
     setDraftRestoredNotice,
     bookingError,
+    setBookingError,
     diagnosticOptionsState,
     recommendationOptionsState,
     treatmentCategoriesState,
@@ -468,6 +583,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
   } = props;
 
   const [isSavingAndPrinting, setIsSavingAndPrinting] = useState(false);
+  const symptomsInputRef = useRef<HTMLInputElement | null>(null);
   const [confirmDiscardDraft, setConfirmDiscardDraft] = useState(false);
   const [isDraftRecoveryOpen, setIsDraftRecoveryOpen] = useState(false);
   const [availableDrafts, setAvailableDrafts] = useState<Array<{
@@ -518,6 +634,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
   };
 
   const handleCloseModalSafely = () => {
+    flushAllBufferedInputs();
     if (setIsMedicalRecordModalOpen) {
       setIsMedicalRecordModalOpen(false);
     } else if (onClose) {
@@ -766,13 +883,13 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           {isEditingSymptoms ? (
                             <span className="inline-flex items-center gap-1.5 ml-2 align-middle normal-case font-sans tracking-normal select-none">
                               <BufferedInput
+                                inputRef={symptomsInputRef}
                                 type="text"
                                 value={currentMedicalRecord.symptoms || ""}
                                 onChange={(val) => {
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    symptoms: val,
-                                  });
+                                  setCurrentMedicalRecord((prev) =>
+                                    prev ? { ...prev, symptoms: val } : prev,
+                                  );
                                 }}
                                 placeholder="Scrie simptome..."
                                 className={cn(
@@ -784,21 +901,27 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 autoFocus
                                 onKeyDown={async (e) => {
                                   if (e.key === "Enter") {
+                                    flushAllBufferedInputs();
+                                    const newVal = (e.currentTarget as HTMLInputElement).value;
                                     setIsEditingSymptoms(false);
 
-                                    const newVal = currentMedicalRecord.symptoms || "";
                                     const now = new Date().toISOString();
-                                    const updatedRecord = {
-                                      ...currentMedicalRecord,
-                                      symptoms: newVal,
-                                      updatedAt: now,
-                                    };
+                                    setCurrentMedicalRecord((prev) =>
+                                      prev ? { ...prev, symptoms: newVal, updatedAt: now } : prev,
+                                    );
                                     try {
-                                      await setDoc(
-                                        doc(db, "medicalRecords", currentMedicalRecord.id),
-                                        removeUndefined(updatedRecord),
-                                      );
-                                      setCurrentMedicalRecord(updatedRecord);
+                                      try {
+                                        await updateDoc(
+                                          doc(db, "medicalRecords", currentMedicalRecord.id),
+                                          { symptoms: newVal, updatedAt: now },
+                                        );
+                                      } catch {
+                                        await setDoc(
+                                          doc(db, "medicalRecords", currentMedicalRecord.id),
+                                          { symptoms: newVal, updatedAt: now },
+                                          { merge: true },
+                                        );
+                                      }
                                     } catch (err) {
                                       console.error("Eroare la salvarea simptomelor:", err);
                                     }
@@ -829,20 +952,26 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               />
                               <button
                                 onClick={async () => {
+                                  flushAllBufferedInputs();
+                                  const newVal = symptomsInputRef.current?.value ?? (currentMedicalRecord.symptoms || "");
                                   setIsEditingSymptoms(false);
-                                  const newVal = currentMedicalRecord.symptoms || "";
                                   const now = new Date().toISOString();
-                                  const updatedRecord = {
-                                    ...currentMedicalRecord,
-                                    symptoms: newVal,
-                                    updatedAt: now,
-                                  };
+                                  setCurrentMedicalRecord((prev) =>
+                                    prev ? { ...prev, symptoms: newVal, updatedAt: now } : prev,
+                                  );
                                   try {
-                                    await setDoc(
-                                      doc(db, "medicalRecords", currentMedicalRecord.id),
-                                      removeUndefined(updatedRecord),
-                                    );
-                                    setCurrentMedicalRecord(updatedRecord);
+                                    try {
+                                      await updateDoc(
+                                        doc(db, "medicalRecords", currentMedicalRecord.id),
+                                        { symptoms: newVal, updatedAt: now },
+                                      );
+                                    } catch {
+                                      await setDoc(
+                                        doc(db, "medicalRecords", currentMedicalRecord.id),
+                                        { symptoms: newVal, updatedAt: now },
+                                        { merge: true },
+                                      );
+                                    }
                                   } catch (err) {
                                     console.error("Eroare la salvarea simptomelor:", err);
                                   }
@@ -1066,12 +1195,15 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           }
 
                           const calculatedAge = calculateAge(dbDate);
-                          setCurrentMedicalRecord({
-                            ...currentMedicalRecord,
-                            patientBirthDate: dbDate,
-                            patientAge:
-                              calculatedAge ?? currentMedicalRecord.patientAge,
-                          });
+                          setCurrentMedicalRecord((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  patientBirthDate: dbDate,
+                                  patientAge: calculatedAge ?? prev.patientAge,
+                                }
+                              : prev,
+                          );
                           if (dbDate.length === 10) {
                             syncPatientDetailsInDB("birthDate", dbDate);
                           }
@@ -1082,13 +1214,15 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                             const parts = val.split("-");
                             const dbDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
                             const calculatedAge = calculateAge(dbDate);
-                            setCurrentMedicalRecord({
-                              ...currentMedicalRecord,
-                              patientBirthDate: dbDate,
-                              patientAge:
-                                calculatedAge ??
-                                currentMedicalRecord.patientAge,
-                            });
+                            setCurrentMedicalRecord((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    patientBirthDate: dbDate,
+                                    patientAge: calculatedAge ?? prev.patientAge,
+                                  }
+                                : prev,
+                            );
                             syncPatientDetailsInDB("birthDate", dbDate);
                           }
                         }}
@@ -1116,10 +1250,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                         <button
                           key={s}
                           onClick={() => {
-                            setCurrentMedicalRecord({
-                              ...currentMedicalRecord,
-                              patientSex: s as "M" | "F",
-                            });
+                            setCurrentMedicalRecord((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    patientSex: s as "M" | "F",
+                                  }
+                                : prev,
+                            );
                             syncPatientDetailsInDB("sex", s);
                           }}
                           className={cn(
@@ -1287,6 +1425,8 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                     <button
                       type="button"
                       onClick={async () => {
+                        flushAllBufferedInputs();
+                        setBookingError?.(null);
                         const ok = await saveMedicalRecord(false, true);
                         if (ok) {
                           setDraftRestoredNotice(null);
@@ -1351,7 +1491,10 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
               {/* Tabs */}
               <div className="flex gap-1 mb-2">
                 <button
-                  onClick={() => setActiveMedicalTab("ochelari")}
+                  onClick={() => {
+                    flushAllBufferedInputs();
+                    setActiveMedicalTab("ochelari");
+                  }}
                   className={cn(
                     "flex-1 py-3 rounded-xl text-xs font-bold transition-all border flex items-center justify-center gap-2",
                     activeMedicalTab === "ochelari"
@@ -1365,7 +1508,10 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                   Prescripție ochelari
                 </button>
                 <button
-                  onClick={() => setActiveMedicalTab("tratament")}
+                  onClick={() => {
+                    flushAllBufferedInputs();
+                    setActiveMedicalTab("tratament");
+                  }}
                   className={cn(
                     "flex-1 py-3 rounded-xl text-xs font-bold transition-all border flex items-center justify-center gap-2",
                     activeMedicalTab === "tratament"
@@ -1413,7 +1559,10 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                       )}
 
                     <button
-                      onClick={startNewPrescription}
+                      onClick={() => {
+                        flushAllBufferedInputs();
+                        startNewPrescription();
+                      }}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-blue-900/20 whitespace-nowrap cursor-pointer"
                     >
                       <Plus className="w-3 h-3" />
@@ -1494,12 +1643,16 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                             currentMedicalRecord.isConsultComplet || false
                           }
                           onChange={(e) =>
-                            setCurrentMedicalRecord({
-                              ...currentMedicalRecord,
-                              isConsultComplet: e.target.checked,
-                              isControl: e.target.checked ? false : currentMedicalRecord.isControl,
-                              isGratis: e.target.checked ? false : currentMedicalRecord.isGratis,
-                            })
+                            setCurrentMedicalRecord((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    isConsultComplet: e.target.checked,
+                                    isControl: e.target.checked ? false : prev.isControl,
+                                    isGratis: e.target.checked ? false : prev.isGratis,
+                                  }
+                                : prev,
+                            )
                           }
                           className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 focus:ring-blue-500 text-blue-600 transition-all cursor-pointer disabled:cursor-not-allowed"
                         />
@@ -1524,12 +1677,16 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           disabled={!!(currentMedicalRecord.isConsultComplet || currentMedicalRecord.isGratis)}
                           checked={currentMedicalRecord.isControl || false}
                           onChange={(e) =>
-                            setCurrentMedicalRecord({
-                              ...currentMedicalRecord,
-                              isControl: e.target.checked,
-                              isConsultComplet: e.target.checked ? false : currentMedicalRecord.isConsultComplet,
-                              isGratis: e.target.checked ? false : currentMedicalRecord.isGratis,
-                            })
+                            setCurrentMedicalRecord((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    isControl: e.target.checked,
+                                    isConsultComplet: e.target.checked ? false : prev.isConsultComplet,
+                                    isGratis: e.target.checked ? false : prev.isGratis,
+                                  }
+                                : prev,
+                            )
                           }
                           className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 focus:ring-amber-500 text-amber-500 transition-all cursor-pointer disabled:cursor-not-allowed"
                         />
@@ -1554,12 +1711,16 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           disabled={!!(currentMedicalRecord.isConsultComplet || currentMedicalRecord.isControl)}
                           checked={currentMedicalRecord.isGratis || false}
                           onChange={(e) =>
-                            setCurrentMedicalRecord({
-                              ...currentMedicalRecord,
-                              isGratis: e.target.checked,
-                              isConsultComplet: e.target.checked ? false : currentMedicalRecord.isConsultComplet,
-                              isControl: e.target.checked ? false : currentMedicalRecord.isControl,
-                            })
+                            setCurrentMedicalRecord((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    isGratis: e.target.checked,
+                                    isConsultComplet: e.target.checked ? false : prev.isConsultComplet,
+                                    isControl: e.target.checked ? false : prev.isControl,
+                                  }
+                                : prev,
+                            )
                           }
                           className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 focus:ring-emerald-500 text-emerald-600 transition-all cursor-pointer disabled:cursor-not-allowed"
                         />
@@ -1581,10 +1742,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                       type="text"
                       value={currentMedicalRecord.specialMentions || ""}
                       onChange={(val) =>
-                        setCurrentMedicalRecord({
-                          ...currentMedicalRecord,
-                          specialMentions: val,
-                        })
+                        setCurrentMedicalRecord((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                specialMentions: val,
+                              }
+                            : prev,
+                        )
                       }
                       className={cn(
                         "flex-1 p-2 border-2 rounded-xl text-[10px] font-bold outline-none focus:ring-2 focus:ring-amber-500/20 transition-all min-w-[200px]",
@@ -1627,22 +1792,22 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     setTempPrescriptionDate(e.target.value)
                                   }
                                   onBlur={() => {
-                                    if (
-                                      tempPrescriptionDate &&
-                                      currentMedicalRecord.prescriptionHistory
-                                    ) {
-                                      const newHistory = [
-                                        ...currentMedicalRecord.prescriptionHistory,
-                                      ];
-                                      newHistory[index] = {
-                                        ...newHistory[index],
-                                        date: new Date(
-                                          tempPrescriptionDate,
-                                        ).toISOString(),
-                                      };
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        prescriptionHistory: newHistory,
+                                    if (tempPrescriptionDate) {
+                                      const isoDate = new Date(
+                                        tempPrescriptionDate,
+                                      ).toISOString();
+                                      setCurrentMedicalRecord((prev) => {
+                                        if (!prev?.prescriptionHistory) return prev;
+                                        const newHistory = [...prev.prescriptionHistory];
+                                        if (!newHistory[index]) return prev;
+                                        newHistory[index] = {
+                                          ...newHistory[index],
+                                          date: isoDate,
+                                        };
+                                        return {
+                                          ...prev,
+                                          prescriptionHistory: newHistory,
+                                        };
                                       });
                                     }
                                     setEditingPrescriptionDateIndex(null);
@@ -1657,15 +1822,18 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 />
                               ) : (
                                 <button
-                                  onClick={() =>
-                                    saveAndSwitchPrescription(index)
-                                  }
+                                  onClick={() => {
+                                    flushAllBufferedInputs();
+                                    saveAndSwitchPrescription(index);
+                                  }}
                                   onDoubleClick={() => {
                                     setEditingPrescriptionDateIndex(index);
                                     setTempPrescriptionDate(
-                                      format(
-                                        new Date(item.date),
+                                      safeFormatDate(
+                                        item.date,
                                         "yyyy-MM-dd'T'HH:mm",
+                                        undefined,
+                                        "",
                                       ),
                                     );
                                   }}
@@ -1721,7 +1889,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                   )}
                                   <div className="flex flex-col items-start leading-none">
                                     <span className="text-[13px] font-black flex items-center gap-1.5">
-                                      {format(new Date(item.date), "dd.MM.yy")}
+                                      {safeFormatDate(item.date, "dd.MM.yy")}
                                       {item.isConsultComplet && (
                                         <span
                                           className={cn(
@@ -1760,7 +1928,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       )}
                                     </span>
                                     <span className="text-[9px] opacity-75 font-bold uppercase tracking-wider mt-0.5">
-                                      {format(new Date(item.date), "HH:mm")}
+                                      {safeFormatDate(item.date, "HH:mm")}
                                     </span>
                                     {currentMedicalRecord.patientBirthDate && (
                                       <span
@@ -1773,7 +1941,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       >
                                         {calculateDetailedAge(
                                           currentMedicalRecord.patientBirthDate,
-                                          new Date(item.date),
+                                          safeParseDate(item.date) || new Date(),
                                         )}
                                       </span>
                                     )}
@@ -1932,14 +2100,18 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          od: {
-                                            ...currentMedicalRecord.od,
-                                            prism: "",
-                                            base: "",
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                od: {
+                                                  ...prev.od,
+                                                  prism: "",
+                                                  base: "",
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }}
                                       className={cn(
                                         "absolute -top-1 -right-1 p-0.5 rounded-full border shadow-sm z-10 transition-colors",
@@ -2009,10 +2181,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          cl_od: undefined,
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                cl_od: undefined,
+                                              }
+                                            : prev,
+                                        );
                                       }}
                                       className={cn(
                                         "absolute -top-1 -right-1 p-0.5 rounded-full border shadow-sm z-10 transition-colors",
@@ -2134,29 +2310,32 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         <button
                                           type="button"
                                           onClick={() => {
-                                            const updatedOD = {
-                                              ...currentMedicalRecord.od,
-                                              add: cleanEst,
-                                              near_sph: undefined,
-                                              near_cyl: undefined,
-                                              near_axis: undefined,
-                                            };
-                                            const updatedOS = {
-                                              ...currentMedicalRecord.os,
-                                              add: cleanEst,
-                                              near_sph: undefined,
-                                              near_cyl: undefined,
-                                              near_axis: undefined,
-                                            };
-                                            setCurrentMedicalRecord({
-                                              ...currentMedicalRecord,
-                                              od: updatedOD,
-                                              os: updatedOS,
-                                              diagnostic: updateDiagnosticSuggestions(
-                                                currentMedicalRecord.diagnostic || "",
-                                                updatedOD,
-                                                updatedOS,
-                                              ),
+                                            setCurrentMedicalRecord((prev) => {
+                                              if (!prev) return prev;
+                                              const updatedOD = {
+                                                ...prev.od,
+                                                add: cleanEst,
+                                                near_sph: undefined,
+                                                near_cyl: undefined,
+                                                near_axis: undefined,
+                                              };
+                                              const updatedOS = {
+                                                ...prev.os,
+                                                add: cleanEst,
+                                                near_sph: undefined,
+                                                near_cyl: undefined,
+                                                near_axis: undefined,
+                                              };
+                                              return {
+                                                ...prev,
+                                                od: updatedOD,
+                                                os: updatedOS,
+                                                diagnostic: updateDiagnosticSuggestions(
+                                                  prev.diagnostic || "",
+                                                  updatedOD,
+                                                  updatedOS,
+                                                ),
+                                              };
                                             });
                                           }}
                                           className={cn(
@@ -2184,33 +2363,33 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       value={currentMedicalRecord.od.add}
                                       onChange={(e) => {
                                         const newVal = e.target.value;
-                                        const updatedOD = {
-                                          ...currentMedicalRecord.od,
-                                          add: newVal,
-                                          near_sph: undefined,
-                                          near_cyl: undefined,
-                                          near_axis: undefined,
-                                        };
-                                        const updatedOS = {
-                                          ...currentMedicalRecord.os,
-                                          add:
-                                            currentMedicalRecord.os.add ||
-                                            newVal,
-                                          near_sph: undefined,
-                                          near_cyl: undefined,
-                                          near_axis: undefined,
-                                        };
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          od: updatedOD,
-                                          os: updatedOS,
-                                          diagnostic:
-                                            updateDiagnosticSuggestions(
-                                              currentMedicalRecord.diagnostic ||
-                                                "",
-                                              updatedOD,
-                                              updatedOS,
-                                            ),
+                                        setCurrentMedicalRecord((prev) => {
+                                          if (!prev) return prev;
+                                          const updatedOD = {
+                                            ...prev.od,
+                                            add: newVal,
+                                            near_sph: undefined,
+                                            near_cyl: undefined,
+                                            near_axis: undefined,
+                                          };
+                                          const updatedOS = {
+                                            ...prev.os,
+                                            add: prev.os.add || newVal,
+                                            near_sph: undefined,
+                                            near_cyl: undefined,
+                                            near_axis: undefined,
+                                          };
+                                          return {
+                                            ...prev,
+                                            od: updatedOD,
+                                            os: updatedOS,
+                                            diagnostic:
+                                              updateDiagnosticSuggestions(
+                                                prev.diagnostic || "",
+                                                updatedOD,
+                                                updatedOS,
+                                              ),
+                                          };
                                         });
                                       }}
                                       className={cn(
@@ -2330,27 +2509,28 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         ) {
                                           val = val.replace(/[^0-9.,+-]/g, "").replace(",", ".");
                                         }
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          od: (() => {
-                                            const updatedOD = {
-                                              ...currentMedicalRecord.od,
-                                              [field]: val,
-                                              near_sph: undefined,
-                                              near_cyl: undefined,
-                                              near_axis: undefined,
-                                            };
-                                            if (field === "cyl") {
-                                              const parsed =
-                                                parseFloat(
-                                                  String(val).replace(",", "."),
-                                                ) || 0;
-                                              if (val === "" || parsed === 0) {
-                                                updatedOD.axis = "";
-                                              }
+                                        setCurrentMedicalRecord((prev) => {
+                                          if (!prev) return prev;
+                                          const updatedOD = {
+                                            ...prev.od,
+                                            [field]: val,
+                                            near_sph: undefined,
+                                            near_cyl: undefined,
+                                            near_axis: undefined,
+                                          };
+                                          if (field === "cyl") {
+                                            const parsed =
+                                              parseFloat(
+                                                String(val).replace(",", "."),
+                                              ) || 0;
+                                            if (val === "" || parsed === 0) {
+                                              updatedOD.axis = "";
                                             }
-                                            return updatedOD;
-                                          })(),
+                                          }
+                                          return {
+                                            ...prev,
+                                            od: updatedOD,
+                                          };
                                         });
                                       }}
                                       onBlur={(e) => {
@@ -2378,44 +2558,47 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                             const formatted = `${sign}${num.toFixed(2)}`;
                                             const parsedNum =
                                               parseFloat(formatted) || 0;
-                                            const updatedOD = {
-                                              ...currentMedicalRecord.od,
-                                              [field]: formatted,
-                                              near_sph: undefined,
-                                              near_cyl: undefined,
-                                              near_axis: undefined,
-                                            };
-                                            setCurrentMedicalRecord({
-                                              ...currentMedicalRecord,
-                                              od: (() => {
-                                                if (
-                                                  field === "cyl" &&
-                                                  parsedNum === 0
-                                                ) {
-                                                  updatedOD.axis = "";
-                                                }
-                                                return updatedOD;
-                                              })(),
-                                              diagnostic:
-                                                updateDiagnosticSuggestions(
-                                                  currentMedicalRecord.diagnostic ||
-                                                    "",
-                                                  updatedOD,
-                                                  currentMedicalRecord.os,
-                                                ),
+                                            setCurrentMedicalRecord((prev) => {
+                                              if (!prev) return prev;
+                                              const updatedOD = {
+                                                ...prev.od,
+                                                [field]: formatted,
+                                                near_sph: undefined,
+                                                near_cyl: undefined,
+                                                near_axis: undefined,
+                                              };
+                                              if (
+                                                field === "cyl" &&
+                                                parsedNum === 0
+                                              ) {
+                                                updatedOD.axis = "";
+                                              }
+                                              return {
+                                                ...prev,
+                                                od: updatedOD,
+                                                diagnostic:
+                                                  updateDiagnosticSuggestions(
+                                                    prev.diagnostic || "",
+                                                    updatedOD,
+                                                    prev.os,
+                                                  ),
+                                              };
                                             });
                                           }
                                         } else if (field === "axis") {
-                                          setCurrentMedicalRecord({
-                                            ...currentMedicalRecord,
-                                            diagnostic:
-                                              updateDiagnosticSuggestions(
-                                                currentMedicalRecord.diagnostic ||
-                                                  "",
-                                                currentMedicalRecord.od,
-                                                currentMedicalRecord.os,
-                                              ),
-                                          });
+                                          setCurrentMedicalRecord((prev) =>
+                                            prev
+                                              ? {
+                                                  ...prev,
+                                                  diagnostic:
+                                                    updateDiagnosticSuggestions(
+                                                      prev.diagnostic || "",
+                                                      prev.od,
+                                                      prev.os,
+                                                    ),
+                                                }
+                                              : prev,
+                                          );
                                         }
                                       }}
                                       className={cn(
@@ -2466,13 +2649,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     value={currentMedicalRecord.od.intermediate_sph || ""}
                                     onChange={(e) => {
                                       let val = e.target.value.replace(/[^0-9.,+-]/g, "").replace(",", ".");
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        od: {
-                                          ...currentMedicalRecord.od,
-                                          intermediate_sph: val,
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              od: {
+                                                ...prev.od,
+                                                intermediate_sph: val,
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     onBlur={(e) => {
                                       let val = e.target.value.trim();
@@ -2482,13 +2669,18 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         num = Math.round(num * 4) / 4;
                                         num = Math.max(-25, Math.min(22, num));
                                         const sign = num >= 0 ? "+" : "";
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          od: {
-                                            ...currentMedicalRecord.od,
-                                            intermediate_sph: `${sign}${num.toFixed(2)}`,
-                                          },
-                                        });
+                                        const formatted = `${sign}${num.toFixed(2)}`;
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                od: {
+                                                  ...prev.od,
+                                                  intermediate_sph: formatted,
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }
                                     }}
                                     className={cn(
@@ -2514,13 +2706,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     value={currentMedicalRecord.od.intermediate_cyl || ""}
                                     onChange={(e) => {
                                       let val = e.target.value.replace(/[^0-9.,+-]/g, "").replace(",", ".");
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        od: {
-                                          ...currentMedicalRecord.od,
-                                          intermediate_cyl: val,
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              od: {
+                                                ...prev.od,
+                                                intermediate_cyl: val,
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     onBlur={(e) => {
                                       let val = e.target.value.trim();
@@ -2530,13 +2726,18 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         num = Math.round(num * 4) / 4;
                                         num = Math.max(-7, Math.min(7, num));
                                         const sign = num >= 0 ? "+" : "";
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          od: {
-                                            ...currentMedicalRecord.od,
-                                            intermediate_cyl: `${sign}${num.toFixed(2)}`,
-                                          },
-                                        });
+                                        const formatted = `${sign}${num.toFixed(2)}`;
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                od: {
+                                                  ...prev.od,
+                                                  intermediate_cyl: formatted,
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }
                                     }}
                                     className={cn(
@@ -2564,13 +2765,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       let val = e.target.value.replace(/[^0-9]/g, "");
                                       let n = parseInt(val);
                                       if (!isNaN(n) && n > 180) val = "180";
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        od: {
-                                          ...currentMedicalRecord.od,
-                                          intermediate_axis: val,
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              od: {
+                                                ...prev.od,
+                                                intermediate_axis: val,
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     className={cn(
                                       "w-full p-2 border rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-purple-500/20 transition-all text-center",
@@ -2643,24 +2848,32 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         /[^0-9.,+-]/g,
                                         "",
                                       ).replace(",", ".");
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        od: {
-                                          ...currentMedicalRecord.od,
-                                          near_sph: val,
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              od: {
+                                                ...prev.od,
+                                                near_sph: val,
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     onBlur={(e) => {
                                       let val = e.target.value.trim();
                                       if (!val) {
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          od: {
-                                            ...currentMedicalRecord.od,
-                                            near_sph: "",
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                od: {
+                                                  ...prev.od,
+                                                  near_sph: "",
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                         return;
                                       }
                                       let num = parseFloat(val);
@@ -2668,13 +2881,18 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         num = Math.round(num * 4) / 4;
                                         num = Math.max(-25, Math.min(22, num));
                                         const sign = num >= 0 ? "+" : "";
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          od: {
-                                            ...currentMedicalRecord.od,
-                                            near_sph: `${sign}${num.toFixed(2)}`,
-                                          },
-                                        });
+                                        const formatted = `${sign}${num.toFixed(2)}`;
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                od: {
+                                                  ...prev.od,
+                                                  near_sph: formatted,
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }
                                     }}
                                     className={cn(
@@ -2745,33 +2963,38 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         ) || 0;
                                       const isZeroOrEmpty =
                                         !val || parsed === 0;
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        od: {
-                                          ...currentMedicalRecord.od,
-                                          near_cyl: val,
-                                          near_axis: isZeroOrEmpty
-                                            ? ""
-                                            : currentMedicalRecord.od
-                                                  .near_axis !== undefined
-                                              ? currentMedicalRecord.od
-                                                  .near_axis
-                                              : currentMedicalRecord.od.axis ||
-                                                "",
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              od: {
+                                                ...prev.od,
+                                                near_cyl: val,
+                                                near_axis: isZeroOrEmpty
+                                                  ? ""
+                                                  : prev.od.near_axis !== undefined
+                                                    ? prev.od.near_axis
+                                                    : prev.od.axis || "",
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     onBlur={(e) => {
                                       let val = e.target.value.trim();
                                       if (!val) {
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          od: {
-                                            ...currentMedicalRecord.od,
-                                            near_cyl: "",
-                                            near_axis: "",
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                od: {
+                                                  ...prev.od,
+                                                  near_cyl: "",
+                                                  near_axis: "",
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                         return;
                                       }
                                       let num = parseFloat(val);
@@ -2782,22 +3005,23 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         const formatted = `${sign}${num.toFixed(2)}`;
                                         const parsedNum =
                                           parseFloat(formatted) || 0;
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          od: {
-                                            ...currentMedicalRecord.od,
-                                            near_cyl: formatted,
-                                            near_axis:
-                                              parsedNum === 0
-                                                ? ""
-                                                : currentMedicalRecord.od
-                                                      .near_axis !== undefined
-                                                  ? currentMedicalRecord.od
-                                                      .near_axis
-                                                  : currentMedicalRecord.od
-                                                      .axis || "",
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                od: {
+                                                  ...prev.od,
+                                                  near_cyl: formatted,
+                                                  near_axis:
+                                                    parsedNum === 0
+                                                      ? ""
+                                                      : prev.od.near_axis !== undefined
+                                                        ? prev.od.near_axis
+                                                        : prev.od.axis || "",
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }
                                     }}
                                     className={cn(
@@ -2911,13 +3135,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       if (val !== "" && parseInt(val) > 180) {
                                         val = "180";
                                       }
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        od: {
-                                          ...currentMedicalRecord.od,
-                                          near_axis: val,
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              od: {
+                                                ...prev.od,
+                                                near_axis: val,
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     onBlur={(e) => {
                                       let val = e.target.value.replace(
@@ -2925,25 +3153,34 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         "",
                                       );
                                       if (val === "") {
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          od: {
-                                            ...currentMedicalRecord.od,
-                                            near_axis: "",
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                od: {
+                                                  ...prev.od,
+                                                  near_axis: "",
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                         return;
                                       }
                                       let n = parseInt(val);
                                       if (!isNaN(n)) {
                                         if (n > 180) n = 180;
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          od: {
-                                            ...currentMedicalRecord.od,
-                                            near_axis: n.toString(),
-                                          },
-                                        });
+                                        const nextAxis = n.toString();
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                od: {
+                                                  ...prev.od,
+                                                  near_axis: nextAxis,
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }
                                     }}
                                     className={cn(
@@ -2984,15 +3221,20 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               <input
                                 type="text"
                                 value={currentMedicalRecord.od.va_without || ""}
-                                onChange={(e) =>
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    od: {
-                                      ...currentMedicalRecord.od,
-                                      va_without: e.target.value,
-                                    },
-                                  })
-                                }
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCurrentMedicalRecord((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          od: {
+                                            ...prev.od,
+                                            va_without: val,
+                                          },
+                                        }
+                                      : prev,
+                                  );
+                                }}
                                 className={cn(
                                   "w-full p-2 border rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all",
                                   darkMode
@@ -3014,18 +3256,22 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 type="text"
                                 value={currentMedicalRecord.od.va_with || ""}
                                 onChange={(e) => {
-                                  const updatedOD = {
-                                    ...currentMedicalRecord.od,
-                                    va_with: e.target.value,
-                                  };
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    od: updatedOD,
-                                    diagnostic: updateDiagnosticSuggestions(
-                                      currentMedicalRecord.diagnostic || "",
-                                      updatedOD,
-                                      currentMedicalRecord.os,
-                                    ),
+                                  const val = e.target.value;
+                                  setCurrentMedicalRecord((prev) => {
+                                    if (!prev) return prev;
+                                    const updatedOD = {
+                                      ...prev.od,
+                                      va_with: val,
+                                    };
+                                    return {
+                                      ...prev,
+                                      od: updatedOD,
+                                      diagnostic: updateDiagnosticSuggestions(
+                                        prev.diagnostic || "",
+                                        updatedOD,
+                                        prev.os,
+                                      ),
+                                    };
                                   });
                                 }}
                                 className={cn(
@@ -3078,40 +3324,40 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         iopVal = "90";
                                       }
 
-                                      const cctVal =
-                                        currentMedicalRecord.pachymetry?.od ||
-                                        "";
-                                      let corrected = "";
-                                      if (iopVal && cctVal) {
-                                        const iop = parseFloat(iopVal);
-                                        const cct = parseFloat(cctVal);
-                                        if (!isNaN(iop) && !isNaN(cct)) {
-                                          corrected = (
-                                            iop +
-                                            (545 - cct) * 0.05
-                                          ).toFixed(1);
+                                      setCurrentMedicalRecord((prev) => {
+                                        if (!prev) return prev;
+                                        const cctVal = prev.pachymetry?.od || "";
+                                        let corrected = "";
+                                        if (iopVal && cctVal) {
+                                          const iop = parseFloat(iopVal);
+                                          const cct = parseFloat(cctVal);
+                                          if (!isNaN(iop) && !isNaN(cct)) {
+                                            corrected = (
+                                              iop +
+                                              (545 - cct) * 0.05
+                                            ).toFixed(1);
+                                          }
                                         }
-                                      }
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        iop: {
-                                          ...(currentMedicalRecord.iop || {
-                                            od: "",
-                                            os: "",
-                                          }),
-                                          od: iopVal,
-                                        },
-                                        correctedIop: {
-                                          ...(currentMedicalRecord.correctedIop || {
-                                            od: "",
-                                            os: "",
-                                          }),
-                                          od:
-                                            corrected ||
-                                            currentMedicalRecord.correctedIop
-                                              ?.od ||
-                                            "",
-                                        },
+                                        return {
+                                          ...prev,
+                                          iop: {
+                                            ...(prev.iop || {
+                                              od: "",
+                                              os: "",
+                                            }),
+                                            od: iopVal,
+                                          },
+                                          correctedIop: {
+                                            ...(prev.correctedIop || {
+                                              od: "",
+                                              os: "",
+                                            }),
+                                            od:
+                                              corrected ||
+                                              prev.correctedIop?.od ||
+                                              "",
+                                          },
+                                        };
                                       });
                                     }}
                                     className={getIopInputClass(
@@ -3129,39 +3375,40 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     }
                                     onChange={(e) => {
                                       const cctVal = e.target.value;
-                                      const iopVal =
-                                        currentMedicalRecord.iop?.od || "";
-                                      let corrected = "";
-                                      if (iopVal && cctVal) {
-                                        const iop = parseFloat(iopVal);
-                                        const cct = parseFloat(cctVal);
-                                        if (!isNaN(iop) && !isNaN(cct)) {
-                                          corrected = (
-                                            iop +
-                                            (545 - cct) * 0.05
-                                          ).toFixed(1);
+                                      setCurrentMedicalRecord((prev) => {
+                                        if (!prev) return prev;
+                                        const iopVal = prev.iop?.od || "";
+                                        let corrected = "";
+                                        if (iopVal && cctVal) {
+                                          const iop = parseFloat(iopVal);
+                                          const cct = parseFloat(cctVal);
+                                          if (!isNaN(iop) && !isNaN(cct)) {
+                                            corrected = (
+                                              iop +
+                                              (545 - cct) * 0.05
+                                            ).toFixed(1);
+                                          }
                                         }
-                                      }
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        pachymetry: {
-                                          ...(currentMedicalRecord.pachymetry || {
-                                            od: "",
-                                            os: "",
-                                          }),
-                                          od: cctVal,
-                                        },
-                                        correctedIop: {
-                                          ...(currentMedicalRecord.correctedIop || {
-                                            od: "",
-                                            os: "",
-                                          }),
-                                          od:
-                                            corrected ||
-                                            currentMedicalRecord.correctedIop
-                                              ?.od ||
-                                            "",
-                                        },
+                                        return {
+                                          ...prev,
+                                          pachymetry: {
+                                            ...(prev.pachymetry || {
+                                              od: "",
+                                              os: "",
+                                            }),
+                                            od: cctVal,
+                                          },
+                                          correctedIop: {
+                                            ...(prev.correctedIop || {
+                                              od: "",
+                                              os: "",
+                                            }),
+                                            od:
+                                              corrected ||
+                                              prev.correctedIop?.od ||
+                                              "",
+                                          },
+                                        };
                                       });
                                     }}
                                     className={cn(
@@ -3180,18 +3427,23 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       currentMedicalRecord.correctedIop?.od ||
                                       ""
                                     }
-                                    onChange={(e) =>
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        correctedIop: {
-                                          ...(currentMedicalRecord.correctedIop || {
-                                            od: "",
-                                            os: "",
-                                          }),
-                                          od: e.target.value,
-                                        },
-                                      })
-                                    }
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              correctedIop: {
+                                                ...(prev.correctedIop || {
+                                                  od: "",
+                                                  os: "",
+                                                }),
+                                                od: val,
+                                              },
+                                            }
+                                          : prev,
+                                      );
+                                    }}
                                     className={getIopInputClass(
                                       currentMedicalRecord.correctedIop?.od,
                                       true,
@@ -3273,32 +3525,40 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                               sanitizeAxialLengthInput(
                                                 e.target.value,
                                               );
-                                            setCurrentMedicalRecord({
-                                              ...currentMedicalRecord,
-                                              axialLength: {
-                                                ...(currentMedicalRecord.axialLength || {
-                                                  od: "",
-                                                  os: "",
-                                                }),
-                                                od: sanitized,
-                                              },
-                                            });
+                                            setCurrentMedicalRecord((prev) =>
+                                              prev
+                                                ? {
+                                                    ...prev,
+                                                    axialLength: {
+                                                      ...(prev.axialLength || {
+                                                        od: "",
+                                                        os: "",
+                                                      }),
+                                                      od: sanitized,
+                                                    },
+                                                  }
+                                                : prev,
+                                            );
                                           }}
                                           onBlur={(e) => {
                                             const validated =
                                               validateAxialLengthOnBlur(
                                                 e.target.value,
                                               );
-                                            setCurrentMedicalRecord({
-                                              ...currentMedicalRecord,
-                                              axialLength: {
-                                                ...(currentMedicalRecord.axialLength || {
-                                                  od: "",
-                                                  os: "",
-                                                }),
-                                                od: validated,
-                                              },
-                                            });
+                                            setCurrentMedicalRecord((prev) =>
+                                              prev
+                                                ? {
+                                                    ...prev,
+                                                    axialLength: {
+                                                      ...(prev.axialLength || {
+                                                        od: "",
+                                                        os: "",
+                                                      }),
+                                                      od: validated,
+                                                    },
+                                                  }
+                                                : prev,
+                                            );
                                           }}
                                           className={cn(
                                             "w-full p-2 border rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all",
@@ -3325,18 +3585,20 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                             <button
                               type="button"
                               onClick={() => {
-                                const isEnabled =
-                                  !currentMedicalRecord.nonCycloplegic?.enabled;
-                                setCurrentMedicalRecord({
-                                  ...currentMedicalRecord,
-                                  nonCycloplegic: {
-                                    ...(currentMedicalRecord.nonCycloplegic || {
-                                      enabled: false,
-                                      od: { sph: "", cyl: "", axis: "" },
-                                      os: { sph: "", cyl: "", axis: "" },
-                                    }),
-                                    enabled: isEnabled,
-                                  },
+                                setCurrentMedicalRecord((prev) => {
+                                  if (!prev) return prev;
+                                  const isEnabled = !prev.nonCycloplegic?.enabled;
+                                  return {
+                                    ...prev,
+                                    nonCycloplegic: {
+                                      ...(prev.nonCycloplegic || {
+                                        enabled: false,
+                                        od: { sph: "", cyl: "", axis: "" },
+                                        os: { sph: "", cyl: "", axis: "" },
+                                      }),
+                                      enabled: isEnabled,
+                                    },
+                                  };
                                 });
                               }}
                               className={cn(
@@ -3385,17 +3647,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     : "text-emerald-600",
                                 )}
                               >
-                                {format(
+                                {safeFormatDate(
                                   activePrescriptionIndex !== null &&
                                     currentMedicalRecord.prescriptionHistory?.[
                                       activePrescriptionIndex
-                                    ]
-                                    ? new Date(
-                                        currentMedicalRecord
-                                          .prescriptionHistory[
-                                          activePrescriptionIndex
-                                        ].date,
-                                      )
+                                    ]?.date
+                                    ? currentMedicalRecord.prescriptionHistory[
+                                        activePrescriptionIndex
+                                      ].date
                                     : new Date(),
                                   "dd.MM.yyyy",
                                 )}
@@ -3405,18 +3664,20 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                             <button
                               type="button"
                               onClick={() => {
-                                const isEnabled =
-                                  !currentMedicalRecord.cycloplegia?.enabled;
-                                setCurrentMedicalRecord({
-                                  ...currentMedicalRecord,
-                                  cycloplegia: {
-                                    ...(currentMedicalRecord.cycloplegia || {
-                                      enabled: false,
-                                      od: { sph: "", cyl: "", axis: "" },
-                                      os: { sph: "", cyl: "", axis: "" },
-                                    }),
-                                    enabled: isEnabled,
-                                  },
+                                setCurrentMedicalRecord((prev) => {
+                                  if (!prev) return prev;
+                                  const isEnabled = !prev.cycloplegia?.enabled;
+                                  return {
+                                    ...prev,
+                                    cycloplegia: {
+                                      ...(prev.cycloplegia || {
+                                        enabled: false,
+                                        od: { sph: "", cyl: "", axis: "" },
+                                        os: { sph: "", cyl: "", axis: "" },
+                                      }),
+                                      enabled: isEnabled,
+                                    },
+                                  };
                                 });
                               }}
                               className={cn(
@@ -3502,17 +3763,28 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                                   "",
                                                 ).replace(",", ".");
                                               }
-                                              setCurrentMedicalRecord({
-                                                ...currentMedicalRecord,
-                                                nonCycloplegic: {
-                                                  ...currentMedicalRecord.nonCycloplegic!,
-                                                  od: {
-                                                    ...currentMedicalRecord
-                                                      .nonCycloplegic!.od,
-                                                    [field]: val,
-                                                  },
-                                                },
-                                              });
+                                              setCurrentMedicalRecord((prev) =>
+                                                prev
+                                                  ? {
+                                                      ...prev,
+                                                      nonCycloplegic: {
+                                                        ...(prev.nonCycloplegic || {
+                                                          enabled: true,
+                                                          od: { sph: "", cyl: "", axis: "" },
+                                                          os: { sph: "", cyl: "", axis: "" },
+                                                        }),
+                                                        od: {
+                                                          ...(prev.nonCycloplegic?.od || {
+                                                            sph: "",
+                                                            cyl: "",
+                                                            axis: "",
+                                                          }),
+                                                          [field]: val,
+                                                        },
+                                                      },
+                                                    }
+                                                  : prev,
+                                              );
                                             }}
                                             onBlur={(e) => {
                                               let val = e.target.value;
@@ -3539,17 +3811,28 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                                   val = `${sign}${num.toFixed(2)}`;
                                                 }
                                               }
-                                              setCurrentMedicalRecord({
-                                                ...currentMedicalRecord,
-                                                nonCycloplegic: {
-                                                  ...currentMedicalRecord.nonCycloplegic!,
-                                                  od: {
-                                                    ...currentMedicalRecord
-                                                      .nonCycloplegic!.od,
-                                                    [field]: val,
-                                                  },
-                                                },
-                                              });
+                                              setCurrentMedicalRecord((prev) =>
+                                                prev
+                                                  ? {
+                                                      ...prev,
+                                                      nonCycloplegic: {
+                                                        ...(prev.nonCycloplegic || {
+                                                          enabled: true,
+                                                          od: { sph: "", cyl: "", axis: "" },
+                                                          os: { sph: "", cyl: "", axis: "" },
+                                                        }),
+                                                        od: {
+                                                          ...(prev.nonCycloplegic?.od || {
+                                                            sph: "",
+                                                            cyl: "",
+                                                            axis: "",
+                                                          }),
+                                                          [field]: val,
+                                                        },
+                                                      },
+                                                    }
+                                                  : prev,
+                                              );
                                             }}
                                             className={cn(
                                               "w-full p-2 border rounded-lg text-xs font-black text-center outline-none focus:ring-1 focus:ring-rose-500/30 transition-all",
@@ -3614,17 +3897,28 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                                   "",
                                                 ).replace(",", ".");
                                               }
-                                              setCurrentMedicalRecord({
-                                                ...currentMedicalRecord,
-                                                nonCycloplegic: {
-                                                  ...currentMedicalRecord.nonCycloplegic!,
-                                                  os: {
-                                                    ...currentMedicalRecord
-                                                      .nonCycloplegic!.os,
-                                                    [field]: val,
-                                                  },
-                                                },
-                                              });
+                                              setCurrentMedicalRecord((prev) =>
+                                                prev
+                                                  ? {
+                                                      ...prev,
+                                                      nonCycloplegic: {
+                                                        ...(prev.nonCycloplegic || {
+                                                          enabled: true,
+                                                          od: { sph: "", cyl: "", axis: "" },
+                                                          os: { sph: "", cyl: "", axis: "" },
+                                                        }),
+                                                        os: {
+                                                          ...(prev.nonCycloplegic?.os || {
+                                                            sph: "",
+                                                            cyl: "",
+                                                            axis: "",
+                                                          }),
+                                                          [field]: val,
+                                                        },
+                                                      },
+                                                    }
+                                                  : prev,
+                                              );
                                             }}
                                             onBlur={(e) => {
                                               let val = e.target.value;
@@ -3651,17 +3945,28 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                                   val = `${sign}${num.toFixed(2)}`;
                                                 }
                                               }
-                                              setCurrentMedicalRecord({
-                                                ...currentMedicalRecord,
-                                                nonCycloplegic: {
-                                                  ...currentMedicalRecord.nonCycloplegic!,
-                                                  os: {
-                                                    ...currentMedicalRecord
-                                                      .nonCycloplegic!.os,
-                                                    [field]: val,
-                                                  },
-                                                },
-                                              });
+                                              setCurrentMedicalRecord((prev) =>
+                                                prev
+                                                  ? {
+                                                      ...prev,
+                                                      nonCycloplegic: {
+                                                        ...(prev.nonCycloplegic || {
+                                                          enabled: true,
+                                                          od: { sph: "", cyl: "", axis: "" },
+                                                          os: { sph: "", cyl: "", axis: "" },
+                                                        }),
+                                                        os: {
+                                                          ...(prev.nonCycloplegic?.os || {
+                                                            sph: "",
+                                                            cyl: "",
+                                                            axis: "",
+                                                          }),
+                                                          [field]: val,
+                                                        },
+                                                      },
+                                                    }
+                                                  : prev,
+                                              );
                                             }}
                                             className={cn(
                                               "w-full p-2 border rounded-lg text-xs font-black text-center outline-none focus:ring-1 focus:ring-rose-500/30 transition-all",
@@ -3734,17 +4039,28 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                                   "",
                                                 ).replace(",", ".");
                                               }
-                                              setCurrentMedicalRecord({
-                                                ...currentMedicalRecord,
-                                                cycloplegia: {
-                                                  ...currentMedicalRecord.cycloplegia!,
-                                                  od: {
-                                                    ...currentMedicalRecord
-                                                      .cycloplegia!.od,
-                                                    [field]: val,
-                                                  },
-                                                },
-                                              });
+                                              setCurrentMedicalRecord((prev) =>
+                                                prev
+                                                  ? {
+                                                      ...prev,
+                                                      cycloplegia: {
+                                                        ...(prev.cycloplegia || {
+                                                          enabled: true,
+                                                          od: { sph: "", cyl: "", axis: "" },
+                                                          os: { sph: "", cyl: "", axis: "" },
+                                                        }),
+                                                        od: {
+                                                          ...(prev.cycloplegia?.od || {
+                                                            sph: "",
+                                                            cyl: "",
+                                                            axis: "",
+                                                          }),
+                                                          [field]: val,
+                                                        },
+                                                      },
+                                                    }
+                                                  : prev,
+                                              );
                                             }}
                                             onBlur={(e) => {
                                               let val = e.target.value;
@@ -3771,17 +4087,28 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                                   val = `${sign}${num.toFixed(2)}`;
                                                 }
                                               }
-                                              setCurrentMedicalRecord({
-                                                ...currentMedicalRecord,
-                                                cycloplegia: {
-                                                  ...currentMedicalRecord.cycloplegia!,
-                                                  od: {
-                                                    ...currentMedicalRecord
-                                                      .cycloplegia!.od,
-                                                    [field]: val,
-                                                  },
-                                                },
-                                              });
+                                              setCurrentMedicalRecord((prev) =>
+                                                prev
+                                                  ? {
+                                                      ...prev,
+                                                      cycloplegia: {
+                                                        ...(prev.cycloplegia || {
+                                                          enabled: true,
+                                                          od: { sph: "", cyl: "", axis: "" },
+                                                          os: { sph: "", cyl: "", axis: "" },
+                                                        }),
+                                                        od: {
+                                                          ...(prev.cycloplegia?.od || {
+                                                            sph: "",
+                                                            cyl: "",
+                                                            axis: "",
+                                                          }),
+                                                          [field]: val,
+                                                        },
+                                                      },
+                                                    }
+                                                  : prev,
+                                              );
                                             }}
                                             className={cn(
                                               "w-full p-2 border rounded-lg text-xs font-black text-center outline-none focus:ring-1 focus:ring-emerald-500/30 transition-all",
@@ -3846,17 +4173,28 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                                   "",
                                                 ).replace(",", ".");
                                               }
-                                              setCurrentMedicalRecord({
-                                                ...currentMedicalRecord,
-                                                cycloplegia: {
-                                                  ...currentMedicalRecord.cycloplegia!,
-                                                  os: {
-                                                    ...currentMedicalRecord
-                                                      .cycloplegia!.os,
-                                                    [field]: val,
-                                                  },
-                                                },
-                                              });
+                                              setCurrentMedicalRecord((prev) =>
+                                                prev
+                                                  ? {
+                                                      ...prev,
+                                                      cycloplegia: {
+                                                        ...(prev.cycloplegia || {
+                                                          enabled: true,
+                                                          od: { sph: "", cyl: "", axis: "" },
+                                                          os: { sph: "", cyl: "", axis: "" },
+                                                        }),
+                                                        os: {
+                                                          ...(prev.cycloplegia?.os || {
+                                                            sph: "",
+                                                            cyl: "",
+                                                            axis: "",
+                                                          }),
+                                                          [field]: val,
+                                                        },
+                                                      },
+                                                    }
+                                                  : prev,
+                                              );
                                             }}
                                             onBlur={(e) => {
                                               let val = e.target.value;
@@ -3883,17 +4221,28 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                                   val = `${sign}${num.toFixed(2)}`;
                                                 }
                                               }
-                                              setCurrentMedicalRecord({
-                                                ...currentMedicalRecord,
-                                                cycloplegia: {
-                                                  ...currentMedicalRecord.cycloplegia!,
-                                                  os: {
-                                                    ...currentMedicalRecord
-                                                      .cycloplegia!.os,
-                                                    [field]: val,
-                                                  },
-                                                },
-                                              });
+                                              setCurrentMedicalRecord((prev) =>
+                                                prev
+                                                  ? {
+                                                      ...prev,
+                                                      cycloplegia: {
+                                                        ...(prev.cycloplegia || {
+                                                          enabled: true,
+                                                          od: { sph: "", cyl: "", axis: "" },
+                                                          os: { sph: "", cyl: "", axis: "" },
+                                                        }),
+                                                        os: {
+                                                          ...(prev.cycloplegia?.os || {
+                                                            sph: "",
+                                                            cyl: "",
+                                                            axis: "",
+                                                          }),
+                                                          [field]: val,
+                                                        },
+                                                      },
+                                                    }
+                                                  : prev,
+                                              );
                                             }}
                                             className={cn(
                                               "w-full p-2 border rounded-lg text-xs font-black text-center outline-none focus:ring-1 focus:ring-emerald-500/30 transition-all",
@@ -3951,75 +4300,81 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     );
                                     if (val.length > 4) val = val.slice(0, 4);
 
-                                    let newOS =
-                                      currentMedicalRecord.dp_os || "";
-                                    if (
-                                      !currentMedicalRecord.dp_os ||
-                                      currentMedicalRecord.dp_os ===
-                                        currentMedicalRecord.dp_od
-                                    ) {
-                                      newOS = val;
-                                    }
+                                    setCurrentMedicalRecord((prev) => {
+                                      if (!prev) return prev;
+                                      let newOS = prev.dp_os || "";
+                                      if (
+                                        !prev.dp_os ||
+                                        prev.dp_os === prev.dp_od
+                                      ) {
+                                        newOS = val;
+                                      }
 
-                                    const numVal = parseFloat(val) || 0;
-                                    const finalOSNum = parseFloat(newOS) || 0;
-                                    const total = numVal + finalOSNum;
+                                      const numVal = parseFloat(val) || 0;
+                                      const finalOSNum = parseFloat(newOS) || 0;
+                                      const total = numVal + finalOSNum;
 
-                                    const updates: any = {
-                                      dp_od: val,
-                                      dp_os: newOS,
-                                      dp: total > 0 ? total.toString() : "",
-                                    };
+                                      const updates: any = {
+                                        dp_od: val,
+                                        dp_os: newOS,
+                                        dp: total > 0 ? total.toString() : "",
+                                      };
 
-                                    if (isNearEmptyOnFocus && total > 0) {
-                                      const nearVal = total - 2;
-                                      updates.dp_aproape = nearVal > 0 ? nearVal.toString() : "";
-                                      updates.dp_aproape_od = nearVal > 0 ? (nearVal / 2).toString() : "";
-                                      updates.dp_aproape_os = nearVal > 0 ? (nearVal / 2).toString() : "";
-                                    }
+                                      if (isNearEmptyOnFocus && total > 0) {
+                                        const nearVal = total - 2;
+                                        updates.dp_aproape = nearVal > 0 ? nearVal.toString() : "";
+                                        updates.dp_aproape_od = nearVal > 0 ? (nearVal / 2).toString() : "";
+                                        updates.dp_aproape_os = nearVal > 0 ? (nearVal / 2).toString() : "";
+                                      }
 
-                                    setCurrentMedicalRecord({
-                                      ...currentMedicalRecord,
-                                      ...updates,
+                                      return {
+                                        ...prev,
+                                        ...updates,
+                                      };
                                     });
                                   }}
                                   onBlur={(e) => {
                                     let val = e.target.value;
                                     if (val === "") {
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        dp: "",
-                                        dp_od: "",
-                                        dp_os: "",
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              dp: "",
+                                              dp_od: "",
+                                              dp_os: "",
+                                            }
+                                          : prev,
+                                      );
                                     } else if (val !== "") {
                                       let num =
                                         Math.round(parseFloat(val) * 2) / 2;
-                                      let osNum =
-                                        Math.round(
-                                          parseFloat(
-                                            currentMedicalRecord.dp_os || "0",
-                                          ) * 2,
-                                        ) / 2;
-                                      const total = num + osNum;
+                                      setCurrentMedicalRecord((prev) => {
+                                        if (!prev) return prev;
+                                        let osNum =
+                                          Math.round(
+                                            parseFloat(prev.dp_os || "0") * 2,
+                                          ) / 2;
+                                        const total = num + osNum;
 
-                                      const updates: any = {
-                                        dp_od: num.toString(),
-                                        dp_os: osNum.toString(),
-                                        dp: total > 0 ? total.toString() : "",
-                                      };
+                                        const updates: any = {
+                                          dp_od: num.toString(),
+                                          dp_os: osNum.toString(),
+                                          dp: total > 0 ? total.toString() : "",
+                                        };
 
-                                      if (isNearEmptyOnFocus && total > 0) {
-                                        const nearNum = total - 2;
-                                        const nearHalf = (nearNum / 2).toString();
-                                        updates.dp_aproape = nearNum.toString();
-                                        updates.dp_aproape_od = nearHalf;
-                                        updates.dp_aproape_os = nearHalf;
-                                      }
+                                        if (isNearEmptyOnFocus && total > 0) {
+                                          const nearNum = total - 2;
+                                          const nearHalf = (nearNum / 2).toString();
+                                          updates.dp_aproape = nearNum.toString();
+                                          updates.dp_aproape_od = nearHalf;
+                                          updates.dp_aproape_os = nearHalf;
+                                        }
 
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        ...updates,
+                                        return {
+                                          ...prev,
+                                          ...updates,
+                                        };
                                       });
                                     }
                                   }}
@@ -4068,12 +4423,16 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       "",
                                     );
                                     if (val === "") {
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        dp: "",
-                                        dp_od: "",
-                                        dp_os: "",
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              dp: "",
+                                              dp_od: "",
+                                              dp_os: "",
+                                            }
+                                          : prev,
+                                      );
                                       return;
                                     }
                                     const numVal = parseFloat(val);
@@ -4092,30 +4451,46 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       }
                                     }
 
-                                    setCurrentMedicalRecord({
-                                      ...currentMedicalRecord,
-                                      ...updates,
-                                    });
+                                    setCurrentMedicalRecord((prev) =>
+                                      prev
+                                        ? {
+                                            ...prev,
+                                            ...updates,
+                                          }
+                                        : prev,
+                                    );
                                   }}
                                   onBlur={(e) => {
                                     let val = e.target.value;
                                     if (val === "") {
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        dp_aproape: "",
-                                        dp_aproape_od: "",
-                                        dp_aproape_os: "",
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              dp_aproape: "",
+                                              dp_aproape_od: "",
+                                              dp_aproape_os: "",
+                                            }
+                                          : prev,
+                                      );
                                     } else if (val !== "") {
                                       let num =
                                         Math.round(parseFloat(val) * 2) / 2;
-                                      if (num < 40 || num > 84) {
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          dp: "",
-                                          dp_od: "",
-                                          dp_os: "",
-                                        });
+                                      if (isNaN(num) || num < 40 || num > 84) {
+                                        const msg =
+                                          "Atenție: Distanța interpupilară totală (DP Distanță) trebuie să fie între 40 și 84 mm (pentru o valoare pe un singur ochi folosiți câmpurile OD / OS).";
+                                        setErrorMessage(msg);
+                                        setBookingError?.(msg);
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                dp: "",
+                                                dp_od: "",
+                                                dp_os: "",
+                                              }
+                                            : prev,
+                                        );
                                       } else {
                                         const half = (num / 2).toString();
 
@@ -4133,10 +4508,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                           updates.dp_aproape_os = nearHalf;
                                         }
 
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          ...updates,
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                ...updates,
+                                              }
+                                            : prev,
+                                        );
                                       }
                                     }
                                   }}
@@ -4182,27 +4561,28 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     );
                                     if (val.length > 4) val = val.slice(0, 4);
                                     const numVal = parseFloat(val) || 0;
-                                    const currentODNum =
-                                      parseFloat(
-                                        currentMedicalRecord.dp_od || "0",
-                                      ) || 0;
-                                    const total = currentODNum + numVal;
+                                    setCurrentMedicalRecord((prev) => {
+                                      if (!prev) return prev;
+                                      const currentODNum =
+                                        parseFloat(prev.dp_od || "0") || 0;
+                                      const total = currentODNum + numVal;
 
-                                    const updates: any = {
-                                      dp_os: val,
-                                      dp: total > 0 ? total.toString() : "",
-                                    };
+                                      const updates: any = {
+                                        dp_os: val,
+                                        dp: total > 0 ? total.toString() : "",
+                                      };
 
-                                    if (isNearEmptyOnFocus && total > 0) {
-                                      const nearVal = total - 2;
-                                      updates.dp_aproape = nearVal > 0 ? nearVal.toString() : "";
-                                      updates.dp_aproape_od = nearVal > 0 ? (nearVal / 2).toString() : "";
-                                      updates.dp_aproape_os = nearVal > 0 ? (nearVal / 2).toString() : "";
-                                    }
+                                      if (isNearEmptyOnFocus && total > 0) {
+                                        const nearVal = total - 2;
+                                        updates.dp_aproape = nearVal > 0 ? nearVal.toString() : "";
+                                        updates.dp_aproape_od = nearVal > 0 ? (nearVal / 2).toString() : "";
+                                        updates.dp_aproape_os = nearVal > 0 ? (nearVal / 2).toString() : "";
+                                      }
 
-                                    setCurrentMedicalRecord({
-                                      ...currentMedicalRecord,
-                                      ...updates,
+                                      return {
+                                        ...prev,
+                                        ...updates,
+                                      };
                                     });
                                   }}
                                   onBlur={(e) => {
@@ -4210,31 +4590,32 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     if (val !== "") {
                                       let num =
                                         Math.round(parseFloat(val) * 2) / 2;
-                                      let odNum =
-                                        Math.round(
-                                          parseFloat(
-                                            currentMedicalRecord.dp_od || "0",
-                                          ) * 2,
-                                        ) / 2;
-                                      const total = odNum + num;
+                                      setCurrentMedicalRecord((prev) => {
+                                        if (!prev) return prev;
+                                        let odNum =
+                                          Math.round(
+                                            parseFloat(prev.dp_od || "0") * 2,
+                                          ) / 2;
+                                        const total = odNum + num;
 
-                                      const updates: any = {
-                                        dp_os: num.toString(),
-                                        dp_od: odNum.toString(),
-                                        dp: total > 0 ? total.toString() : "",
-                                      };
+                                        const updates: any = {
+                                          dp_os: num.toString(),
+                                          dp_od: odNum.toString(),
+                                          dp: total > 0 ? total.toString() : "",
+                                        };
 
-                                      if (isNearEmptyOnFocus && total > 0) {
-                                        const nearNum = total - 2;
-                                        const nearHalf = (nearNum / 2).toString();
-                                        updates.dp_aproape = nearNum.toString();
-                                        updates.dp_aproape_od = nearHalf;
-                                        updates.dp_aproape_os = nearHalf;
-                                      }
+                                        if (isNearEmptyOnFocus && total > 0) {
+                                          const nearNum = total - 2;
+                                          const nearHalf = (nearNum / 2).toString();
+                                          updates.dp_aproape = nearNum.toString();
+                                          updates.dp_aproape_od = nearHalf;
+                                          updates.dp_aproape_os = nearHalf;
+                                        }
 
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        ...updates,
+                                        return {
+                                          ...prev,
+                                          ...updates,
+                                        };
                                       });
                                     }
                                   }}
@@ -4287,36 +4668,37 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     );
                                     if (val.length > 4) val = val.slice(0, 4);
 
-                                    let newOS =
-                                      currentMedicalRecord.dp_aproape_os || "";
-                                    if (
-                                      !currentMedicalRecord.dp_aproape_os ||
-                                      currentMedicalRecord.dp_aproape_os ===
-                                        currentMedicalRecord.dp_aproape_od
-                                    ) {
-                                      newOS = val;
-                                    }
+                                    setCurrentMedicalRecord((prev) => {
+                                      if (!prev) return prev;
+                                      let newOS = prev.dp_aproape_os || "";
+                                      if (
+                                        !prev.dp_aproape_os ||
+                                        prev.dp_aproape_os === prev.dp_aproape_od
+                                      ) {
+                                        newOS = val;
+                                      }
 
-                                    const numVal = parseFloat(val) || 0;
-                                    const finalOSNum = parseFloat(newOS) || 0;
-                                    const total = numVal + finalOSNum;
+                                      const numVal = parseFloat(val) || 0;
+                                      const finalOSNum = parseFloat(newOS) || 0;
+                                      const total = numVal + finalOSNum;
 
-                                    const updates: any = {
-                                      dp_aproape_od: val,
-                                      dp_aproape_os: newOS,
-                                      dp_aproape: total > 0 ? total.toString() : "",
-                                    };
+                                      const updates: any = {
+                                        dp_aproape_od: val,
+                                        dp_aproape_os: newOS,
+                                        dp_aproape: total > 0 ? total.toString() : "",
+                                      };
 
-                                    if (isDistEmptyOnFocus && total > 0) {
-                                      const distVal = total + 2;
-                                      updates.dp = distVal > 0 ? distVal.toString() : "";
-                                      updates.dp_od = distVal > 0 ? (distVal / 2).toString() : "";
-                                      updates.dp_os = distVal > 0 ? (distVal / 2).toString() : "";
-                                    }
+                                      if (isDistEmptyOnFocus && total > 0) {
+                                        const distVal = total + 2;
+                                        updates.dp = distVal > 0 ? distVal.toString() : "";
+                                        updates.dp_od = distVal > 0 ? (distVal / 2).toString() : "";
+                                        updates.dp_os = distVal > 0 ? (distVal / 2).toString() : "";
+                                      }
 
-                                    setCurrentMedicalRecord({
-                                      ...currentMedicalRecord,
-                                      ...updates,
+                                      return {
+                                        ...prev,
+                                        ...updates,
+                                      };
                                     });
                                   }}
                                   onBlur={(e) => {
@@ -4324,31 +4706,34 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     if (val !== "") {
                                       let num =
                                         Math.round(parseFloat(val) * 2) / 2;
-                                      let osNum =
-                                        Math.round(
-                                          parseFloat(
-                                            currentMedicalRecord.dp_aproape_os || "0",
-                                          ) * 2,
-                                        ) / 2;
-                                      const total = num + osNum;
+                                      setCurrentMedicalRecord((prev) => {
+                                        if (!prev) return prev;
+                                        let osNum =
+                                          Math.round(
+                                            parseFloat(
+                                              prev.dp_aproape_os || "0",
+                                            ) * 2,
+                                          ) / 2;
+                                        const total = num + osNum;
 
-                                      const updates: any = {
-                                        dp_aproape_od: num.toString(),
-                                        dp_aproape_os: osNum.toString(),
-                                        dp_aproape: total > 0 ? total.toString() : "",
-                                      };
+                                        const updates: any = {
+                                          dp_aproape_od: num.toString(),
+                                          dp_aproape_os: osNum.toString(),
+                                          dp_aproape: total > 0 ? total.toString() : "",
+                                        };
 
-                                      if (isDistEmptyOnFocus && total > 0) {
-                                        const distNum = total + 2;
-                                        const distHalf = (distNum / 2).toString();
-                                        updates.dp = distNum.toString();
-                                        updates.dp_od = distHalf;
-                                        updates.dp_os = distHalf;
-                                      }
+                                        if (isDistEmptyOnFocus && total > 0) {
+                                          const distNum = total + 2;
+                                          const distHalf = (distNum / 2).toString();
+                                          updates.dp = distNum.toString();
+                                          updates.dp_od = distHalf;
+                                          updates.dp_os = distHalf;
+                                        }
 
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        ...updates,
+                                        return {
+                                          ...prev,
+                                          ...updates,
+                                        };
                                       });
                                     }
                                   }}
@@ -4389,12 +4774,16 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       "",
                                     );
                                     if (val === "") {
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        dp_aproape: "",
-                                        dp_aproape_od: "",
-                                        dp_aproape_os: "",
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              dp_aproape: "",
+                                              dp_aproape_od: "",
+                                              dp_aproape_os: "",
+                                            }
+                                          : prev,
+                                      );
                                       return;
                                     }
                                     const numVal = parseFloat(val);
@@ -4413,23 +4802,35 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       }
                                     }
 
-                                    setCurrentMedicalRecord({
-                                      ...currentMedicalRecord,
-                                      ...updates,
-                                    });
+                                    setCurrentMedicalRecord((prev) =>
+                                      prev
+                                        ? {
+                                            ...prev,
+                                            ...updates,
+                                          }
+                                        : prev,
+                                    );
                                   }}
                                   onBlur={(e) => {
                                     let val = e.target.value;
                                     if (val !== "") {
                                       let num =
                                         Math.round(parseFloat(val) * 2) / 2;
-                                      if (num < 40 || num > 84) {
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          dp_aproape: "",
-                                          dp_aproape_od: "",
-                                          dp_aproape_os: "",
-                                        });
+                                      if (isNaN(num) || num < 40 || num > 84) {
+                                        const msg =
+                                          "Atenție: Distanța interpupilară totală (DP Aproape) trebuie să fie între 40 și 84 mm (pentru o valoare pe un singur ochi folosiți câmpurile OD / OS).";
+                                        setErrorMessage(msg);
+                                        setBookingError?.(msg);
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                dp_aproape: "",
+                                                dp_aproape_od: "",
+                                                dp_aproape_os: "",
+                                              }
+                                            : prev,
+                                        );
                                       } else {
                                         const half = (num / 2).toString();
 
@@ -4447,10 +4848,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                           updates.dp_os = distHalf;
                                         }
 
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          ...updates,
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                ...updates,
+                                              }
+                                            : prev,
+                                        );
                                       }
                                     }
                                   }}
@@ -4493,27 +4898,28 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     );
                                     if (val.length > 4) val = val.slice(0, 4);
                                     const numVal = parseFloat(val) || 0;
-                                    const currentODNum =
-                                      parseFloat(
-                                        currentMedicalRecord.dp_aproape_od || "0",
-                                      ) || 0;
-                                    const total = currentODNum + numVal;
+                                    setCurrentMedicalRecord((prev) => {
+                                      if (!prev) return prev;
+                                      const currentODNum =
+                                        parseFloat(prev.dp_aproape_od || "0") || 0;
+                                      const total = currentODNum + numVal;
 
-                                    const updates: any = {
-                                      dp_aproape_os: val,
-                                      dp_aproape: total > 0 ? total.toString() : "",
-                                    };
+                                      const updates: any = {
+                                        dp_aproape_os: val,
+                                        dp_aproape: total > 0 ? total.toString() : "",
+                                      };
 
-                                    if (isDistEmptyOnFocus && total > 0) {
-                                      const distVal = total + 2;
-                                      updates.dp = distVal > 0 ? distVal.toString() : "";
-                                      updates.dp_od = distVal > 0 ? (distVal / 2).toString() : "";
-                                      updates.dp_os = distVal > 0 ? (distVal / 2).toString() : "";
-                                    }
+                                      if (isDistEmptyOnFocus && total > 0) {
+                                        const distVal = total + 2;
+                                        updates.dp = distVal > 0 ? distVal.toString() : "";
+                                        updates.dp_od = distVal > 0 ? (distVal / 2).toString() : "";
+                                        updates.dp_os = distVal > 0 ? (distVal / 2).toString() : "";
+                                      }
 
-                                    setCurrentMedicalRecord({
-                                      ...currentMedicalRecord,
-                                      ...updates,
+                                      return {
+                                        ...prev,
+                                        ...updates,
+                                      };
                                     });
                                   }}
                                   onBlur={(e) => {
@@ -4521,31 +4927,34 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     if (val !== "") {
                                       let num =
                                         Math.round(parseFloat(val) * 2) / 2;
-                                      let odNum =
-                                        Math.round(
-                                          parseFloat(
-                                            currentMedicalRecord.dp_aproape_od || "0",
-                                          ) * 2,
-                                        ) / 2;
-                                      const total = odNum + num;
+                                      setCurrentMedicalRecord((prev) => {
+                                        if (!prev) return prev;
+                                        let odNum =
+                                          Math.round(
+                                            parseFloat(
+                                              prev.dp_aproape_od || "0",
+                                            ) * 2,
+                                          ) / 2;
+                                        const total = odNum + num;
 
-                                      const updates: any = {
-                                        dp_aproape_os: num.toString(),
-                                        dp_aproape_od: odNum.toString(),
-                                        dp_aproape: total > 0 ? total.toString() : "",
-                                      };
+                                        const updates: any = {
+                                          dp_aproape_os: num.toString(),
+                                          dp_aproape_od: odNum.toString(),
+                                          dp_aproape: total > 0 ? total.toString() : "",
+                                        };
 
-                                      if (isDistEmptyOnFocus && total > 0) {
-                                        const distNum = total + 2;
-                                        const distHalf = (distNum / 2).toString();
-                                        updates.dp = distNum.toString();
-                                        updates.dp_od = distHalf;
-                                        updates.dp_os = distHalf;
-                                      }
+                                        if (isDistEmptyOnFocus && total > 0) {
+                                          const distNum = total + 2;
+                                          const distHalf = (distNum / 2).toString();
+                                          updates.dp = distNum.toString();
+                                          updates.dp_od = distHalf;
+                                          updates.dp_os = distHalf;
+                                        }
 
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        ...updates,
+                                        return {
+                                          ...prev,
+                                          ...updates,
+                                        };
                                       });
                                     }
                                   }}
@@ -4576,37 +4985,37 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               <button
                                 type="button"
                                 onClick={() => {
-                                  const nextState = !currentMedicalRecord.intermediate_enabled;
-                                  if (nextState) {
-                                    // Activare: setăm enabled și distanța implicită (dacă nu e deja setată)
-                                    setCurrentMedicalRecord({
-                                      ...currentMedicalRecord,
-                                      intermediate_enabled: true,
-                                      intermediate_distance: currentMedicalRecord.intermediate_distance || "60 cm",
-                                    });
-                                  } else {
-                                    // Dezactivare / Anulare corecție semidistanță: resetăm complet semidistanța
-                                    setCurrentMedicalRecord({
-                                      ...currentMedicalRecord,
+                                  setCurrentMedicalRecord((prev) => {
+                                    if (!prev) return prev;
+                                    const nextState = !prev.intermediate_enabled;
+                                    if (nextState) {
+                                      return {
+                                        ...prev,
+                                        intermediate_enabled: true,
+                                        intermediate_distance: prev.intermediate_distance || "60 cm",
+                                      };
+                                    }
+                                    return {
+                                      ...prev,
                                       intermediate_enabled: false,
                                       intermediate_distance: "",
                                       intermediate_dp: "",
                                       intermediate_dp_od: "",
                                       intermediate_dp_os: "",
                                       od: {
-                                        ...currentMedicalRecord.od,
+                                        ...prev.od,
                                         intermediate_sph: "",
                                         intermediate_cyl: "",
                                         intermediate_axis: "",
                                       },
                                       os: {
-                                        ...currentMedicalRecord.os,
+                                        ...prev.os,
                                         intermediate_sph: "",
                                         intermediate_cyl: "",
                                         intermediate_axis: "",
                                       },
-                                    });
-                                  }
+                                    };
+                                  });
                                 }}
                                 className={cn(
                                   "flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl font-black text-xs uppercase tracking-tight transition-all shadow-xs cursor-pointer",
@@ -4639,10 +5048,15 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                   placeholder="ex: 60 cm, 70 cm"
                                   value={currentMedicalRecord.intermediate_distance || ""}
                                   onChange={(e) => {
-                                    setCurrentMedicalRecord({
-                                      ...currentMedicalRecord,
-                                      intermediate_distance: e.target.value,
-                                    });
+                                    const val = e.target.value;
+                                    setCurrentMedicalRecord((prev) =>
+                                      prev
+                                        ? {
+                                            ...prev,
+                                            intermediate_distance: val,
+                                          }
+                                        : prev,
+                                    );
                                   }}
                                   className={cn(
                                     "flex-1 px-2.5 py-1 border rounded-xl text-xs font-bold text-center outline-none focus:ring-2 focus:ring-purple-500/20",
@@ -4757,14 +5171,18 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          os: {
-                                            ...currentMedicalRecord.os,
-                                            prism: "",
-                                            base: "",
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                os: {
+                                                  ...prev.os,
+                                                  prism: "",
+                                                  base: "",
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }}
                                       className={cn(
                                         "absolute -top-1 -right-1 p-0.5 rounded-full border shadow-sm z-10 transition-colors",
@@ -4834,10 +5252,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          cl_os: undefined,
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                cl_os: undefined,
+                                              }
+                                            : prev,
+                                        );
                                       }}
                                       className={cn(
                                         "absolute -top-1 -right-1 p-0.5 rounded-full border shadow-sm z-10 transition-colors",
@@ -4959,29 +5381,32 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         <button
                                           type="button"
                                           onClick={() => {
-                                            const updatedOS = {
-                                              ...currentMedicalRecord.os,
-                                              add: cleanEst,
-                                              near_sph: undefined,
-                                              near_cyl: undefined,
-                                              near_axis: undefined,
-                                            };
-                                            const updatedOD = {
-                                              ...currentMedicalRecord.od,
-                                              add: cleanEst,
-                                              near_sph: undefined,
-                                              near_cyl: undefined,
-                                              near_axis: undefined,
-                                            };
-                                            setCurrentMedicalRecord({
-                                              ...currentMedicalRecord,
-                                              os: updatedOS,
-                                              od: updatedOD,
-                                              diagnostic: updateDiagnosticSuggestions(
-                                                currentMedicalRecord.diagnostic || "",
-                                                updatedOD,
-                                                updatedOS,
-                                              ),
+                                            setCurrentMedicalRecord((prev) => {
+                                              if (!prev) return prev;
+                                              const updatedOS = {
+                                                ...prev.os,
+                                                add: cleanEst,
+                                                near_sph: undefined,
+                                                near_cyl: undefined,
+                                                near_axis: undefined,
+                                              };
+                                              const updatedOD = {
+                                                ...prev.od,
+                                                add: cleanEst,
+                                                near_sph: undefined,
+                                                near_cyl: undefined,
+                                                near_axis: undefined,
+                                              };
+                                              return {
+                                                ...prev,
+                                                os: updatedOS,
+                                                od: updatedOD,
+                                                diagnostic: updateDiagnosticSuggestions(
+                                                  prev.diagnostic || "",
+                                                  updatedOD,
+                                                  updatedOS,
+                                                ),
+                                              };
                                             });
                                           }}
                                           className={cn(
@@ -5003,33 +5428,33 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       value={currentMedicalRecord.os.add}
                                       onChange={(e) => {
                                         const newVal = e.target.value;
-                                        const updatedOS = {
-                                          ...currentMedicalRecord.os,
-                                          add: newVal,
-                                          near_sph: undefined,
-                                          near_cyl: undefined,
-                                          near_axis: undefined,
-                                        };
-                                        const updatedOD = {
-                                          ...currentMedicalRecord.od,
-                                          add:
-                                            currentMedicalRecord.od.add ||
-                                            newVal,
-                                          near_sph: undefined,
-                                          near_cyl: undefined,
-                                          near_axis: undefined,
-                                        };
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          os: updatedOS,
-                                          od: updatedOD,
-                                          diagnostic:
-                                            updateDiagnosticSuggestions(
-                                              currentMedicalRecord.diagnostic ||
-                                                "",
-                                              updatedOD,
-                                              updatedOS,
-                                            ),
+                                        setCurrentMedicalRecord((prev) => {
+                                          if (!prev) return prev;
+                                          const updatedOS = {
+                                            ...prev.os,
+                                            add: newVal,
+                                            near_sph: undefined,
+                                            near_cyl: undefined,
+                                            near_axis: undefined,
+                                          };
+                                          const updatedOD = {
+                                            ...prev.od,
+                                            add: prev.od.add || newVal,
+                                            near_sph: undefined,
+                                            near_cyl: undefined,
+                                            near_axis: undefined,
+                                          };
+                                          return {
+                                            ...prev,
+                                            os: updatedOS,
+                                            od: updatedOD,
+                                            diagnostic:
+                                              updateDiagnosticSuggestions(
+                                                prev.diagnostic || "",
+                                                updatedOD,
+                                                updatedOS,
+                                              ),
+                                          };
                                         });
                                       }}
                                       className={cn(
@@ -5146,27 +5571,28 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         ) {
                                           val = val.replace(/[^0-9.,+-]/g, "").replace(",", ".");
                                         }
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          os: (() => {
-                                            const updatedOS = {
-                                              ...currentMedicalRecord.os,
-                                              [field]: val,
-                                              near_sph: undefined,
-                                              near_cyl: undefined,
-                                              near_axis: undefined,
-                                            };
-                                            if (field === "cyl") {
-                                              const parsed =
-                                                parseFloat(
-                                                  String(val).replace(",", "."),
-                                                ) || 0;
-                                              if (val === "" || parsed === 0) {
-                                                updatedOS.axis = "";
-                                              }
+                                        setCurrentMedicalRecord((prev) => {
+                                          if (!prev) return prev;
+                                          const updatedOS = {
+                                            ...prev.os,
+                                            [field]: val,
+                                            near_sph: undefined,
+                                            near_cyl: undefined,
+                                            near_axis: undefined,
+                                          };
+                                          if (field === "cyl") {
+                                            const parsed =
+                                              parseFloat(
+                                                String(val).replace(",", "."),
+                                              ) || 0;
+                                            if (val === "" || parsed === 0) {
+                                              updatedOS.axis = "";
                                             }
-                                            return updatedOS;
-                                          })(),
+                                          }
+                                          return {
+                                            ...prev,
+                                            os: updatedOS,
+                                          };
                                         });
                                       }}
                                       onBlur={(e) => {
@@ -5194,44 +5620,47 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                             const formatted = `${sign}${num.toFixed(2)}`;
                                             const parsedNum =
                                               parseFloat(formatted) || 0;
-                                            const updatedOS = {
-                                              ...currentMedicalRecord.os,
-                                              [field]: formatted,
-                                              near_sph: undefined,
-                                              near_cyl: undefined,
-                                              near_axis: undefined,
-                                            };
-                                            setCurrentMedicalRecord({
-                                              ...currentMedicalRecord,
-                                              os: (() => {
-                                                if (
-                                                  field === "cyl" &&
-                                                  parsedNum === 0
-                                                ) {
-                                                  updatedOS.axis = "";
-                                                }
-                                                return updatedOS;
-                                              })(),
-                                              diagnostic:
-                                                updateDiagnosticSuggestions(
-                                                  currentMedicalRecord.diagnostic ||
-                                                    "",
-                                                  currentMedicalRecord.od,
-                                                  updatedOS,
-                                                ),
+                                            setCurrentMedicalRecord((prev) => {
+                                              if (!prev) return prev;
+                                              const updatedOS = {
+                                                ...prev.os,
+                                                [field]: formatted,
+                                                near_sph: undefined,
+                                                near_cyl: undefined,
+                                                near_axis: undefined,
+                                              };
+                                              if (
+                                                field === "cyl" &&
+                                                parsedNum === 0
+                                              ) {
+                                                updatedOS.axis = "";
+                                              }
+                                              return {
+                                                ...prev,
+                                                os: updatedOS,
+                                                diagnostic:
+                                                  updateDiagnosticSuggestions(
+                                                    prev.diagnostic || "",
+                                                    prev.od,
+                                                    updatedOS,
+                                                  ),
+                                              };
                                             });
                                           }
                                         } else if (field === "axis") {
-                                          setCurrentMedicalRecord({
-                                            ...currentMedicalRecord,
-                                            diagnostic:
-                                              updateDiagnosticSuggestions(
-                                                currentMedicalRecord.diagnostic ||
-                                                  "",
-                                                currentMedicalRecord.od,
-                                                currentMedicalRecord.os,
-                                              ),
-                                          });
+                                          setCurrentMedicalRecord((prev) =>
+                                            prev
+                                              ? {
+                                                  ...prev,
+                                                  diagnostic:
+                                                    updateDiagnosticSuggestions(
+                                                      prev.diagnostic || "",
+                                                      prev.od,
+                                                      prev.os,
+                                                    ),
+                                                }
+                                              : prev,
+                                          );
                                         }
                                       }}
                                       className={cn(
@@ -5282,13 +5711,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     value={currentMedicalRecord.os.intermediate_sph || ""}
                                     onChange={(e) => {
                                       let val = e.target.value.replace(/[^0-9.,+-]/g, "").replace(",", ".");
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        os: {
-                                          ...currentMedicalRecord.os,
-                                          intermediate_sph: val,
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              os: {
+                                                ...prev.os,
+                                                intermediate_sph: val,
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     onBlur={(e) => {
                                       let val = e.target.value.trim();
@@ -5298,13 +5731,18 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         num = Math.round(num * 4) / 4;
                                         num = Math.max(-25, Math.min(22, num));
                                         const sign = num >= 0 ? "+" : "";
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          os: {
-                                            ...currentMedicalRecord.os,
-                                            intermediate_sph: `${sign}${num.toFixed(2)}`,
-                                          },
-                                        });
+                                        const formatted = `${sign}${num.toFixed(2)}`;
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                os: {
+                                                  ...prev.os,
+                                                  intermediate_sph: formatted,
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }
                                     }}
                                     className={cn(
@@ -5330,13 +5768,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     value={currentMedicalRecord.os.intermediate_cyl || ""}
                                     onChange={(e) => {
                                       let val = e.target.value.replace(/[^0-9.,+-]/g, "").replace(",", ".");
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        os: {
-                                          ...currentMedicalRecord.os,
-                                          intermediate_cyl: val,
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              os: {
+                                                ...prev.os,
+                                                intermediate_cyl: val,
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     onBlur={(e) => {
                                       let val = e.target.value.trim();
@@ -5346,13 +5788,18 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         num = Math.round(num * 4) / 4;
                                         num = Math.max(-7, Math.min(7, num));
                                         const sign = num >= 0 ? "+" : "";
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          os: {
-                                            ...currentMedicalRecord.os,
-                                            intermediate_cyl: `${sign}${num.toFixed(2)}`,
-                                          },
-                                        });
+                                        const formatted = `${sign}${num.toFixed(2)}`;
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                os: {
+                                                  ...prev.os,
+                                                  intermediate_cyl: formatted,
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }
                                     }}
                                     className={cn(
@@ -5380,13 +5827,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       let val = e.target.value.replace(/[^0-9]/g, "");
                                       let n = parseInt(val);
                                       if (!isNaN(n) && n > 180) val = "180";
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        os: {
-                                          ...currentMedicalRecord.os,
-                                          intermediate_axis: val,
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              os: {
+                                                ...prev.os,
+                                                intermediate_axis: val,
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     className={cn(
                                       "w-full p-2 border rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-purple-500/20 transition-all text-center",
@@ -5459,24 +5910,32 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         /[^0-9.,+-]/g,
                                         "",
                                       ).replace(",", ".");
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        os: {
-                                          ...currentMedicalRecord.os,
-                                          near_sph: val,
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              os: {
+                                                ...prev.os,
+                                                near_sph: val,
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     onBlur={(e) => {
                                       let val = e.target.value.trim();
                                       if (!val) {
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          os: {
-                                            ...currentMedicalRecord.os,
-                                            near_sph: "",
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                os: {
+                                                  ...prev.os,
+                                                  near_sph: "",
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                         return;
                                       }
                                       let num = parseFloat(val);
@@ -5484,13 +5943,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         num = Math.round(num * 4) / 4;
                                         num = Math.max(-25, Math.min(22, num));
                                         const sign = num >= 0 ? "+" : "";
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          os: {
-                                            ...currentMedicalRecord.os,
-                                            near_sph: `${sign}${num.toFixed(2)}`,
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                os: {
+                                                  ...prev.os,
+                                                  near_sph: `${sign}${num.toFixed(2)}`,
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }
                                     }}
                                     className={cn(
@@ -5561,33 +6024,38 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         ) || 0;
                                       const isZeroOrEmpty =
                                         !val || parsed === 0;
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        os: {
-                                          ...currentMedicalRecord.os,
-                                          near_cyl: val,
-                                          near_axis: isZeroOrEmpty
-                                            ? ""
-                                            : currentMedicalRecord.os
-                                                  .near_axis !== undefined
-                                              ? currentMedicalRecord.os
-                                                  .near_axis
-                                              : currentMedicalRecord.os.axis ||
-                                                "",
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              os: {
+                                                ...prev.os,
+                                                near_cyl: val,
+                                                near_axis: isZeroOrEmpty
+                                                  ? ""
+                                                  : prev.os.near_axis !== undefined
+                                                    ? prev.os.near_axis
+                                                    : prev.os.axis || "",
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     onBlur={(e) => {
                                       let val = e.target.value.trim();
                                       if (!val) {
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          os: {
-                                            ...currentMedicalRecord.os,
-                                            near_cyl: "",
-                                            near_axis: "",
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                os: {
+                                                  ...prev.os,
+                                                  near_cyl: "",
+                                                  near_axis: "",
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                         return;
                                       }
                                       let num = parseFloat(val);
@@ -5598,22 +6066,24 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         const formatted = `${sign}${num.toFixed(2)}`;
                                         const parsedNum =
                                           parseFloat(formatted) || 0;
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          os: {
-                                            ...currentMedicalRecord.os,
-                                            near_cyl: formatted,
-                                            near_axis:
-                                              parsedNum === 0
-                                                ? ""
-                                                : currentMedicalRecord.os
-                                                      .near_axis !== undefined
-                                                  ? currentMedicalRecord.os
-                                                      .near_axis
-                                                  : currentMedicalRecord.os
-                                                      .axis || "",
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                os: {
+                                                  ...prev.os,
+                                                  near_cyl: formatted,
+                                                  near_axis:
+                                                    parsedNum === 0
+                                                      ? ""
+                                                      : prev.os.near_axis !==
+                                                          undefined
+                                                        ? prev.os.near_axis
+                                                        : prev.os.axis || "",
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }
                                     }}
                                     className={cn(
@@ -5727,13 +6197,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       if (val !== "" && parseInt(val) > 180) {
                                         val = "180";
                                       }
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        os: {
-                                          ...currentMedicalRecord.os,
-                                          near_axis: val,
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              os: {
+                                                ...prev.os,
+                                                near_axis: val,
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     onBlur={(e) => {
                                       let val = e.target.value.replace(
@@ -5741,25 +6215,33 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         "",
                                       );
                                       if (val === "") {
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          os: {
-                                            ...currentMedicalRecord.os,
-                                            near_axis: "",
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                os: {
+                                                  ...prev.os,
+                                                  near_axis: "",
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                         return;
                                       }
                                       let n = parseInt(val);
                                       if (!isNaN(n)) {
                                         if (n > 180) n = 180;
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          os: {
-                                            ...currentMedicalRecord.os,
-                                            near_axis: n.toString(),
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                os: {
+                                                  ...prev.os,
+                                                  near_axis: n.toString(),
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }
                                     }}
                                     className={cn(
@@ -5800,15 +6282,20 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               <input
                                 type="text"
                                 value={currentMedicalRecord.os.va_without || ""}
-                                onChange={(e) =>
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    os: {
-                                      ...currentMedicalRecord.os,
-                                      va_without: e.target.value,
-                                    },
-                                  })
-                                }
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCurrentMedicalRecord((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          os: {
+                                            ...prev.os,
+                                            va_without: val,
+                                          },
+                                        }
+                                      : prev,
+                                  );
+                                }}
                                 className={cn(
                                   "w-full p-2 border rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all",
                                   darkMode
@@ -5830,18 +6317,22 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 type="text"
                                 value={currentMedicalRecord.os.va_with || ""}
                                 onChange={(e) => {
-                                  const updatedOS = {
-                                    ...currentMedicalRecord.os,
-                                    va_with: e.target.value,
-                                  };
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    os: updatedOS,
-                                    diagnostic: updateDiagnosticSuggestions(
-                                      currentMedicalRecord.diagnostic || "",
-                                      currentMedicalRecord.od,
-                                      updatedOS,
-                                    ),
+                                  const val = e.target.value;
+                                  setCurrentMedicalRecord((prev) => {
+                                    if (!prev) return prev;
+                                    const updatedOS = {
+                                      ...prev.os,
+                                      va_with: val,
+                                    };
+                                    return {
+                                      ...prev,
+                                      os: updatedOS,
+                                      diagnostic: updateDiagnosticSuggestions(
+                                        prev.diagnostic || "",
+                                        prev.od,
+                                        updatedOS,
+                                      ),
+                                    };
                                   });
                                 }}
                                 className={cn(
@@ -5894,40 +6385,40 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         iopVal = "90";
                                       }
 
-                                      const cctVal =
-                                        currentMedicalRecord.pachymetry?.os ||
-                                        "";
-                                      let corrected = "";
-                                      if (iopVal && cctVal) {
-                                        const iop = parseFloat(iopVal);
-                                        const cct = parseFloat(cctVal);
-                                        if (!isNaN(iop) && !isNaN(cct)) {
-                                          corrected = (
-                                            iop +
-                                            (545 - cct) * 0.05
-                                          ).toFixed(1);
+                                      setCurrentMedicalRecord((prev) => {
+                                        if (!prev) return prev;
+                                        const cctVal = prev.pachymetry?.os || "";
+                                        let corrected = "";
+                                        if (iopVal && cctVal) {
+                                          const iop = parseFloat(iopVal);
+                                          const cct = parseFloat(cctVal);
+                                          if (!isNaN(iop) && !isNaN(cct)) {
+                                            corrected = (
+                                              iop +
+                                              (545 - cct) * 0.05
+                                            ).toFixed(1);
+                                          }
                                         }
-                                      }
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        iop: {
-                                          ...(currentMedicalRecord.iop || {
-                                            od: "",
-                                            os: "",
-                                          }),
-                                          os: iopVal,
-                                        },
-                                        correctedIop: {
-                                          ...(currentMedicalRecord.correctedIop || {
-                                            od: "",
-                                            os: "",
-                                          }),
-                                          os:
-                                            corrected ||
-                                            currentMedicalRecord.correctedIop
-                                              ?.os ||
-                                            "",
-                                        },
+                                        return {
+                                          ...prev,
+                                          iop: {
+                                            ...(prev.iop || {
+                                              od: "",
+                                              os: "",
+                                            }),
+                                            os: iopVal,
+                                          },
+                                          correctedIop: {
+                                            ...(prev.correctedIop || {
+                                              od: "",
+                                              os: "",
+                                            }),
+                                            os:
+                                              corrected ||
+                                              prev.correctedIop?.os ||
+                                              "",
+                                          },
+                                        };
                                       });
                                     }}
                                     className={getIopInputClass(
@@ -5945,39 +6436,40 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     }
                                     onChange={(e) => {
                                       const cctVal = e.target.value;
-                                      const iopVal =
-                                        currentMedicalRecord.iop?.os || "";
-                                      let corrected = "";
-                                      if (iopVal && cctVal) {
-                                        const iop = parseFloat(iopVal);
-                                        const cct = parseFloat(cctVal);
-                                        if (!isNaN(iop) && !isNaN(cct)) {
-                                          corrected = (
-                                            iop +
-                                            (545 - cct) * 0.05
-                                          ).toFixed(1);
+                                      setCurrentMedicalRecord((prev) => {
+                                        if (!prev) return prev;
+                                        const iopVal = prev.iop?.os || "";
+                                        let corrected = "";
+                                        if (iopVal && cctVal) {
+                                          const iop = parseFloat(iopVal);
+                                          const cct = parseFloat(cctVal);
+                                          if (!isNaN(iop) && !isNaN(cct)) {
+                                            corrected = (
+                                              iop +
+                                              (545 - cct) * 0.05
+                                            ).toFixed(1);
+                                          }
                                         }
-                                      }
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        pachymetry: {
-                                          ...(currentMedicalRecord.pachymetry || {
-                                            od: "",
-                                            os: "",
-                                          }),
-                                          os: cctVal,
-                                        },
-                                        correctedIop: {
-                                          ...(currentMedicalRecord.correctedIop || {
-                                            od: "",
-                                            os: "",
-                                          }),
-                                          os:
-                                            corrected ||
-                                            currentMedicalRecord.correctedIop
-                                              ?.os ||
-                                            "",
-                                        },
+                                        return {
+                                          ...prev,
+                                          pachymetry: {
+                                            ...(prev.pachymetry || {
+                                              od: "",
+                                              os: "",
+                                            }),
+                                            os: cctVal,
+                                          },
+                                          correctedIop: {
+                                            ...(prev.correctedIop || {
+                                              od: "",
+                                              os: "",
+                                            }),
+                                            os:
+                                              corrected ||
+                                              prev.correctedIop?.os ||
+                                              "",
+                                          },
+                                        };
                                       });
                                     }}
                                     className={cn(
@@ -5996,18 +6488,23 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       currentMedicalRecord.correctedIop?.os ||
                                       ""
                                     }
-                                    onChange={(e) =>
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        correctedIop: {
-                                          ...(currentMedicalRecord.correctedIop || {
-                                            od: "",
-                                            os: "",
-                                          }),
-                                          os: e.target.value,
-                                        },
-                                      })
-                                    }
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              correctedIop: {
+                                                ...(prev.correctedIop || {
+                                                  od: "",
+                                                  os: "",
+                                                }),
+                                                os: val,
+                                              },
+                                            }
+                                          : prev,
+                                      );
+                                    }}
                                     className={getIopInputClass(
                                       currentMedicalRecord.correctedIop?.os,
                                       false,
@@ -6089,32 +6586,40 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                               sanitizeAxialLengthInput(
                                                 e.target.value,
                                               );
-                                            setCurrentMedicalRecord({
-                                              ...currentMedicalRecord,
-                                              axialLength: {
-                                                ...(currentMedicalRecord.axialLength || {
-                                                  od: "",
-                                                  os: "",
-                                                }),
-                                                os: sanitized,
-                                              },
-                                            });
+                                            setCurrentMedicalRecord((prev) =>
+                                              prev
+                                                ? {
+                                                    ...prev,
+                                                    axialLength: {
+                                                      ...(prev.axialLength || {
+                                                        od: "",
+                                                        os: "",
+                                                      }),
+                                                      os: sanitized,
+                                                    },
+                                                  }
+                                                : prev,
+                                            );
                                           }}
                                           onBlur={(e) => {
                                             const validated =
                                               validateAxialLengthOnBlur(
                                                 e.target.value,
                                               );
-                                            setCurrentMedicalRecord({
-                                              ...currentMedicalRecord,
-                                              axialLength: {
-                                                ...(currentMedicalRecord.axialLength || {
-                                                  od: "",
-                                                  os: "",
-                                                }),
-                                                os: validated,
-                                              },
-                                            });
+                                            setCurrentMedicalRecord((prev) =>
+                                              prev
+                                                ? {
+                                                    ...prev,
+                                                    axialLength: {
+                                                      ...(prev.axialLength || {
+                                                        od: "",
+                                                        os: "",
+                                                      }),
+                                                      os: validated,
+                                                    },
+                                                  }
+                                                : prev,
+                                            );
                                           }}
                                           className={cn(
                                             "w-full p-2 border rounded-lg text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all",
@@ -6190,14 +6695,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     checked={!!currentMedicalRecord.anteriorSegmentAo}
                                     onChange={(e) => {
                                       const isAo = e.target.checked;
-                                      const currentOd = currentMedicalRecord.anteriorSegment?.od || "";
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        anteriorSegmentAo: isAo,
-                                        anteriorSegment: {
-                                          od: currentOd,
-                                          os: isAo ? currentOd : (currentMedicalRecord.anteriorSegment?.os || ""),
-                                        }
+                                      setCurrentMedicalRecord((prev) => {
+                                        if (!prev) return prev;
+                                        const currentOd = prev.anteriorSegment?.od || "";
+                                        return {
+                                          ...prev,
+                                          anteriorSegmentAo: isAo,
+                                          anteriorSegment: {
+                                            od: currentOd,
+                                            os: isAo ? currentOd : (prev.anteriorSegment?.os || ""),
+                                          },
+                                        };
                                       });
                                     }}
                                     className="accent-amber-500 w-3.5 h-3.5 rounded"
@@ -6229,14 +6737,18 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       onChange={(e) => {
                                         const selectedVal = e.target.value;
                                         if (!selectedVal) return;
-                                        const currentVal = currentMedicalRecord.anteriorSegment?.od || "";
-                                        const newVal = currentVal ? `${currentVal}, ${selectedVal}` : selectedVal;
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          anteriorSegment: {
-                                            od: capitalizeFirstLetter(newVal),
-                                            os: capitalizeFirstLetter(newVal),
-                                          }
+                                        flushAllBufferedInputs();
+                                        setCurrentMedicalRecord((prev) => {
+                                          if (!prev) return prev;
+                                          const currentVal = prev.anteriorSegment?.od || "";
+                                          const newVal = currentVal ? `${currentVal}, ${selectedVal}` : selectedVal;
+                                          return {
+                                            ...prev,
+                                            anteriorSegment: {
+                                              od: capitalizeFirstLetter(newVal),
+                                              os: capitalizeFirstLetter(newVal),
+                                            },
+                                          };
                                         });
                                       }}
                                       className={cn(
@@ -6260,13 +6772,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       currentMedicalRecord.anteriorSegment?.od || ""
                                     }
                                     onChange={(val) => {
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        anteriorSegment: {
-                                          od: capitalizeFirstLetter(val),
-                                          os: capitalizeFirstLetter(val),
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              anteriorSegment: {
+                                                od: capitalizeFirstLetter(val),
+                                                os: capitalizeFirstLetter(val),
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     className={cn(
                                       "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-amber-500 min-h-[96px] resize-none overflow-hidden",
@@ -6295,14 +6811,18 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         onChange={(e) => {
                                           const selectedVal = e.target.value;
                                           if (!selectedVal) return;
-                                          const currentVal = currentMedicalRecord.anteriorSegment?.od || "";
-                                          const newVal = currentVal ? `${currentVal}, ${selectedVal}` : selectedVal;
-                                          setCurrentMedicalRecord({
-                                            ...currentMedicalRecord,
-                                            anteriorSegment: {
-                                              ...currentMedicalRecord.anteriorSegment,
-                                              od: capitalizeFirstLetter(newVal),
-                                            }
+                                          flushAllBufferedInputs();
+                                          setCurrentMedicalRecord((prev) => {
+                                            if (!prev) return prev;
+                                            const currentVal = prev.anteriorSegment?.od || "";
+                                            const newVal = currentVal ? `${currentVal}, ${selectedVal}` : selectedVal;
+                                            return {
+                                              ...prev,
+                                              anteriorSegment: {
+                                                ...prev.anteriorSegment,
+                                                od: capitalizeFirstLetter(newVal),
+                                              },
+                                            };
                                           });
                                         }}
                                         className={cn(
@@ -6327,13 +6847,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                           ?.od || ""
                                       }
                                       onChange={(val) => {
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          anteriorSegment: {
-                                            ...currentMedicalRecord.anteriorSegment,
-                                            od: capitalizeFirstLetter(val),
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                anteriorSegment: {
+                                                  ...prev.anteriorSegment,
+                                                  od: capitalizeFirstLetter(val),
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }}
                                       className={cn(
                                         "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-amber-500 min-h-[96px] resize-none overflow-hidden",
@@ -6360,14 +6884,18 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         onChange={(e) => {
                                           const selectedVal = e.target.value;
                                           if (!selectedVal) return;
-                                          const currentVal = currentMedicalRecord.anteriorSegment?.os || "";
-                                          const newVal = currentVal ? `${currentVal}, ${selectedVal}` : selectedVal;
-                                          setCurrentMedicalRecord({
-                                            ...currentMedicalRecord,
-                                            anteriorSegment: {
-                                              ...currentMedicalRecord.anteriorSegment,
-                                              os: capitalizeFirstLetter(newVal),
-                                            }
+                                          flushAllBufferedInputs();
+                                          setCurrentMedicalRecord((prev) => {
+                                            if (!prev) return prev;
+                                            const currentVal = prev.anteriorSegment?.os || "";
+                                            const newVal = currentVal ? `${currentVal}, ${selectedVal}` : selectedVal;
+                                            return {
+                                              ...prev,
+                                              anteriorSegment: {
+                                                ...prev.anteriorSegment,
+                                                os: capitalizeFirstLetter(newVal),
+                                              },
+                                            };
                                           });
                                         }}
                                         className={cn(
@@ -6392,13 +6920,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                           ?.os || ""
                                       }
                                       onChange={(val) => {
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          anteriorSegment: {
-                                            ...currentMedicalRecord.anteriorSegment,
-                                            os: capitalizeFirstLetter(val),
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                anteriorSegment: {
+                                                  ...prev.anteriorSegment,
+                                                  os: capitalizeFirstLetter(val),
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }}
                                       className={cn(
                                         "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-amber-500 min-h-[96px] resize-none overflow-hidden",
@@ -6438,14 +6970,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     checked={!!currentMedicalRecord.posteriorSegmentAo}
                                     onChange={(e) => {
                                       const isAo = e.target.checked;
-                                      const currentOd = currentMedicalRecord.posteriorSegment?.od || "";
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        posteriorSegmentAo: isAo,
-                                        posteriorSegment: {
-                                          od: currentOd,
-                                          os: isAo ? currentOd : (currentMedicalRecord.posteriorSegment?.os || ""),
-                                        }
+                                      setCurrentMedicalRecord((prev) => {
+                                        if (!prev) return prev;
+                                        const currentOd = prev.posteriorSegment?.od || "";
+                                        return {
+                                          ...prev,
+                                          posteriorSegmentAo: isAo,
+                                          posteriorSegment: {
+                                            od: currentOd,
+                                            os: isAo ? currentOd : (prev.posteriorSegment?.os || ""),
+                                          },
+                                        };
                                       });
                                     }}
                                     className="accent-amber-500 w-3.5 h-3.5 rounded"
@@ -6477,14 +7012,18 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       onChange={(e) => {
                                         const selectedVal = e.target.value;
                                         if (!selectedVal) return;
-                                        const currentVal = currentMedicalRecord.posteriorSegment?.od || "";
-                                        const newVal = currentVal ? `${currentVal}, ${selectedVal}` : selectedVal;
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          posteriorSegment: {
-                                            od: capitalizeFirstLetter(newVal),
-                                            os: capitalizeFirstLetter(newVal),
-                                          }
+                                        flushAllBufferedInputs();
+                                        setCurrentMedicalRecord((prev) => {
+                                          if (!prev) return prev;
+                                          const currentVal = prev.posteriorSegment?.od || "";
+                                          const newVal = currentVal ? `${currentVal}, ${selectedVal}` : selectedVal;
+                                          return {
+                                            ...prev,
+                                            posteriorSegment: {
+                                              od: capitalizeFirstLetter(newVal),
+                                              os: capitalizeFirstLetter(newVal),
+                                            },
+                                          };
                                         });
                                       }}
                                       className={cn(
@@ -6508,13 +7047,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       currentMedicalRecord.posteriorSegment?.od || ""
                                     }
                                     onChange={(val) => {
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        posteriorSegment: {
-                                          od: capitalizeFirstLetter(val),
-                                          os: capitalizeFirstLetter(val),
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              posteriorSegment: {
+                                                od: capitalizeFirstLetter(val),
+                                                os: capitalizeFirstLetter(val),
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     className={cn(
                                       "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-amber-500 min-h-[96px] resize-none overflow-hidden",
@@ -6543,14 +7086,18 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         onChange={(e) => {
                                           const selectedVal = e.target.value;
                                           if (!selectedVal) return;
-                                          const currentVal = currentMedicalRecord.posteriorSegment?.od || "";
-                                          const newVal = currentVal ? `${currentVal}, ${selectedVal}` : selectedVal;
-                                          setCurrentMedicalRecord({
-                                            ...currentMedicalRecord,
-                                            posteriorSegment: {
-                                              ...currentMedicalRecord.posteriorSegment,
-                                              od: capitalizeFirstLetter(newVal),
-                                            }
+                                          flushAllBufferedInputs();
+                                          setCurrentMedicalRecord((prev) => {
+                                            if (!prev) return prev;
+                                            const currentVal = prev.posteriorSegment?.od || "";
+                                            const newVal = currentVal ? `${currentVal}, ${selectedVal}` : selectedVal;
+                                            return {
+                                              ...prev,
+                                              posteriorSegment: {
+                                                ...prev.posteriorSegment,
+                                                od: capitalizeFirstLetter(newVal),
+                                              },
+                                            };
                                           });
                                         }}
                                         className={cn(
@@ -6575,13 +7122,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                           ?.od || ""
                                       }
                                       onChange={(val) => {
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          posteriorSegment: {
-                                            ...currentMedicalRecord.posteriorSegment,
-                                            od: capitalizeFirstLetter(val),
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                posteriorSegment: {
+                                                  ...prev.posteriorSegment,
+                                                  od: capitalizeFirstLetter(val),
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }}
                                       className={cn(
                                         "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-amber-500 min-h-[96px] resize-none overflow-hidden",
@@ -6608,14 +7159,18 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         onChange={(e) => {
                                           const selectedVal = e.target.value;
                                           if (!selectedVal) return;
-                                          const currentVal = currentMedicalRecord.posteriorSegment?.os || "";
-                                          const newVal = currentVal ? `${currentVal}, ${selectedVal}` : selectedVal;
-                                          setCurrentMedicalRecord({
-                                            ...currentMedicalRecord,
-                                            posteriorSegment: {
-                                              ...currentMedicalRecord.posteriorSegment,
-                                              os: capitalizeFirstLetter(newVal),
-                                            }
+                                          flushAllBufferedInputs();
+                                          setCurrentMedicalRecord((prev) => {
+                                            if (!prev) return prev;
+                                            const currentVal = prev.posteriorSegment?.os || "";
+                                            const newVal = currentVal ? `${currentVal}, ${selectedVal}` : selectedVal;
+                                            return {
+                                              ...prev,
+                                              posteriorSegment: {
+                                                ...prev.posteriorSegment,
+                                                os: capitalizeFirstLetter(newVal),
+                                              },
+                                            };
                                           });
                                         }}
                                         className={cn(
@@ -6640,13 +7195,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                           ?.os || ""
                                       }
                                       onChange={(val) => {
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          posteriorSegment: {
-                                            ...currentMedicalRecord.posteriorSegment,
-                                            os: capitalizeFirstLetter(val),
-                                          },
-                                        });
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                posteriorSegment: {
+                                                  ...prev.posteriorSegment,
+                                                  os: capitalizeFirstLetter(val),
+                                                },
+                                              }
+                                            : prev,
+                                        );
                                       }}
                                       className={cn(
                                         "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-amber-500 min-h-[96px] resize-none overflow-hidden",
@@ -6701,18 +7260,23 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         currentMedicalRecord.keratometry
                                           ?.od_k1 || ""
                                       }
-                                      onChange={(e) =>
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          keratometry: {
-                                            ...(currentMedicalRecord.keratometry || {
-                                              od: "",
-                                              os: "",
-                                            }),
-                                            od_k1: e.target.value,
-                                          },
-                                        })
-                                      }
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                keratometry: {
+                                                  ...(prev.keratometry || {
+                                                    od: "",
+                                                    os: "",
+                                                  }),
+                                                  od_k1: val,
+                                                },
+                                              }
+                                            : prev,
+                                        );
+                                      }}
                                       className={cn(
                                         "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-amber-500 transition-all",
                                         getKFieldStyle(currentMedicalRecord.keratometry?.od_k1 || ""),
@@ -6730,18 +7294,23 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         currentMedicalRecord.keratometry
                                           ?.od_k2 || ""
                                       }
-                                      onChange={(e) =>
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          keratometry: {
-                                            ...(currentMedicalRecord.keratometry || {
-                                              od: "",
-                                              os: "",
-                                            }),
-                                            od_k2: e.target.value,
-                                          },
-                                        })
-                                      }
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                keratometry: {
+                                                  ...(prev.keratometry || {
+                                                    od: "",
+                                                    os: "",
+                                                  }),
+                                                  od_k2: val,
+                                                },
+                                              }
+                                            : prev,
+                                        );
+                                      }}
                                       className={cn(
                                         "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-amber-500 transition-all",
                                         getKFieldStyle(currentMedicalRecord.keratometry?.od_k2 || ""),
@@ -6775,18 +7344,23 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         currentMedicalRecord.keratometry
                                           ?.os_k1 || ""
                                       }
-                                      onChange={(e) =>
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          keratometry: {
-                                            ...(currentMedicalRecord.keratometry || {
-                                              od: "",
-                                              os: "",
-                                            }),
-                                            os_k1: e.target.value,
-                                          },
-                                        })
-                                      }
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                keratometry: {
+                                                  ...(prev.keratometry || {
+                                                    od: "",
+                                                    os: "",
+                                                  }),
+                                                  os_k1: val,
+                                                },
+                                              }
+                                            : prev,
+                                        );
+                                      }}
                                       className={cn(
                                         "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-amber-500 transition-all",
                                         getKFieldStyle(currentMedicalRecord.keratometry?.os_k1 || ""),
@@ -6804,18 +7378,23 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                         currentMedicalRecord.keratometry
                                           ?.os_k2 || ""
                                       }
-                                      onChange={(e) =>
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          keratometry: {
-                                            ...(currentMedicalRecord.keratometry || {
-                                              od: "",
-                                              os: "",
-                                            }),
-                                            os_k2: e.target.value,
-                                          },
-                                        })
-                                      }
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                keratometry: {
+                                                  ...(prev.keratometry || {
+                                                    od: "",
+                                                    os: "",
+                                                  }),
+                                                  os_k2: val,
+                                                },
+                                              }
+                                            : prev,
+                                        );
+                                      }}
                                       className={cn(
                                         "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-amber-500 transition-all",
                                         getKFieldStyle(currentMedicalRecord.keratometry?.os_k2 || ""),
@@ -6873,26 +7452,34 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       const rawVal = e.target.value;
                                       const finalVal =
                                         sanitizeAxialLengthInput(rawVal);
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        axialLength: {
-                                          ...currentMedicalRecord.axialLength,
-                                          od: finalVal,
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              axialLength: {
+                                                ...prev.axialLength,
+                                                od: finalVal,
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     onBlur={(e) => {
                                       const validated =
                                         validateAxialLengthOnBlur(
                                           e.target.value,
                                         );
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        axialLength: {
-                                          ...currentMedicalRecord.axialLength,
-                                          od: validated,
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              axialLength: {
+                                                ...prev.axialLength,
+                                                od: validated,
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     className={cn(
                                       "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-amber-500",
@@ -6923,26 +7510,34 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       const rawVal = e.target.value;
                                       const finalVal =
                                         sanitizeAxialLengthInput(rawVal);
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        axialLength: {
-                                          ...currentMedicalRecord.axialLength,
-                                          os: finalVal,
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              axialLength: {
+                                                ...prev.axialLength,
+                                                os: finalVal,
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     onBlur={(e) => {
                                       const validated =
                                         validateAxialLengthOnBlur(
                                           e.target.value,
                                         );
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        axialLength: {
-                                          ...currentMedicalRecord.axialLength,
-                                          os: validated,
-                                        },
-                                      });
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              axialLength: {
+                                                ...prev.axialLength,
+                                                os: validated,
+                                              },
+                                            }
+                                          : prev,
+                                      );
                                     }}
                                     className={cn(
                                       "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-amber-500",
@@ -6991,12 +7586,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                   </label>
                                   <select
                                     value={currentMedicalRecord.contrastSensitivity || ""}
-                                    onChange={(e) =>
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        contrastSensitivity: e.target.value as any,
-                                      })
-                                    }
+                                    onChange={(e) => {
+                                      const val = e.target.value as any;
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              contrastSensitivity: val,
+                                            }
+                                          : prev,
+                                      );
+                                    }}
                                     className={cn(
                                       "w-full p-2 border rounded-lg text-xs font-semibold outline-none focus:ring-2 focus:ring-amber-500 transition-all",
                                       darkMode
@@ -7022,12 +7622,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                   </label>
                                   <select
                                     value={currentMedicalRecord.colorVision || ""}
-                                    onChange={(e) =>
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        colorVision: e.target.value as any,
-                                      })
-                                    }
+                                    onChange={(e) => {
+                                      const val = e.target.value as any;
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              colorVision: val,
+                                            }
+                                          : prev,
+                                      );
+                                    }}
                                     className={cn(
                                       "w-full p-2 border rounded-lg text-xs font-semibold outline-none focus:ring-2 focus:ring-amber-500 transition-all",
                                       darkMode
@@ -7056,12 +7661,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                   </label>
                                   <select
                                     value={currentMedicalRecord.binocularVision || ""}
-                                    onChange={(e) =>
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        binocularVision: e.target.value as any,
-                                      })
-                                    }
+                                    onChange={(e) => {
+                                      const val = e.target.value as any;
+                                      setCurrentMedicalRecord((prev) =>
+                                        prev
+                                          ? {
+                                              ...prev,
+                                              binocularVision: val,
+                                            }
+                                          : prev,
+                                      );
+                                    }}
                                     className={cn(
                                       "w-full p-2 border rounded-lg text-xs font-semibold outline-none focus:ring-2 focus:ring-amber-500 transition-all",
                                       darkMode
@@ -7204,13 +7814,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                             onChange={(e) => {
                               if (e.target.value) {
                                 const diag = e.target.value;
-                                const original = currentMedicalRecord.diagnostic || "";
-                                const updated = original.trim()
-                                  ? original.trim() + "\n" + diag
-                                  : diag;
-                                setCurrentMedicalRecord({
-                                  ...currentMedicalRecord,
-                                  diagnostic: updated,
+                                flushAllBufferedInputs();
+                                setCurrentMedicalRecord((prev) => {
+                                  if (!prev) return prev;
+                                  const original = prev.diagnostic || "";
+                                  const updated = original.trim()
+                                    ? original.trim() + "\n" + diag
+                                    : diag;
+                                  return {
+                                    ...prev,
+                                    diagnostic: updated,
+                                  };
                                 });
                                 e.target.value = ""; // Reset select
                               }
@@ -7234,10 +7848,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                         <BufferedTextarea
                           value={currentMedicalRecord.diagnostic || ""}
                           onChange={(val) =>
-                            setCurrentMedicalRecord({
-                              ...currentMedicalRecord,
-                              diagnostic: val,
-                            })
+                            setCurrentMedicalRecord((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    diagnostic: val,
+                                  }
+                                : prev,
+                            )
                           }
                           className={cn(
                             "w-full p-4 border rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none h-32 resize-none transition-all font-bold",
@@ -7267,29 +7885,33 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               onChange={(e) => {
                                 const val = e.target.value;
                                 if (val) {
-                                  const currentText = currentMedicalRecord.recomandari || "";
-                                  const cleanItem = `Reevaluare la ${val}`;
-                                  const original = currentText.trim();
-                                  let newText = "";
-                                  if (!original) {
-                                    newText = "1. " + cleanItem;
-                                  } else {
-                                    const linesList = original.split("\n");
-                                    let maxNum = 0;
-                                    linesList.forEach(line => {
-                                      const match = line.trim().match(/^(\d+)[\.\)]/);
-                                      if (match) {
-                                        const n = parseInt(match[1], 10);
-                                        if (n > maxNum) maxNum = n;
-                                      }
-                                    });
-                                    const nextIndex = maxNum > 0 ? maxNum + 1 : linesList.length + 1;
-                                    newText = original + "\n" + `${nextIndex}. ` + cleanItem;
-                                  }
+                                  flushAllBufferedInputs();
+                                  setCurrentMedicalRecord((prev) => {
+                                    if (!prev) return prev;
+                                    const currentText = prev.recomandari || "";
+                                    const cleanItem = `Reevaluare la ${val}`;
+                                    const original = currentText.trim();
+                                    let newText = "";
+                                    if (!original) {
+                                      newText = "1. " + cleanItem;
+                                    } else {
+                                      const linesList = original.split("\n");
+                                      let maxNum = 0;
+                                      linesList.forEach(line => {
+                                        const match = line.trim().match(/^(\d+)[\.\)]/);
+                                        if (match) {
+                                          const n = parseInt(match[1], 10);
+                                          if (n > maxNum) maxNum = n;
+                                        }
+                                      });
+                                      const nextIndex = maxNum > 0 ? maxNum + 1 : linesList.length + 1;
+                                      newText = original + "\n" + `${nextIndex}. ` + cleanItem;
+                                    }
 
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    recomandari: newText,
+                                    return {
+                                      ...prev,
+                                      recomandari: newText,
+                                    };
                                   });
                                   e.target.value = "";
                                 }
@@ -7315,29 +7937,33 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               onChange={(e) => {
                                 const val = e.target.value;
                                 if (val) {
-                                  const currentText = currentMedicalRecord.recomandari || "";
-                                  const cleanItem = val.trim();
-                                  const original = currentText.trim();
-                                  let newText = "";
-                                  if (!original) {
-                                    newText = "1. " + cleanItem;
-                                  } else {
-                                    const linesList = original.split("\n");
-                                    let maxNum = 0;
-                                    linesList.forEach(line => {
-                                      const match = line.trim().match(/^(\d+)[\.\)]/);
-                                      if (match) {
-                                        const n = parseInt(match[1], 10);
-                                        if (n > maxNum) maxNum = n;
-                                      }
-                                    });
-                                    const nextIndex = maxNum > 0 ? maxNum + 1 : linesList.length + 1;
-                                    newText = original + "\n" + `${nextIndex}. ` + cleanItem;
-                                  }
+                                  flushAllBufferedInputs();
+                                  setCurrentMedicalRecord((prev) => {
+                                    if (!prev) return prev;
+                                    const currentText = prev.recomandari || "";
+                                    const cleanItem = val.trim();
+                                    const original = currentText.trim();
+                                    let newText = "";
+                                    if (!original) {
+                                      newText = "1. " + cleanItem;
+                                    } else {
+                                      const linesList = original.split("\n");
+                                      let maxNum = 0;
+                                      linesList.forEach(line => {
+                                        const match = line.trim().match(/^(\d+)[\.\)]/);
+                                        if (match) {
+                                          const n = parseInt(match[1], 10);
+                                          if (n > maxNum) maxNum = n;
+                                        }
+                                      });
+                                      const nextIndex = maxNum > 0 ? maxNum + 1 : linesList.length + 1;
+                                      newText = original + "\n" + `${nextIndex}. ` + cleanItem;
+                                    }
 
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    recomandari: newText,
+                                    return {
+                                      ...prev,
+                                      recomandari: newText,
+                                    };
                                   });
                                   e.target.value = "";
                                 }
@@ -7374,11 +8000,15 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 lensHeliomat: "",
                               };
                             }
-                            setCurrentMedicalRecord({
-                              ...currentMedicalRecord,
-                              ...extraObj,
-                              recomandari: val,
-                            });
+                            setCurrentMedicalRecord((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    ...extraObj,
+                                    recomandari: val,
+                                  }
+                                : prev,
+                            );
                           }}
                           className={cn(
                             "w-full p-4 border rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none h-24 resize-none transition-all font-black text-[16.5px]",
@@ -7512,32 +8142,36 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       ]
                                     }
                                     onChange={(e) => {
-                                      const exams =
-                                        currentMedicalRecord.examinations || {
-                                          ...DEFAULT_EXAMINATIONS,
-                                        };
-                                      let newInterpretation =
-                                        currentMedicalRecord.examinationInterpretation ||
-                                        "";
-                                      if (
-                                        e.target.checked &&
-                                        exam.id !== "control"
-                                      ) {
-                                        const text = `Interpretare ${exam.label}`;
-                                        if (!newInterpretation.includes(text)) {
-                                          newInterpretation = newInterpretation
-                                            ? `${newInterpretation}\n${text}`
-                                            : text;
+                                      const isChecked = e.target.checked;
+                                      flushAllBufferedInputs();
+                                      setCurrentMedicalRecord((prev) => {
+                                        if (!prev) return prev;
+                                        const exams =
+                                          prev.examinations || {
+                                            ...DEFAULT_EXAMINATIONS,
+                                          };
+                                        let newInterpretation =
+                                          prev.examinationInterpretation || "";
+                                        if (
+                                          isChecked &&
+                                          exam.id !== "control"
+                                        ) {
+                                          const text = `Interpretare ${exam.label}`;
+                                          if (!newInterpretation.includes(text)) {
+                                            newInterpretation = newInterpretation
+                                              ? `${newInterpretation}\n${text}`
+                                              : text;
+                                          }
                                         }
-                                      }
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        examinations: {
-                                          ...exams,
-                                          [exam.id]: e.target.checked,
-                                        },
-                                        examinationInterpretation:
-                                          newInterpretation,
+                                        return {
+                                          ...prev,
+                                          examinations: {
+                                            ...exams,
+                                            [exam.id]: isChecked,
+                                          },
+                                          examinationInterpretation:
+                                            newInterpretation,
+                                        };
                                       });
                                     }}
                                     className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
@@ -7551,32 +8185,36 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       ] as string
                                     }
                                     onChange={(e) => {
-                                      const exams =
-                                        currentMedicalRecord.examinations || {
-                                          ...DEFAULT_EXAMINATIONS,
-                                        };
-                                      let newInterpretation =
-                                        currentMedicalRecord.examinationInterpretation ||
-                                        "";
-                                      if (
-                                        e.target.value &&
-                                        exam.id !== "control"
-                                      ) {
-                                        const text = `Interpretare ${exam.label}`;
-                                        if (!newInterpretation.includes(text)) {
-                                          newInterpretation = newInterpretation
-                                            ? `${newInterpretation}\n${text}`
-                                            : text;
+                                      const val = e.target.value;
+                                      flushAllBufferedInputs();
+                                      setCurrentMedicalRecord((prev) => {
+                                        if (!prev) return prev;
+                                        const exams =
+                                          prev.examinations || {
+                                            ...DEFAULT_EXAMINATIONS,
+                                          };
+                                        let newInterpretation =
+                                          prev.examinationInterpretation || "";
+                                        if (
+                                          val &&
+                                          exam.id !== "control"
+                                        ) {
+                                          const text = `Interpretare ${exam.label}`;
+                                          if (!newInterpretation.includes(text)) {
+                                            newInterpretation = newInterpretation
+                                              ? `${newInterpretation}\n${text}`
+                                              : text;
+                                          }
                                         }
-                                      }
-                                      setCurrentMedicalRecord({
-                                        ...currentMedicalRecord,
-                                        examinations: {
-                                          ...exams,
-                                          [exam.id]: e.target.value,
-                                        },
-                                        examinationInterpretation:
-                                          newInterpretation,
+                                        return {
+                                          ...prev,
+                                          examinations: {
+                                            ...exams,
+                                            [exam.id]: val,
+                                          },
+                                          examinationInterpretation:
+                                            newInterpretation,
+                                        };
                                       });
                                     }}
                                     className={cn(
@@ -7628,10 +8266,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                   ""
                                 }
                                 onChange={(val) =>
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    examinationInterpretation: val,
-                                  })
+                                  setCurrentMedicalRecord((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          examinationInterpretation: val,
+                                        }
+                                      : prev,
+                                  )
                                 }
                                 placeholder="Introduceți interpretarea examinărilor..."
                                 className={cn(
@@ -7743,8 +8385,8 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                             <div className="flex justify-between items-center w-full min-w-0">
                                               <div className="flex items-center gap-1.5 truncate">
                                                 <span className="text-[11px] font-black uppercase tracking-tighter truncate">
-                                                  {format(
-                                                    new Date(order.createdAt),
+                                                  {safeFormatDate(
+                                                    order.createdAt,
                                                     "dd.MM.yy",
                                                   )}
                                                 </span>
@@ -7773,7 +8415,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                                       : "text-slate-700",
                                                 )}
                                               >
-                                                {order.orderNumber.replace(
+                                                {(order.orderNumber || "-").replace(
                                                   "CMD-",
                                                   "",
                                                 )}
@@ -7786,11 +8428,11 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                                     : "text-emerald-600",
                                                 )}
                                               >
-                                                A: {order.advance.toFixed(0)}
+                                                A: {(order.advance || 0).toFixed(0)}
                                               </span>
                                             </div>
                                             <div className="flex justify-between items-center w-full opacity-80">
-                                              {order.balance > 0 ? (
+                                              {(order.balance || 0) > 0 ? (
                                                 <span
                                                   className={cn(
                                                     "text-[10px] font-bold",
@@ -7799,7 +8441,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                                       : "text-rose-500",
                                                   )}
                                                 >
-                                                  R: {order.balance.toFixed(0)}
+                                                  R: {(order.balance || 0).toFixed(0)}
                                                 </span>
                                               ) : (
                                                 <span
@@ -7822,14 +8464,10 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                                 )}
                                               >
                                                 L:{" "}
-                                                {order.deliveryDate
-                                                  ? format(
-                                                      new Date(
-                                                        order.deliveryDate,
-                                                      ),
-                                                      "dd.MM",
-                                                    )
-                                                  : "-"}
+                                                {safeFormatDate(
+                                                  order.deliveryDate,
+                                                  "dd.MM",
+                                                )}
                                               </span>
                                             </div>
                                           </button>
@@ -7854,7 +8492,10 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                         <Stethoscope className="w-4 h-4" />
                         Tratament Complementar
                         <button
-                          onClick={printTreatment}
+                          onClick={() => {
+                            flushAllBufferedInputs();
+                            printTreatment();
+                          }}
                           className="ml-auto flex items-center gap-1 px-2 py-1 text-[10px] font-black bg-emerald-50 border border-emerald-100 dark:bg-emerald-950/30 dark:border-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-lg hover:bg-emerald-100 transition-all uppercase tracking-widest shadow-sm"
                           title="Printează schema de tratament"
                         >
@@ -7876,39 +8517,42 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 const protocolItems =
                                   treatmentProtocolsState[protocolName];
                                 if (protocolItems) {
-                                  let updatedTreatment =
-                                    currentMedicalRecord.treatment || "";
+                                  flushAllBufferedInputs();
+                                  setCurrentMedicalRecord((prev) => {
+                                    if (!prev) return prev;
+                                    let updatedTreatment = prev.treatment || "";
 
-                                  if (
-                                    !updatedTreatment.includes(
-                                      `Diagnostic: ${protocolName}`,
-                                    )
-                                  ) {
-                                    updatedTreatment =
-                                      `Diagnostic: ${protocolName}\n` +
-                                      updatedTreatment;
-                                  }
-
-                                  const useNumbering =
-                                    protocolName !== "Tratament post laser PCO";
-                                  protocolItems.forEach((item) => {
-                                    if (useNumbering) {
-                                      updatedTreatment = appendTreatment(
-                                        updatedTreatment,
-                                        item,
-                                      );
-                                    } else {
+                                    if (
+                                      !updatedTreatment.includes(
+                                        `Diagnostic: ${protocolName}`,
+                                      )
+                                    ) {
                                       updatedTreatment =
-                                        updatedTreatment.trim() +
-                                        (updatedTreatment ? "\n" : "") +
-                                        item;
+                                        `Diagnostic: ${protocolName}\n` +
+                                        updatedTreatment;
                                     }
-                                  });
 
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    diagnostic: protocolName,
-                                    treatment: updatedTreatment,
+                                    const useNumbering =
+                                      protocolName !== "Tratament post laser PCO";
+                                    protocolItems.forEach((item) => {
+                                      if (useNumbering) {
+                                        updatedTreatment = appendTreatment(
+                                          updatedTreatment,
+                                          item,
+                                        );
+                                      } else {
+                                        updatedTreatment =
+                                          updatedTreatment.trim() +
+                                          (updatedTreatment ? "\n" : "") +
+                                          item;
+                                      }
+                                    });
+
+                                    return {
+                                      ...prev,
+                                      diagnostic: protocolName,
+                                      treatment: updatedTreatment,
+                                    };
                                   });
                                 }
                                 e.target.value = ""; // Reset select
@@ -7973,13 +8617,18 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                             textToAdd = `${selectedOption.name} (${selectedOption.full})`;
                                           }
                                         }
-                                        setCurrentMedicalRecord({
-                                          ...currentMedicalRecord,
-                                          treatment: appendTreatment(
-                                            currentMedicalRecord.treatment,
-                                            textToAdd,
-                                          ),
-                                        });
+                                        flushAllBufferedInputs();
+                                        setCurrentMedicalRecord((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                treatment: appendTreatment(
+                                                  prev.treatment,
+                                                  textToAdd,
+                                                ),
+                                              }
+                                            : prev,
+                                        );
                                       }
                                       e.target.value = ""; // Reset select
                                     }
@@ -8013,10 +8662,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                       <BufferedTextarea
                         value={currentMedicalRecord.treatment}
                         onChange={(val) => {
-                          setCurrentMedicalRecord({
-                            ...currentMedicalRecord,
-                            treatment: val,
-                          });
+                          setCurrentMedicalRecord((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  treatment: val,
+                                }
+                              : prev,
+                          );
                         }}
                         processValue={processTreatmentValue}
                         className={cn(
@@ -8070,11 +8723,15 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 const newCnp = e.target.value;
                                 const detectedSex = getSexFromCNP(newCnp);
                                 const updatedSex = detectedSex || currentMedicalRecord.patientSex;
-                                setCurrentMedicalRecord({
-                                  ...currentMedicalRecord,
-                                  patientCnp: newCnp,
-                                  patientSex: updatedSex,
-                                });
+                                setCurrentMedicalRecord((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        patientCnp: newCnp,
+                                        patientSex: detectedSex || prev.patientSex,
+                                      }
+                                    : prev,
+                                );
                                 if (newCnp.trim().length === 13) {
                                   syncPatientUniversal(
                                     {
@@ -8123,12 +8780,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               <input
                                 type="text"
                                 value={currentMedicalRecord.patientSeries || ""}
-                                onChange={(e) =>
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    patientSeries: e.target.value,
-                                  })
-                                }
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCurrentMedicalRecord((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          patientSeries: val,
+                                        }
+                                      : prev,
+                                  );
+                                }}
                                 className={cn(
                                   "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500",
                                   darkMode
@@ -8144,12 +8806,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               <input
                                 type="text"
                                 value={currentMedicalRecord.patientNumber || ""}
-                                onChange={(e) =>
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    patientNumber: e.target.value,
-                                  })
-                                }
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCurrentMedicalRecord((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          patientNumber: val,
+                                        }
+                                      : prev,
+                                  );
+                                }}
                                 className={cn(
                                   "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500",
                                   darkMode
@@ -8166,12 +8833,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                             <input
                               type="text"
                               value={currentMedicalRecord.patientJudet || ""}
-                              onChange={(e) =>
-                                setCurrentMedicalRecord({
-                                  ...currentMedicalRecord,
-                                  patientJudet: e.target.value,
-                                })
-                              }
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setCurrentMedicalRecord((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        patientJudet: val,
+                                      }
+                                    : prev,
+                                );
+                              }}
                               className={cn(
                                 "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500",
                                 darkMode
@@ -8189,12 +8861,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               value={
                                 currentMedicalRecord.patientLocalitate || ""
                               }
-                              onChange={(e) =>
-                                setCurrentMedicalRecord({
-                                  ...currentMedicalRecord,
-                                  patientLocalitate: e.target.value,
-                                })
-                              }
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setCurrentMedicalRecord((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        patientLocalitate: val,
+                                      }
+                                    : prev,
+                                );
+                              }}
                               className={cn(
                                 "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500",
                                 darkMode
@@ -8214,12 +8891,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                   value={
                                     currentMedicalRecord.patientStrada || ""
                                   }
-                                  onChange={(e) =>
-                                    setCurrentMedicalRecord({
-                                      ...currentMedicalRecord,
-                                      patientStrada: e.target.value,
-                                    })
-                                  }
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setCurrentMedicalRecord((prev) =>
+                                      prev
+                                        ? {
+                                            ...prev,
+                                            patientStrada: val,
+                                          }
+                                        : prev,
+                                    );
+                                  }}
                                   className={cn(
                                     "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500",
                                     darkMode
@@ -8236,12 +8918,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                     currentMedicalRecord.patientStreetNumber ||
                                     ""
                                   }
-                                  onChange={(e) =>
-                                    setCurrentMedicalRecord({
-                                      ...currentMedicalRecord,
-                                      patientStreetNumber: e.target.value,
-                                    })
-                                  }
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setCurrentMedicalRecord((prev) =>
+                                      prev
+                                        ? {
+                                            ...prev,
+                                            patientStreetNumber: val,
+                                          }
+                                        : prev,
+                                    );
+                                  }}
                                   className={cn(
                                     "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500",
                                     darkMode
@@ -8260,12 +8947,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               <input
                                 type="text"
                                 value={currentMedicalRecord.patientBloc || ""}
-                                onChange={(e) =>
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    patientBloc: e.target.value,
-                                  })
-                                }
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCurrentMedicalRecord((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          patientBloc: val,
+                                        }
+                                      : prev,
+                                  );
+                                }}
                                 className={cn(
                                   "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500",
                                   darkMode
@@ -8281,12 +8973,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               <input
                                 type="text"
                                 value={currentMedicalRecord.patientScara || ""}
-                                onChange={(e) =>
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    patientScara: e.target.value,
-                                  })
-                                }
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCurrentMedicalRecord((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          patientScara: val,
+                                        }
+                                      : prev,
+                                  );
+                                }}
                                 className={cn(
                                   "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500",
                                   darkMode
@@ -8304,12 +9001,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 value={
                                   currentMedicalRecord.patientApartament || ""
                                 }
-                                onChange={(e) =>
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    patientApartament: e.target.value,
-                                  })
-                                }
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCurrentMedicalRecord((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          patientApartament: val,
+                                        }
+                                      : prev,
+                                  );
+                                }}
                                 className={cn(
                                   "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500",
                                   darkMode
@@ -8327,12 +9029,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               <input
                                 type="text"
                                 value={currentMedicalRecord.occupation || ""}
-                                onChange={(e) =>
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    occupation: e.target.value,
-                                  })
-                                }
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCurrentMedicalRecord((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          occupation: val,
+                                        }
+                                      : prev,
+                                  );
+                                }}
                                 className={cn(
                                   "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500",
                                   darkMode
@@ -8348,12 +9055,17 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               <input
                                 type="text"
                                 value={currentMedicalRecord.institution || ""}
-                                onChange={(e) =>
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    institution: e.target.value,
-                                  })
-                                }
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCurrentMedicalRecord((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          institution: val,
+                                        }
+                                      : prev,
+                                  );
+                                }}
                                 className={cn(
                                   "w-full p-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500",
                                   darkMode
@@ -8369,10 +9081,14 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               <BufferedTextarea
                                 value={currentMedicalRecord.scutire || ""}
                                 onChange={(val) =>
-                                  setCurrentMedicalRecord({
-                                    ...currentMedicalRecord,
-                                    scutire: val,
-                                  })
+                                  setCurrentMedicalRecord((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          scutire: val,
+                                        }
+                                      : prev,
+                                  )
                                 }
                                 placeholder="Detalii scutire medicală..."
                                 className={cn(
@@ -8407,62 +9123,8 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                   type="button"
                   id="save-medical-record-btn"
                   onClick={async () => {
-                    const checkDiopterVal = (v: any) => {
-                      if (v === undefined || v === null) return false;
-                      const s = String(v).trim();
-                      return s !== "" && s !== "-" && s !== "+";
-                    };
-
-                    const hasDiopters = !!(
-                      checkDiopterVal(currentMedicalRecord.od?.sph) ||
-                      checkDiopterVal(currentMedicalRecord.od?.cyl) ||
-                      checkDiopterVal(currentMedicalRecord.od?.axis) ||
-                      checkDiopterVal(currentMedicalRecord.od?.add) ||
-                      checkDiopterVal(currentMedicalRecord.od?.prism) ||
-                      checkDiopterVal(currentMedicalRecord.os?.sph) ||
-                      checkDiopterVal(currentMedicalRecord.os?.cyl) ||
-                      checkDiopterVal(currentMedicalRecord.os?.axis) ||
-                      checkDiopterVal(currentMedicalRecord.os?.add) ||
-                      checkDiopterVal(currentMedicalRecord.os?.prism) ||
-                      checkDiopterVal(currentMedicalRecord.od?.near_sph) ||
-                      checkDiopterVal(currentMedicalRecord.od?.near_cyl) ||
-                      checkDiopterVal(currentMedicalRecord.od?.near_axis) ||
-                      checkDiopterVal(currentMedicalRecord.os?.near_sph) ||
-                      checkDiopterVal(currentMedicalRecord.os?.near_cyl) ||
-                      checkDiopterVal(currentMedicalRecord.os?.near_axis) ||
-                      checkDiopterVal(currentMedicalRecord.od?.intermediate_sph) ||
-                      checkDiopterVal(currentMedicalRecord.od?.intermediate_cyl) ||
-                      checkDiopterVal(currentMedicalRecord.od?.intermediate_axis) ||
-                      checkDiopterVal(currentMedicalRecord.os?.intermediate_sph) ||
-                      checkDiopterVal(currentMedicalRecord.os?.intermediate_cyl) ||
-                      checkDiopterVal(currentMedicalRecord.os?.intermediate_axis)
-                    );
-
-                    const checkDpVal = (v: any) => {
-                      if (v === undefined || v === null) return false;
-                      const s = String(v).trim();
-                      return s !== "" && s !== "-" && s !== "0";
-                    };
-
-                    const hasDp = !!(
-                      checkDpVal(currentMedicalRecord.dp) ||
-                      checkDpVal(currentMedicalRecord.dp_od) ||
-                      checkDpVal(currentMedicalRecord.dp_os) ||
-                      checkDpVal(currentMedicalRecord.dp_aproape) ||
-                      checkDpVal(currentMedicalRecord.dp_aproape_od) ||
-                      checkDpVal(currentMedicalRecord.dp_aproape_os) ||
-                      checkDpVal(currentMedicalRecord.intermediate_dp) ||
-                      checkDpVal(currentMedicalRecord.intermediate_dp_od) ||
-                      checkDpVal(currentMedicalRecord.intermediate_dp_os) ||
-                      checkDpVal(currentMedicalRecord.od?.pd) ||
-                      checkDpVal(currentMedicalRecord.os?.pd)
-                    );
-
-                    if (hasDiopters && !hasDp) {
-                      setErrorMessage("Atenție: Au fost introduse dioptrii pe fișă (la distanță sau aproape), dar distanța interpupilară (DP) nu a fost completată! Vă rugăm să introduceți DP pentru a putea salva fișa.");
-                      return;
-                    }
-
+                    flushAllBufferedInputs();
+                    setBookingError?.(null);
                     await saveMedicalRecord(true);
                   }}
                   disabled={loading}
@@ -8510,6 +9172,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           {/* 1. Raport Medical - Emerald */}
                           <button
                             onClick={() => {
+                              flushAllBufferedInputs();
                               openDocumentModal("raport");
                               setShowDocDropdown(false);
                             }}
@@ -8527,6 +9190,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           {/* 2. Adeverință Medicală - Indigo */}
                           <button
                             onClick={() => {
+                              flushAllBufferedInputs();
                               openDocumentModal("adeverinta");
                               setShowDocDropdown(false);
                             }}
@@ -8544,6 +9208,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           {/* 3. Referat Medical - Blue */}
                           <button
                             onClick={() => {
+                              flushAllBufferedInputs();
                               openDocumentModal("referat");
                               setShowDocDropdown(false);
                             }}
@@ -8561,6 +9226,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           {/* 4. Certificat medical A5 - Amber */}
                           <button
                             onClick={() => {
+                              flushAllBufferedInputs();
                               openDocumentModal("certificat");
                               setShowDocDropdown(false);
                             }}
@@ -8578,6 +9244,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                           {/* 5. Examen Expertiză Medicală - Rose */}
                           <button
                             onClick={() => {
+                              flushAllBufferedInputs();
                               openDocumentModal("expertiza");
                               setShowDocDropdown(false);
                             }}
@@ -8603,80 +9270,27 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                       if (isSavingAndPrinting || loading) return;
                       setIsSavingAndPrinting(true);
                       try {
-                      const checkDiopterVal = (v: any) => {
-                        if (v === undefined || v === null) return false;
-                        const s = String(v).trim();
-                        return s !== "" && s !== "-" && s !== "+";
-                      };
+                        flushAllBufferedInputs();
+                        setBookingError?.(null);
 
-                      const hasDiopters = !!(
-                        checkDiopterVal(currentMedicalRecord.od?.sph) ||
-                        checkDiopterVal(currentMedicalRecord.od?.cyl) ||
-                        checkDiopterVal(currentMedicalRecord.od?.axis) ||
-                        checkDiopterVal(currentMedicalRecord.od?.add) ||
-                        checkDiopterVal(currentMedicalRecord.od?.prism) ||
-                        checkDiopterVal(currentMedicalRecord.os?.sph) ||
-                        checkDiopterVal(currentMedicalRecord.os?.cyl) ||
-                        checkDiopterVal(currentMedicalRecord.os?.axis) ||
-                        checkDiopterVal(currentMedicalRecord.os?.add) ||
-                        checkDiopterVal(currentMedicalRecord.os?.prism) ||
-                        checkDiopterVal(currentMedicalRecord.od?.near_sph) ||
-                        checkDiopterVal(currentMedicalRecord.od?.near_cyl) ||
-                        checkDiopterVal(currentMedicalRecord.od?.near_axis) ||
-                        checkDiopterVal(currentMedicalRecord.os?.near_sph) ||
-                        checkDiopterVal(currentMedicalRecord.os?.near_cyl) ||
-                        checkDiopterVal(currentMedicalRecord.os?.near_axis) ||
-                        checkDiopterVal(currentMedicalRecord.od?.intermediate_sph) ||
-                        checkDiopterVal(currentMedicalRecord.od?.intermediate_cyl) ||
-                        checkDiopterVal(currentMedicalRecord.od?.intermediate_axis) ||
-                        checkDiopterVal(currentMedicalRecord.os?.intermediate_sph) ||
-                        checkDiopterVal(currentMedicalRecord.os?.intermediate_cyl) ||
-                        checkDiopterVal(currentMedicalRecord.os?.intermediate_axis)
-                      );
+                        // 1. Validează și salvează fișa mai întâi cu datele proaspete
+                        const success = await saveMedicalRecord(true);
+                        if (!success) {
+                          return;
+                        }
 
-                      const checkDpVal = (v: any) => {
-                        if (v === undefined || v === null) return false;
-                        const s = String(v).trim();
-                        return s !== "" && s !== "-" && s !== "0";
-                      };
+                        // 2. Printează rețeta doar după ce validarea și salvarea au reușit
+                        try {
+                          printPrescription();
+                        } catch (pErr) {
+                          console.error("Print prescription error:", pErr);
+                        }
 
-                      const hasDp = !!(
-                        checkDpVal(currentMedicalRecord.dp) ||
-                        checkDpVal(currentMedicalRecord.dp_od) ||
-                        checkDpVal(currentMedicalRecord.dp_os) ||
-                        checkDpVal(currentMedicalRecord.dp_aproape) ||
-                        checkDpVal(currentMedicalRecord.dp_aproape_od) ||
-                        checkDpVal(currentMedicalRecord.dp_aproape_os) ||
-                        checkDpVal(currentMedicalRecord.intermediate_dp) ||
-                        checkDpVal(currentMedicalRecord.intermediate_dp_od) ||
-                        checkDpVal(currentMedicalRecord.intermediate_dp_os) ||
-                        checkDpVal(currentMedicalRecord.od?.pd) ||
-                        checkDpVal(currentMedicalRecord.os?.pd)
-                      );
-
-                      if (hasDiopters && !hasDp) {
-                        setErrorMessage("Atenție: Au fost introduse dioptrii pe fișă (la distanță sau aproape), dar distanța interpupilară (DP) nu a fost completată! Vă rugăm să introduceți DP pentru a putea printa fișa.");
-                        return;
+                        setSuccessMessage("Fișa a fost salvată, trimisă la tipărire și închisă cu succes!");
+                      } finally {
+                        setIsSavingAndPrinting(false);
                       }
-
-                      // 1. Trimite comanda de tipărire imediat (în cadrul acțiunii de click a utilizatorului)
-                      try {
-                        printPrescription(currentMedicalRecord);
-                      } catch (pErr) {
-                        console.error("Print prescription error:", pErr);
-                      }
-
-                      // 2. Salvează fișa și sincronizează instantaneu cu baza de date
-                      const success = await saveMedicalRecord(true);
-                      if (!success) {
-                        return;
-                      }
-
-                      setSuccessMessage("Fișa a fost salvată, trimisă la tipărire și închisă cu succes!");
-                    } finally {
-                      setIsSavingAndPrinting(false);
-                    }
-                  }}
+                    }}
                   disabled={loading || isSavingAndPrinting}
                   className="flex-1 px-6 py-4 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold rounded-xl transition-all shadow-lg shadow-emerald-900/20 disabled:opacity-50 flex items-center justify-center gap-2 text-center cursor-pointer"
                 >

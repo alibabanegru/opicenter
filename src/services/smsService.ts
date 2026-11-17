@@ -151,7 +151,14 @@ export async function checkSmsGateStatus(): Promise<SmsGateStatusResponse> {
         "Content-Type": "application/json",
       },
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => null);
+    if (!data) {
+      return {
+        success: false,
+        connected: false,
+        error: `Răspuns invalid de la server (status ${res.status}).`,
+      };
+    }
     return data;
   } catch (err: any) {
     return {
@@ -175,11 +182,11 @@ export async function sendSmsViaGateway(params: SendSmsParams): Promise<SendSmsR
       body: JSON.stringify(params),
     });
 
-    const data = await res.json();
-    if (!res.ok || !data.success) {
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.success) {
       return {
         success: false,
-        error: data.error || `Eroare server (status ${res.status})`,
+        error: data?.error || `Eroare server (status ${res.status})`,
         result: data,
       };
     }

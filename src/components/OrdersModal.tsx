@@ -48,6 +48,8 @@ import {
   UserProfile,
   matchPatientName,
   removeUndefined,
+  safeParseDate,
+  safeFormatDate,
 } from "../appConstants";
 import {
   cleanWhatsAppPhone,
@@ -227,6 +229,9 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
 
   const [selectedSmsOrder, setSelectedSmsOrder] = useState<any | null>(null);
   const [gatewayDevice, setGatewayDevice] = useState<SmsGateDevice | null>(null);
+  const [whatsAppPhonePromptOrder, setWhatsAppPhonePromptOrder] = useState<any | null>(null);
+  const [whatsAppPhoneInput, setWhatsAppPhoneInput] = useState("");
+  const [whatsAppPhoneError, setWhatsAppPhoneError] = useState<string | null>(null);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -244,35 +249,22 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
     setSelectedSmsOrder(order);
   };
 
-  const sendWhatsAppNotification = async (order: {
-    patientPhone?: string;
-    patientName?: string;
-    orderNumber?: string;
-    patientId?: string;
-    [key: string]: any;
-  }) => {
-    let rawPhone = (order.patientPhone || "").trim();
-    let phoneVal = cleanWhatsAppPhone(rawPhone);
-
-    if (!phoneVal.isValid) {
-      const inputPhone = window.prompt(
-        "Introduceți numărul de telefon al pacientului pentru notificarea WhatsApp:",
-        rawPhone
-      );
-      if (!inputPhone) return;
-      phoneVal = cleanWhatsAppPhone(inputPhone);
-      if (!phoneVal.isValid) {
-        alert("Numărul de telefon introdus nu este valid.");
-        return;
-      }
-    }
-
+  const dispatchWhatsAppNotification = async (
+    order: {
+      patientPhone?: string;
+      patientName?: string;
+      orderNumber?: string;
+      patientId?: string;
+      [key: string]: any;
+    },
+    cleanPhone: string,
+  ) => {
     const stripDiacriticsPref = localStorage.getItem("clinic_setting_whatsapp_strip_diacritics") === "true";
     const message = buildGlassesReadyMessage({
       patientName: order.patientName,
       removeDiacritics: stripDiacriticsPref,
     });
-    const { url } = buildWhatsAppUrl(phoneVal.cleanPhone, message, { removeDiacritics: stripDiacriticsPref });
+    const { url } = buildWhatsAppUrl(cleanPhone, message, { removeDiacritics: stripDiacriticsPref });
     const opened = openWhatsAppUrl(url);
     if (!opened) {
       navigator.clipboard?.writeText(message);
@@ -390,6 +382,26 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
     }
   };
 
+  const sendWhatsAppNotification = async (order: {
+    patientPhone?: string;
+    patientName?: string;
+    orderNumber?: string;
+    patientId?: string;
+    [key: string]: any;
+  }) => {
+    const rawPhone = (order.patientPhone || "").trim();
+    const phoneVal = cleanWhatsAppPhone(rawPhone);
+
+    if (!phoneVal.isValid) {
+      setWhatsAppPhoneInput(rawPhone);
+      setWhatsAppPhoneError(null);
+      setWhatsAppPhonePromptOrder(order);
+      return;
+    }
+
+    await dispatchWhatsAppNotification(order, phoneVal.cleanPhone);
+  };
+
   const sendSmsNotification = (order: {
     patientPhone?: string;
     patientName?: string;
@@ -405,9 +417,11 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
     phone: string;
     message: string;
     timestamp: string;
+    autoMarkReady?: boolean;
   }) => {
     const nowIso = info.timestamp || new Date().toISOString();
     const notifierName = profile?.displayName || (profile as any)?.name || "Recepție";
+    const shouldMarkReady = info.autoMarkReady !== false;
 
     try {
       const targetRecord = (medicalRecords || []).find(
@@ -431,7 +445,12 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
           let updatedOrder: any = null;
           if (orderIdx !== -1) {
             const currentOrd = history[orderIdx];
-            const newStatus = currentOrd.status === "completed" ? "completed" : "ready_for_pickup";
+            const newStatus =
+              currentOrd.status === "completed"
+                ? "completed"
+                : shouldMarkReady
+                  ? "ready_for_pickup"
+                  : (currentOrd.status || "in-progress");
             updatedOrder = {
               ...currentOrd,
               status: newStatus,
@@ -444,7 +463,12 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
           const isMainOrder = data.glassesOrder?.orderNumber === info.orderNumber;
           let updatedMainGlasses = data.glassesOrder;
           if (isMainOrder && data.glassesOrder) {
-            const newStatus = data.glassesOrder.status === "completed" ? "completed" : "ready_for_pickup";
+            const newStatus =
+              data.glassesOrder.status === "completed"
+                ? "completed"
+                : shouldMarkReady
+                  ? "ready_for_pickup"
+                  : (data.glassesOrder.status || "in-progress");
             updatedMainGlasses = {
               ...data.glassesOrder,
               status: newStatus,
@@ -482,7 +506,12 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
               const batch = writeBatch(db);
               snapStandalone.docs.forEach((d) => {
                 const cur = d.data();
-                const newStatus = cur.status === "completed" ? "completed" : "ready_for_pickup";
+                const newStatus =
+                  cur.status === "completed"
+                    ? "completed"
+                    : shouldMarkReady
+                      ? "ready_for_pickup"
+                      : (cur.status || "in-progress");
                 batch.update(d.ref, {
                   status: newStatus,
                   smsNotifiedAt: nowIso,
@@ -636,7 +665,18 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   ) => {
     setLoading(true);
     try {
-      const docRef = doc(db, "medicalRecords", order.patientId);
+      const nowIso = new Date().toISOString();
+      const handlerName = profile?.displayName || (profile as any)?.name || "Recepție";
+      const targetRecord = (medicalRecords || []).find(
+        (r) =>
+          (order.patientId && r.id === order.patientId) ||
+          r.glassesOrder?.orderNumber === order.orderNumber ||
+          (r.orderHistory || []).some((o) => o.orderNumber === order.orderNumber),
+      );
+      const patientDocId = order.patientId || targetRecord?.id;
+      if (!patientDocId) return;
+
+      const docRef = doc(db, "medicalRecords", patientDocId);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const data = docSnap.data() as MedicalRecord;
@@ -644,36 +684,85 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
         const orderIdx = history.findIndex(
           (o) => o.orderNumber === order.orderNumber,
         );
+        const isMainOrder = data.glassesOrder?.orderNumber === order.orderNumber;
 
+        const applyStatusUpdate = (ord: any) => ({
+          ...ord,
+          status: newStatus as any,
+          ...(newStatus === "completed"
+            ? {
+                advance: ord.total ?? ord.advance ?? 0,
+                balance: 0,
+                deliveredAt: ord.deliveredAt || nowIso,
+                deliveredBy: ord.deliveredBy || handlerName,
+              }
+            : {}),
+        });
+
+        let updatedOrder: any = null;
         if (orderIdx !== -1) {
-          const updatedOrder = {
-            ...history[orderIdx],
-            status: newStatus as any,
-            ...(newStatus === "completed"
-              ? { advance: history[orderIdx].total, balance: 0 }
-              : {}),
-          };
+          updatedOrder = applyStatusUpdate(history[orderIdx]);
           history[orderIdx] = updatedOrder;
+        }
 
+        let updatedMainGlasses = data.glassesOrder;
+        if (isMainOrder && data.glassesOrder) {
+          updatedMainGlasses = applyStatusUpdate(data.glassesOrder);
+          if (!updatedOrder) updatedOrder = updatedMainGlasses;
+        }
+
+        if (orderIdx !== -1 || isMainOrder) {
           await updateDoc(
             docRef,
             removeUndefined({
               orderHistory: history,
-              ...(data.glassesOrder?.orderNumber === order.orderNumber
-                ? { glassesOrder: updatedOrder }
-                : {}),
+              ...(isMainOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
+              updatedAt: nowIso,
             }),
           );
 
+          try {
+            const qStandalone = query(
+              collection(db, "glasses_orders"),
+              where("orderNumber", "==", order.orderNumber),
+            );
+            const snapStandalone = await getDocs(qStandalone);
+            if (!snapStandalone.empty) {
+              const batch = writeBatch(db);
+              snapStandalone.docs.forEach((d) => {
+                const cur = d.data();
+                batch.update(
+                  d.ref,
+                  removeUndefined({
+                    status: newStatus,
+                    ...(newStatus === "completed"
+                      ? {
+                          advance: cur.total ?? updatedOrder?.total ?? 0,
+                          balance: 0,
+                          deliveredAt: cur.deliveredAt || nowIso,
+                          deliveredBy: cur.deliveredBy || handlerName,
+                        }
+                      : {}),
+                    updatedAt: nowIso,
+                  }),
+                );
+              });
+              await batch.commit();
+            }
+          } catch (e) {
+            console.warn("Could not update standalone glasses_orders:", e);
+          }
+
           setMedicalRecords((prev) =>
             prev.map((r) =>
-              r.id === order.patientId
+              r.id === patientDocId
                 ? {
                     ...r,
                     orderHistory: history,
-                    ...(r.glassesOrder?.orderNumber === order.orderNumber
-                      ? { glassesOrder: updatedOrder }
+                    ...(isMainOrder && updatedMainGlasses
+                      ? { glassesOrder: updatedMainGlasses }
                       : {}),
+                    updatedAt: nowIso,
                   }
                 : r,
             ),
@@ -1902,18 +1991,16 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                                 : "bg-amber-100 text-amber-700",
                                             )}
                                           >
-                                            #{order.orderNumber.slice(-3)}
+                                            #{(order.orderNumber || "---").slice(-3)}
                                           </div>
                                           <div className="flex flex-col">
                                             <span className="text-xs font-black dark:text-white uppercase truncate max-w-[120px]">
                                               {patient?.patientName || "Anonim"}
                                             </span>
                                             <span className="text-[10px] text-slate-400 font-bold">
-                                              {format(
-                                                new Date(
-                                                  order.createdAt ||
-                                                    order.deliveryDate,
-                                                ),
+                                              {safeFormatDate(
+                                                order.createdAt ||
+                                                  order.deliveryDate,
                                                 "dd MMM yyyy",
                                                 { locale: ro },
                                               )}
@@ -1921,19 +2008,19 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                             {order.whatsappNotifiedAt && (
                                               <span
                                                 className="mt-0.5 text-[8px] font-black uppercase tracking-tight text-emerald-700 dark:text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 w-fit"
-                                                title={`Notificare WhatsApp trimisă la ${format(new Date(order.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}${order.whatsappNotifiedBy ? ` (${order.whatsappNotifiedBy})` : ""}`}
+                                                title={`Notificare WhatsApp trimisă la ${safeFormatDate(order.whatsappNotifiedAt, "dd.MM.yyyy HH:mm")}${order.whatsappNotifiedBy ? ` (${order.whatsappNotifiedBy})` : ""}`}
                                               >
                                                 <span>📲</span>
-                                                <span>Notificat {format(new Date(order.whatsappNotifiedAt), "dd.MM HH:mm")}</span>
+                                                <span>Notificat {safeFormatDate(order.whatsappNotifiedAt, "dd.MM HH:mm")}</span>
                                               </span>
                                             )}
                                             {order.smsNotifiedAt && (
                                               <span
                                                 className="mt-0.5 text-[8px] font-black uppercase tracking-tight text-blue-700 dark:text-blue-300 bg-blue-500/15 border border-blue-500/30 px-1.5 py-0.5 rounded flex items-center gap-1 w-fit"
-                                                title={`Notificare SMS trimisă prin telefon la ${format(new Date(order.smsNotifiedAt), "dd.MM.yyyy HH:mm")}${order.smsNotifiedBy ? ` (${order.smsNotifiedBy})` : ""}`}
+                                                title={`Notificare SMS trimisă prin telefon la ${safeFormatDate(order.smsNotifiedAt, "dd.MM.yyyy HH:mm")}${order.smsNotifiedBy ? ` (${order.smsNotifiedBy})` : ""}`}
                                               >
                                                 <span>💬</span>
-                                                <span>SMS {format(new Date(order.smsNotifiedAt), "dd.MM HH:mm")}</span>
+                                                <span>SMS {safeFormatDate(order.smsNotifiedAt, "dd.MM HH:mm")}</span>
                                               </span>
                                             )}
                                           </div>
@@ -1976,7 +2063,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                               });
                                             }}
                                             className="px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
-                                            title={order.whatsappNotifiedAt ? `Notificat la ${format(new Date(order.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}. Click pentru retrimitere WhatsApp.` : "Trimite mesaj WhatsApp: Ochelarii dvs. sunt gata la cabinet!"}
+                                            title={order.whatsappNotifiedAt ? `Notificat la ${safeFormatDate(order.whatsappNotifiedAt, "dd.MM.yyyy HH:mm")}. Click pentru retrimitere WhatsApp.` : "Trimite mesaj WhatsApp: Ochelarii dvs. sunt gata la cabinet!"}
                                           >
                                             <span className="text-xs">📲</span>
                                             <span className="hidden sm:inline">{order.whatsappNotifiedAt ? "Retrimite WA" : "WhatsApp"}</span>
@@ -2026,7 +2113,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                                     patient?.patientName ||
                                                     "Anonim",
                                                 });
-                                                setIsOrderDeleteConfirmOpen(
+                                                setIsOrderDeleteConfirmOpen?.(
                                                   true,
                                                 );
                                               }}
@@ -2424,28 +2511,28 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                 {order.whatsappNotifiedAt && (
                                   <span
                                     className="text-[9px] font-black uppercase tracking-wider text-emerald-800 dark:text-emerald-200 bg-emerald-500/15 dark:bg-emerald-950/40 border border-emerald-500/35 px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs"
-                                    title={`Notificare WhatsApp trimisă la ${format(new Date(order.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}${order.whatsappNotifiedBy ? ` de către ${order.whatsappNotifiedBy}` : ""}`}
+                                    title={`Notificare WhatsApp trimisă la ${safeFormatDate(order.whatsappNotifiedAt, "dd.MM.yyyy HH:mm")}${order.whatsappNotifiedBy ? ` de către ${order.whatsappNotifiedBy}` : ""}`}
                                   >
                                     <span className="text-emerald-600 dark:text-emerald-400">📲</span>
-                                    <span>Notificat WhatsApp la {format(new Date(order.whatsappNotifiedAt), "dd.MM HH:mm")}</span>
+                                    <span>Notificat WhatsApp la {safeFormatDate(order.whatsappNotifiedAt, "dd.MM HH:mm")}</span>
                                   </span>
                                 )}
                                 {order.smsNotifiedAt && (
                                   <span
                                     className="text-[9px] font-black uppercase tracking-wider text-blue-800 dark:text-blue-200 bg-blue-500/15 dark:bg-blue-950/40 border border-blue-500/35 px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs"
-                                    title={`Notificare SMS trimisă prin telefon la ${format(new Date(order.smsNotifiedAt), "dd.MM.yyyy HH:mm")}${order.smsNotifiedBy ? ` de către ${order.smsNotifiedBy}` : ""}`}
+                                    title={`Notificare SMS trimisă prin telefon la ${safeFormatDate(order.smsNotifiedAt, "dd.MM.yyyy HH:mm")}${order.smsNotifiedBy ? ` de către ${order.smsNotifiedBy}` : ""}`}
                                   >
                                     <span className="text-blue-600 dark:text-blue-400">💬</span>
-                                    <span>Notificat SMS la {format(new Date(order.smsNotifiedAt), "dd.MM HH:mm")}</span>
+                                    <span>Notificat SMS la {safeFormatDate(order.smsNotifiedAt, "dd.MM HH:mm")}</span>
                                   </span>
                                 )}
                                 {order.deliveredAt && (
                                   <span
                                     className="text-[9px] font-black uppercase tracking-wider text-blue-800 dark:text-blue-200 bg-blue-500/15 dark:bg-blue-950/40 border border-blue-500/35 px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs"
-                                    title={`Predat la ${format(new Date(order.deliveredAt), "dd.MM.yyyy HH:mm")}${order.deliveredBy ? ` de către ${order.deliveredBy}` : ""}`}
+                                    title={`Predat la ${safeFormatDate(order.deliveredAt, "dd.MM.yyyy HH:mm")}${order.deliveredBy ? ` de către ${order.deliveredBy}` : ""}`}
                                   >
                                     <span>🤝</span>
-                                    <span>Predat la {format(new Date(order.deliveredAt), "dd.MM HH:mm")}</span>
+                                    <span>Predat la {safeFormatDate(order.deliveredAt, "dd.MM HH:mm")}</span>
                                   </span>
                                 )}
                                 {isOverdue && (
@@ -2475,13 +2562,11 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                   <p className="text-[9px] font-bold text-rose-500 uppercase flex items-center gap-1">
                                     <Trash2 className="w-2.5 h-2.5" />
                                     Șters la:{" "}
-                                    {order.deletedAt
-                                      ? format(
-                                          new Date(order.deletedAt),
-                                          "dd.MM.yyyy HH:mm",
-                                          { locale: ro },
-                                        )
-                                      : "-"}
+                                    {safeFormatDate(
+                                      order.deletedAt,
+                                      "dd.MM.yyyy HH:mm",
+                                      { locale: ro },
+                                    )}
                                   </p>
                                   <p className="text-[9px] font-bold text-rose-400 uppercase flex items-center gap-1">
                                     <User className="w-2.5 h-2.5" />
@@ -2504,7 +2589,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                       patientName: order.patientName,
                                     });
                                     setIsPermanentDelete(true);
-                                    setIsOrderDeleteConfirmOpen(true);
+                                    setIsOrderDeleteConfirmOpen?.(true);
                                   }}
                                   className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-[10px] font-black uppercase tracking-wider hover:bg-rose-700 transition-all flex items-center gap-2"
                                   title="Șterge definitiv comanda din baza de date"
@@ -2639,7 +2724,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                             sendWhatsAppNotification(order);
                                           }}
                                           className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-500/25 flex items-center gap-1.5 cursor-pointer animate-pulse-subtle"
-                                          title={order.whatsappNotifiedAt ? `Notificat WhatsApp la ${format(new Date(order.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}. Click pentru retrimitere.` : "Trimite WhatsApp pacient: Ochelarii dvs. sunt gata la cabinet!"}
+                                          title={order.whatsappNotifiedAt ? `Notificat WhatsApp la ${safeFormatDate(order.whatsappNotifiedAt, "dd.MM.yyyy HH:mm")}. Click pentru retrimitere.` : "Trimite WhatsApp pacient: Ochelarii dvs. sunt gata la cabinet!"}
                                         >
                                           <span className="text-xs">📲</span>
                                           <span>{order.whatsappNotifiedAt ? "Retrimite WA" : "Trimite WhatsApp"}</span>
@@ -2703,7 +2788,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                           sendWhatsAppNotification(order);
                                         }}
                                         className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-500/25 flex items-center gap-1.5 cursor-pointer"
-                                        title={order.whatsappNotifiedAt ? `Notificat WhatsApp la ${format(new Date(order.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}. Click pentru retrimitere.` : "Deschide WhatsApp cu mesajul prestabilit pentru ridicarea ochelarilor"}
+                                        title={order.whatsappNotifiedAt ? `Notificat WhatsApp la ${safeFormatDate(order.whatsappNotifiedAt, "dd.MM.yyyy HH:mm")}. Click pentru retrimitere.` : "Deschide WhatsApp cu mesajul prestabilit pentru ridicarea ochelarilor"}
                                       >
                                         <span className="text-sm">📲</span>
                                         <span>{order.whatsappNotifiedAt ? "Retrimite WhatsApp" : "Trimite WhatsApp"}</span>
@@ -2732,7 +2817,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                     sendWhatsAppNotification(order);
                                   }}
                                   className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-500/25 flex items-center gap-1.5 cursor-pointer shrink-0"
-                                  title={order.whatsappNotifiedAt ? `Notificat WhatsApp la ${format(new Date(order.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}. Click pentru retrimitere.` : "Deschide WhatsApp cu mesajul prestabilit pentru ridicarea ochelarilor"}
+                                  title={order.whatsappNotifiedAt ? `Notificat WhatsApp la ${safeFormatDate(order.whatsappNotifiedAt, "dd.MM.yyyy HH:mm")}. Click pentru retrimitere.` : "Deschide WhatsApp cu mesajul prestabilit pentru ridicarea ochelarilor"}
                                 >
                                   <span className="text-sm">📲</span>
                                   <span>{order.whatsappNotifiedAt ? "Retrimite WhatsApp" : "Trimite WhatsApp"}</span>
@@ -2765,7 +2850,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                       orderNumber: order.orderNumber,
                                       patientName: order.patientName,
                                     });
-                                    setIsOrderDeleteConfirmOpen(true);
+                                    setIsOrderDeleteConfirmOpen?.(true);
                                   }}
                                   className="p-2 hover:bg-rose-100 dark:hover:bg-rose-900/40 rounded-lg transition-all group/del"
                                 >
@@ -2777,13 +2862,11 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                   Data Comandă
                                 </p>
                                 <p className="text-xs font-black text-slate-600 dark:text-slate-300">
-                                  {order.createdAt
-                                    ? format(
-                                        new Date(order.createdAt),
-                                        "dd MMM yyyy",
-                                        { locale: ro },
-                                      )
-                                    : "-"}
+                                  {safeFormatDate(
+                                    order.createdAt,
+                                    "dd MMM yyyy",
+                                    { locale: ro },
+                                  )}
                                 </p>
                               </div>
                               <div className="text-right">
@@ -2803,10 +2886,11 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                   )}
                                   title={
                                     order.deliveryDate
-                                      ? format(
-                                          new Date(order.deliveryDate),
+                                      ? safeFormatDate(
+                                          order.deliveryDate,
                                           "dd  MMMM  yyyy",
                                           { locale: ro },
+                                          "",
                                         )
                                       : ""
                                   }
@@ -2818,11 +2902,13 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                     <CalendarClock className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                                   )}
                                   {(() => {
-                                    if (!order.deliveryDate) return "-";
+                                    const dDate = safeParseDate(order.deliveryDate);
+                                    if (!dDate) return "-";
                                     const diff = differenceInCalendarDays(
-                                      new Date(order.deliveryDate),
+                                      dDate,
                                       startOfDay(new Date()),
                                     );
+                                    if (isNaN(diff)) return "-";
                                     if (diff === 0) return "Azi (Ultima zi)";
                                     if (diff === 1) return "Mâine";
                                     if (diff === -1) return "Ieri (Depășit)";
@@ -2891,6 +2977,98 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
               </div>
             </motion.div>
           </motion.div>
+      {whatsAppPhonePromptOrder && (
+        <div
+          className="fixed inset-0 z-[230] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm"
+          onClick={() => setWhatsAppPhonePromptOrder(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className={cn(
+              "w-full max-w-md rounded-2xl p-6 shadow-2xl border space-y-4",
+              darkMode
+                ? "bg-slate-900 border-slate-800 text-slate-100"
+                : "bg-white border-slate-200 text-slate-900",
+            )}
+          >
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-black uppercase tracking-wider">
+                Telefon pentru WhatsApp
+              </h4>
+              <button
+                type="button"
+                onClick={() => setWhatsAppPhonePromptOrder(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Introduceți numărul de telefon al pacientului{" "}
+              <strong className="text-slate-700 dark:text-slate-200">
+                {whatsAppPhonePromptOrder.patientName || "Pacient"}
+              </strong>{" "}
+              pentru trimiterea notificării WhatsApp:
+            </p>
+            <input
+              type="tel"
+              autoFocus
+              value={whatsAppPhoneInput}
+              onChange={(e) => {
+                setWhatsAppPhoneInput(e.target.value);
+                if (whatsAppPhoneError) setWhatsAppPhoneError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const phoneVal = cleanWhatsAppPhone(whatsAppPhoneInput);
+                  if (!phoneVal.isValid) {
+                    setWhatsAppPhoneError("Numărul de telefon introdus nu este valid.");
+                    return;
+                  }
+                  const target = whatsAppPhonePromptOrder;
+                  setWhatsAppPhonePromptOrder(null);
+                  dispatchWhatsAppNotification(target, phoneVal.cleanPhone);
+                }
+              }}
+              placeholder="Ex: 0744 123 456"
+              className={cn(
+                "w-full px-3.5 py-2.5 rounded-xl border text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500/40",
+                darkMode
+                  ? "bg-slate-800 border-slate-700 text-white"
+                  : "bg-slate-50 border-slate-300 text-slate-900",
+              )}
+            />
+            {whatsAppPhoneError && (
+              <p className="text-xs font-bold text-rose-500">{whatsAppPhoneError}</p>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setWhatsAppPhonePromptOrder(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Anulează
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const phoneVal = cleanWhatsAppPhone(whatsAppPhoneInput);
+                  if (!phoneVal.isValid) {
+                    setWhatsAppPhoneError("Numărul de telefon introdus nu este valid.");
+                    return;
+                  }
+                  const target = whatsAppPhonePromptOrder;
+                  setWhatsAppPhonePromptOrder(null);
+                  dispatchWhatsAppNotification(target, phoneVal.cleanPhone);
+                }}
+                className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-black uppercase tracking-wider cursor-pointer"
+              >
+                Trimite WhatsApp
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {selectedSmsOrder && (
         <SmsSendModal
           isOpen={!!selectedSmsOrder}

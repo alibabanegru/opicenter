@@ -1,13 +1,14 @@
 import { useRef, useState, useEffect } from "react";
 import SignaturePad from "signature_pad";
 import { compressSignatureCanvas } from "../lib/signatureUtils";
-import { Trash2, CheckCircle2, Shield, PenTool, Monitor } from "lucide-react";
+import { Trash2, CheckCircle2, Shield, PenTool, Monitor, AlertCircle } from "lucide-react";
 
 export function WacomSignaturePad() {
   const [patientName, setPatientName] = useState<string>("");
   const [patientCnp, setPatientCnp] = useState<string>("");
   const [patientPhone, setPatientPhone] = useState<string>("");
   const [status, setStatus] = useState<"standby" | "signing" | "success">("standby");
+  const [signatureError, setSignatureError] = useState<string | null>(null);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const signaturePadRef = useRef<SignaturePad | null>(null);
@@ -24,9 +25,11 @@ export function WacomSignaturePad() {
         setPatientName(data.patientName || "");
         setPatientCnp(data.patientCnp || "");
         setPatientPhone(data.patientPhone || "");
+        setSignatureError(null);
         setStatus("signing");
       } else if (type === "reset") {
         setStatus("standby");
+        setSignatureError(null);
         setPatientName("");
         setPatientCnp("");
         setPatientPhone("");
@@ -63,6 +66,9 @@ export function WacomSignaturePad() {
           minWidth: 1.5,
           maxWidth: 4.5,
         });
+        signaturePadRef.current.addEventListener("beginStroke", () => {
+          setSignatureError(null);
+        });
       }, 200);
 
       return () => clearTimeout(timer);
@@ -71,15 +77,17 @@ export function WacomSignaturePad() {
 
   const handleClear = () => {
     signaturePadRef.current?.clear();
+    setSignatureError(null);
     // Notify main window
     channelRef.current?.postMessage({ type: "clear" });
   };
 
   const handleSave = () => {
     if (!signaturePadRef.current || signaturePadRef.current.isEmpty()) {
-      alert("Vă rugăm să semnați înainte de a salva!");
+      setSignatureError("Vă rugăm să semnați pe tabletă înainte de a salva!");
       return;
     }
+    setSignatureError(null);
 
     const canvas = canvasRef.current;
     const signatureDataUrl = compressSignatureCanvas(canvas, signaturePadRef.current.isEmpty());
@@ -265,7 +273,14 @@ export function WacomSignaturePad() {
             </div>
           </div>
 
-          <div className="mt-8 shrink-0 flex justify-end">
+          {signatureError && (
+            <div className="mt-4 p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-600 dark:text-rose-400 flex items-center gap-2.5 text-sm font-bold animate-in fade-in">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <span>{signatureError}</span>
+            </div>
+          )}
+
+          <div className="mt-6 shrink-0 flex justify-end">
             <button
               onClick={handleSave}
               className="w-full md:w-auto px-12 py-5 rounded-2xl font-black text-lg bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-3 transition-all hover:scale-[1.02] active:scale-[0.98] shadow-xl shadow-emerald-500/20 uppercase tracking-wider cursor-pointer"

@@ -8,6 +8,8 @@ export {
   recalculateContactLensCylinder,
   truncateTextToWidth,
   drawPdfTextWithDiacritics,
+  safeParseDate,
+  safeFormatDate,
 } from "./lib/stringUtils";
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { auth } from "./firebase";
@@ -439,6 +441,7 @@ export interface GlassesOrder {
   createdAt: string;
   orderDate?: string;
   note?: string;
+  notes?: string;
   status?: "pending" | "completed" | "in-progress" | "ready_for_pickup";
   stockDeducted?: boolean;
   stockDeductedFrames?: string[];
@@ -1338,9 +1341,10 @@ export const getEyeDiag = (eye: EyePrescription, prefix: string) => {
 
 export const appendTreatment = (current: string, item: string) => {
   const header = "Medicamentele se administreaza in ordinea prescrisa :";
+  const altHeader = "Medicamentele se utilizeaza in ordinea prescrisa :";
   let content = (current || "").trim();
 
-  if (!content.includes(header)) {
+  if (!content.includes(header) && !content.includes(altHeader)) {
     content = header + (content ? "\n" + content : "");
   }
 
@@ -1349,10 +1353,16 @@ export const appendTreatment = (current: string, item: string) => {
     .map((l) => l.trim())
     .filter((l) => l !== "");
 
-  // Count existing numbered items
+  // Count existing non-header treatment items so manual lines are preserved
   let itemCount = 0;
   lines.forEach((l) => {
-    if (/^\d+\./.test(l)) itemCount++;
+    const low = l.toLowerCase();
+    if (
+      !low.includes("medicamentele se administreaza") &&
+      !low.includes("medicamentele se utilizeaza")
+    ) {
+      itemCount++;
+    }
   });
 
   const nextNum = itemCount + 1;
@@ -1473,7 +1483,7 @@ export const calculateAge = (
   birthDate: string,
   referenceDate: Date = new Date(),
 ): number | undefined => {
-  if (!birthDate) return undefined;
+  if (!birthDate || !referenceDate || isNaN(referenceDate.getTime())) return undefined;
   const birth = new Date(birthDate);
   if (isNaN(birth.getTime())) return undefined;
   let age = referenceDate.getFullYear() - birth.getFullYear();
@@ -1501,7 +1511,7 @@ export const calculateDetailedAge = (
   birthDate: string,
   referenceDate: Date = new Date(),
 ): string | undefined => {
-  if (!birthDate) return undefined;
+  if (!birthDate || !referenceDate || isNaN(referenceDate.getTime())) return undefined;
   const birth = new Date(birthDate);
   if (isNaN(birth.getTime())) return undefined;
   let years = referenceDate.getFullYear() - birth.getFullYear();

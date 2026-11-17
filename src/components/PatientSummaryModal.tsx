@@ -810,9 +810,29 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
   const hasContactLenses = (cl_od?: any, cl_os?: any) => {
     if (!cl_od && !cl_os) return false;
     const odHasData =
-      cl_od && (cl_od.sph || cl_od.cyl || cl_od.axis || cl_od.bc || cl_od.dia || cl_od.brand || cl_od.type);
+      cl_od &&
+      (cl_od.sph ||
+        cl_od.cyl ||
+        cl_od.axis ||
+        cl_od.bc ||
+        cl_od.base ||
+        cl_od.dia ||
+        cl_od.radius ||
+        cl_od.brand ||
+        cl_od.type ||
+        cl_od.wearingType);
     const osHasData =
-      cl_os && (cl_os.sph || cl_os.cyl || cl_os.axis || cl_os.bc || cl_os.dia || cl_os.brand || cl_os.type);
+      cl_os &&
+      (cl_os.sph ||
+        cl_os.cyl ||
+        cl_os.axis ||
+        cl_os.bc ||
+        cl_os.base ||
+        cl_os.dia ||
+        cl_os.radius ||
+        cl_os.brand ||
+        cl_os.type ||
+        cl_os.wearingType);
     return Boolean(odHasData || osHasData);
   };
 
@@ -1318,7 +1338,8 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
             <div className="space-y-4">
               {timelineEntries.map((entry) => {
                 const showContactLenses = hasContactLenses(entry.cl_od, entry.cl_os);
-                const entryDate = entry.date ? new Date(entry.date) : new Date();
+                const parsedEntryDate = entry.date ? new Date(entry.date) : new Date();
+                const entryDate = isNaN(parsedEntryDate.getTime()) ? new Date() : parsedEntryDate;
                 const entryAgeYears = record.patientBirthDate
                   ? calculateAge(record.patientBirthDate, entryDate)
                   : record.patientAge;
@@ -1473,41 +1494,51 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                         </h4>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                          {entry.cl_od && (
-                            <div className="p-2.5 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-purple-100 dark:border-purple-900/40">
-                              <span className="font-black text-purple-700 dark:text-purple-400 block mb-1 text-xs">
-                                OD (Ochiul Drept)
-                              </span>
-                              <p className="font-bold text-slate-800 dark:text-slate-200 text-xs">
-                                Sferă: {entry.cl_od.sph || "-"} | Cil: {entry.cl_od.cyl || "-"} |
-                                Ax: {entry.cl_od.axis ? `${entry.cl_od.axis}°` : "-"}
-                              </p>
-                              {(entry.cl_od.bc || entry.cl_od.dia || entry.cl_od.brand) && (
-                                <p className="text-xs text-slate-500 mt-1">
-                                  BC: {entry.cl_od.bc || "-"} | DIA: {entry.cl_od.dia || "-"} |
-                                  Brand: {entry.cl_od.brand || entry.cl_od.type || "-"}
+                          {entry.cl_od && (() => {
+                            const bcVal = entry.cl_od.bc || entry.cl_od.base;
+                            const diaVal = entry.cl_od.dia || entry.cl_od.radius;
+                            const brandVal = entry.cl_od.brand;
+                            const tipVal = entry.cl_od.wearingType || entry.cl_od.type;
+                            return (
+                              <div className="p-2.5 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-purple-100 dark:border-purple-900/40">
+                                <span className="font-black text-purple-700 dark:text-purple-400 block mb-1 text-xs">
+                                  OD (Ochiul Drept)
+                                </span>
+                                <p className="font-bold text-slate-800 dark:text-slate-200 text-xs">
+                                  Sferă: {entry.cl_od.sph || "-"} | Cil: {entry.cl_od.cyl || "-"} |{" "}
+                                  Ax: {entry.cl_od.axis ? `${entry.cl_od.axis}°` : "-"}
                                 </p>
-                              )}
-                            </div>
-                          )}
+                                {(bcVal || diaVal || brandVal || tipVal) && (
+                                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                                    BC: {bcVal || "-"} | DIA: {diaVal || "-"} | Brand: {brandVal || "-"} | Tip: {tipVal || "-"}
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })()}
 
-                          {entry.cl_os && (
-                            <div className="p-2.5 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-purple-100 dark:border-purple-900/40">
-                              <span className="font-black text-purple-700 dark:text-purple-400 block mb-1 text-xs">
-                                OS (Ochiul Stâng)
-                              </span>
-                              <p className="font-bold text-slate-800 dark:text-slate-200 text-xs">
-                                Sferă: {entry.cl_os.sph || "-"} | Cil: {entry.cl_os.cyl || "-"} |
-                                Ax: {entry.cl_os.axis ? `${entry.cl_os.axis}°` : "-"}
-                              </p>
-                              {(entry.cl_os.bc || entry.cl_os.dia || entry.cl_os.brand) && (
-                                <p className="text-xs text-slate-500 mt-1">
-                                  BC: {entry.cl_os.bc || "-"} | DIA: {entry.cl_os.dia || "-"} |
-                                  Brand: {entry.cl_os.brand || entry.cl_os.type || "-"}
+                          {entry.cl_os && (() => {
+                            const bcVal = entry.cl_os.bc || entry.cl_os.base;
+                            const diaVal = entry.cl_os.dia || entry.cl_os.radius;
+                            const brandVal = entry.cl_os.brand;
+                            const tipVal = entry.cl_os.wearingType || entry.cl_os.type;
+                            return (
+                              <div className="p-2.5 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-purple-100 dark:border-purple-900/40">
+                                <span className="font-black text-purple-700 dark:text-purple-400 block mb-1 text-xs">
+                                  OS (Ochiul Stâng)
+                                </span>
+                                <p className="font-bold text-slate-800 dark:text-slate-200 text-xs">
+                                  Sferă: {entry.cl_os.sph || "-"} | Cil: {entry.cl_os.cyl || "-"} |{" "}
+                                  Ax: {entry.cl_os.axis ? `${entry.cl_os.axis}°` : "-"}
                                 </p>
-                              )}
-                            </div>
-                          )}
+                                {(bcVal || diaVal || brandVal || tipVal) && (
+                                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                                    BC: {bcVal || "-"} | DIA: {diaVal || "-"} | Brand: {brandVal || "-"} | Tip: {tipVal || "-"}
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                     )}
@@ -1872,7 +1903,8 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
               const odPostSeg = entry.posteriorSegment?.od;
               const osPostSeg = entry.posteriorSegment?.os;
 
-              const entryDate = entry.date ? new Date(entry.date) : new Date();
+              const parsedEntryDate = entry.date ? new Date(entry.date) : new Date();
+              const entryDate = isNaN(parsedEntryDate.getTime()) ? new Date() : parsedEntryDate;
               const entryAgeYears = record.patientBirthDate
                 ? calculateAge(record.patientBirthDate, entryDate)
                 : record.patientAge;
@@ -1980,6 +2012,25 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                           </div>
                         )}
                       </div>
+                    </div>
+                  )}
+
+                  {/* Contact Lenses (A4 Export) */}
+                  {hasContactLenses(entry.cl_od, entry.cl_os) && (
+                    <div className="p-1.5 border border-purple-300 rounded bg-purple-50/40 text-xs space-y-0.5 mt-1">
+                      <span className="font-bold uppercase tracking-wider text-[11px] block border-b border-purple-200 pb-0.5">
+                        Lentile de Contact Prescrise
+                      </span>
+                      {entry.cl_od && (
+                        <div>
+                          <strong>OD:</strong> Sferă: {entry.cl_od.sph || "-"} | Cil: {entry.cl_od.cyl || "-"} | Ax: {entry.cl_od.axis ? `${entry.cl_od.axis}°` : "-"} | BC: {entry.cl_od.bc || entry.cl_od.base || "-"} | DIA: {entry.cl_od.dia || entry.cl_od.radius || "-"} | Brand: {entry.cl_od.brand || "-"} | Tip: {entry.cl_od.wearingType || entry.cl_od.type || "-"}
+                        </div>
+                      )}
+                      {entry.cl_os && (
+                        <div>
+                          <strong>OS:</strong> Sferă: {entry.cl_os.sph || "-"} | Cil: {entry.cl_os.cyl || "-"} | Ax: {entry.cl_os.axis ? `${entry.cl_os.axis}°` : "-"} | BC: {entry.cl_os.bc || entry.cl_os.base || "-"} | DIA: {entry.cl_os.dia || entry.cl_os.radius || "-"} | Brand: {entry.cl_os.brand || "-"} | Tip: {entry.cl_os.wearingType || entry.cl_os.type || "-"}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -2140,7 +2191,8 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                   const odPostSeg = entry.posteriorSegment?.od;
                   const osPostSeg = entry.posteriorSegment?.os;
 
-                  const entryDate = entry.date ? new Date(entry.date) : new Date();
+                  const parsedEntryDate = entry.date ? new Date(entry.date) : new Date();
+                  const entryDate = isNaN(parsedEntryDate.getTime()) ? new Date() : parsedEntryDate;
                   const entryAgeYears = record.patientBirthDate
                     ? calculateAge(record.patientBirthDate, entryDate)
                     : record.patientAge;
@@ -2248,6 +2300,25 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                               </div>
                             )}
                           </div>
+                        </div>
+                      )}
+
+                      {/* Contact Lenses (A4 Modal) */}
+                      {hasContactLenses(entry.cl_od, entry.cl_os) && (
+                        <div className="p-1.5 border border-purple-300 rounded bg-purple-50/40 text-xs space-y-0.5 mt-1">
+                          <span className="font-bold uppercase tracking-wider text-[11px] block border-b border-purple-200 pb-0.5">
+                            Lentile de Contact Prescrise
+                          </span>
+                          {entry.cl_od && (
+                            <div>
+                              <strong>OD:</strong> Sferă: {entry.cl_od.sph || "-"} | Cil: {entry.cl_od.cyl || "-"} | Ax: {entry.cl_od.axis ? `${entry.cl_od.axis}°` : "-"} | BC: {entry.cl_od.bc || entry.cl_od.base || "-"} | DIA: {entry.cl_od.dia || entry.cl_od.radius || "-"} | Brand: {entry.cl_od.brand || "-"} | Tip: {entry.cl_od.wearingType || entry.cl_od.type || "-"}
+                            </div>
+                          )}
+                          {entry.cl_os && (
+                            <div>
+                              <strong>OS:</strong> Sferă: {entry.cl_os.sph || "-"} | Cil: {entry.cl_os.cyl || "-"} | Ax: {entry.cl_os.axis ? `${entry.cl_os.axis}°` : "-"} | BC: {entry.cl_os.bc || entry.cl_os.base || "-"} | DIA: {entry.cl_os.dia || entry.cl_os.radius || "-"} | Brand: {entry.cl_os.brand || "-"} | Tip: {entry.cl_os.wearingType || entry.cl_os.type || "-"}
+                            </div>
+                          )}
                         </div>
                       )}
 

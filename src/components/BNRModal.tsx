@@ -20,7 +20,7 @@ import {
   YAxis,
   Tooltip,
 } from "recharts";
-import { cn, CurrencyRow } from "../appConstants";
+import { cn, CurrencyRow, safeFormatDate } from "../appConstants";
 
 export interface BNRModalProps {
   isOpen: boolean;
@@ -491,7 +491,7 @@ export const BNRModal: React.FC<BNRModalProps> = ({
                       <AlertTriangle className="w-5 h-5 shrink-0 text-amber-500" />
                       <span>
                         Mod offline: Curs afișat din memoria cache
-                        {cacheTimestamp ? ` (salvat la ${format(new Date(cacheTimestamp), "dd.MM.yyyy HH:mm")})` : ""}.
+                        {cacheTimestamp ? ` (salvat la ${safeFormatDate(cacheTimestamp, "dd.MM.yyyy HH:mm")})` : ""}.
                         Toate funcțiile de calcul rămân active!
                       </span>
                     </div>
@@ -783,7 +783,7 @@ export const BNRModal: React.FC<BNRModalProps> = ({
                             fontWeight: "bold",
                           }}
                           tickFormatter={(val) =>
-                            format(parseISO(val), "dd.MM")
+                            safeFormatDate(val, "dd.MM")
                           }
                           minTickGap={20}
                         />
@@ -819,7 +819,7 @@ export const BNRModal: React.FC<BNRModalProps> = ({
                             marginBottom: "4px",
                           }}
                           labelFormatter={(val) =>
-                            format(parseISO(val as string), "d  MMMM  yyyy", {
+                            safeFormatDate(val as string, "d  MMMM  yyyy", {
                               locale: ro,
                             })
                           }

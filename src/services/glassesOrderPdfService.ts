@@ -1,7 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { format } from "date-fns";
-import { normalizeForPDF, formatPhoneNumber, getImageFormatForPdf } from "../lib/stringUtils";
+import { normalizeForPDF, formatPhoneNumber, getImageFormatForPdf, safeFormatDate } from "../lib/stringUtils";
 import { FRAME_SHAPES } from "../components/FrameConfigurator";
 import { deformPath, getPointOnPathAtAngle } from "../appConstants";
 import { QR_CODE_REVIEW_BASE64 } from "../assets/qrCodeReview";
@@ -738,14 +738,14 @@ export const generateGlassesOrderPdf = ({
     order.nearDeliveryDate !== order.deliveryDate
   ) {
     doc.text(
-      `RIDICARE DISTANTA: ${format(new Date(order.deliveryDate), "dd.MM.yyyy")}`,
+      `RIDICARE DISTANTA: ${safeFormatDate(order.deliveryDate, "dd.MM.yyyy")}`,
       190,
       37,
       { align: "right" }
     );
     doc.setFontSize(7);
     doc.text(
-      `RIDICARE APROAPE: ${format(new Date(order.nearDeliveryDate), "dd.MM.yyyy")}`,
+      `RIDICARE APROAPE: ${safeFormatDate(order.nearDeliveryDate, "dd.MM.yyyy")}`,
       190,
       41,
       { align: "right" }
@@ -753,7 +753,7 @@ export const generateGlassesOrderPdf = ({
     doc.setFontSize(8);
   } else {
     doc.text(
-      `RIDICARE ESTIMATA: ${format(new Date(order.deliveryDate), "dd.MM.yyyy")}`,
+      `RIDICARE ESTIMATA: ${safeFormatDate(order.deliveryDate, "dd.MM.yyyy")}`,
       190,
       37,
       { align: "right" }
@@ -1035,21 +1035,26 @@ export const generateGlassesOrderPdf = ({
     align: "right",
   });
 
+  const orderNotes = String((order as any).notes || order.note || "").trim();
   let notesY = finalY + 14;
   let splitNotes: string[] = [];
-  if (order.note) {
+  if (orderNotes) {
     doc.setFontSize(8);
-    doc.setTextColor(100);
+    doc.setTextColor(70);
+    splitNotes = doc.splitTextToSize(normalize(orderNotes), 170);
+    if (notesY + 3.5 + splitNotes.length * 4 > 265) {
+      doc.addPage();
+      notesY = 20;
+    }
     doc.setFont(undefined, "italic");
     doc.text("OBSERVATII:", 20, notesY);
     doc.setFont(undefined, "normal");
-    splitNotes = doc.splitTextToSize(normalize(order.note), 170);
     doc.text(splitNotes, 20, notesY + 3.5);
   }
 
   let drawStartY = Math.max(
     finalY + 18,
-    order.note ? notesY + 3.5 + splitNotes.length * 4 + 4 : finalY + 18
+    orderNotes ? notesY + 3.5 + splitNotes.length * 4 + 4 : finalY + 18
   );
 
   const hasFrameConfig = Boolean(

@@ -4,6 +4,53 @@
  * și normalizările de text din întreaga clinică.
  */
 
+import { format, parseISO } from "date-fns";
+
+/**
+ * Parsează în siguranță o valoare de dată (Date, timestamp, ISO string sau alte formate).
+ * Returnează null dacă data lipsește sau este invalidă.
+ */
+export const safeParseDate = (val: unknown): Date | null => {
+  if (!val) return null;
+  if (val instanceof Date) {
+    return isNaN(val.getTime()) ? null : val;
+  }
+  if (typeof val === "number") {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    if (!trimmed) return null;
+    try {
+      const iso = parseISO(trimmed);
+      if (!isNaN(iso.getTime())) return iso;
+    } catch {}
+    const d = new Date(trimmed);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+};
+
+/**
+ * Formatează în siguranță o dată calendaristică folosind date-fns format,
+ * returnând fallback-ul specificat dacă data este goală sau invalidă.
+ */
+export const safeFormatDate = (
+  val: unknown,
+  pattern: string,
+  options?: Parameters<typeof format>[2],
+  fallback = "-"
+): string => {
+  const d = safeParseDate(val);
+  if (!d) return fallback;
+  try {
+    return format(d, pattern, options);
+  } catch {
+    return fallback;
+  }
+};
+
 /**
  * Elimină diacriticele românești și simbolurile speciale pentru compatibilitate maximă cu PDF (jsPDF Helvetica).
  */

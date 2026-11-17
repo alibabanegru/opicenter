@@ -25,7 +25,18 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { ro } from "date-fns/locale";
-import { doc, setDoc } from "firebase/firestore";
+import {
+  doc,
+  setDoc,
+  getDoc,
+  updateDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  writeBatch,
+  addDoc,
+} from "firebase/firestore";
 import { db } from "../firebase";
 import {
   cn,
@@ -36,6 +47,7 @@ import {
   formatPhoneNumber,
   removeUndefined,
   deformPath,
+  safeFormatDate,
 } from "../appConstants";
 import { FrameConfigurator, FRAME_SHAPES } from "./FrameConfigurator";
 import {
@@ -85,6 +97,7 @@ export interface GlassesOrderModalProps {
   setTempEditPhone: (phone: string) => void;
   isGlassesOrderModalOpen?: boolean;
   setIsGlassesOrderModalOpen?: (open: boolean) => void;
+  setMedicalRecords?: React.Dispatch<React.SetStateAction<MedicalRecord[]>>;
 }
 
 export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
@@ -125,10 +138,35 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
   setIsPhoneEditModalOpen,
   setTempEditPhone,
   setIsGlassesOrderModalOpen = (open: boolean) => { if (!open) onClose(); },
+  setMedicalRecords,
 }) => {
   const isGlassesOrderModalOpen = isOpen;
   const [isSmsModalOpen, setIsSmsModalOpen] = React.useState(false);
+  const [isWhatsAppPhoneModalOpen, setIsWhatsAppPhoneModalOpen] = React.useState(false);
+  const [whatsAppPhoneInput, setWhatsAppPhoneInput] = React.useState("");
+  const [whatsAppPhoneError, setWhatsAppPhoneError] = React.useState<string | null>(null);
   if (!currentMedicalRecord) return null;
+
+  const executeWhatsAppNotification = (cleanPhone: string) => {
+    const stripDiacriticsPref = localStorage.getItem("clinic_setting_whatsapp_strip_diacritics") === "true";
+    const message = buildGlassesReadyMessage({
+      patientName: currentMedicalRecord.patientName,
+      removeDiacritics: stripDiacriticsPref,
+    });
+    const { url } = buildWhatsAppUrl(cleanPhone, message, { removeDiacritics: stripDiacriticsPref });
+    const opened = openWhatsAppUrl(url);
+    if (!opened) {
+      navigator.clipboard?.writeText(message);
+      alert("Fereastra pop-up WhatsApp a fost blocată de browser. Mesajul a fost copiat în clipboard!");
+    }
+
+    const nowIso = new Date().toISOString();
+    const notifierName = profile?.displayName || (profile as any)?.name || "Recepție";
+    updateOrder({
+      whatsappNotifiedAt: nowIso,
+      whatsappNotifiedBy: notifierName,
+    });
+  };
 
   return (
     <AnimatePresence>
@@ -296,7 +334,7 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                           Această comandă este în coșul de gunoi
                         </h4>
                         <p className="text-xs text-rose-400 font-bold mt-0.5">
-                          Ștearsă la {currentMedicalRecord.glassesOrder.deletedAt ? format(new Date(currentMedicalRecord.glassesOrder.deletedAt), "dd.MM.yyyy HH:mm", { locale: ro }) : "-"} de către {currentMedicalRecord.glassesOrder.deletedBy || "Anonim"}
+                          Ștearsă la {safeFormatDate(currentMedicalRecord.glassesOrder.deletedAt, "dd.MM.yyyy HH:mm", { locale: ro })} de către {currentMedicalRecord.glassesOrder.deletedBy || "Anonim"}
                         </p>
                       </div>
                     </div>
@@ -2952,10 +2990,10 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                       {currentMedicalRecord.glassesOrder?.whatsappNotifiedAt && (
                         <span
                           className="text-[9px] font-black uppercase text-emerald-700 dark:text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs"
-                          title={`Notificare WhatsApp trimisă la ${format(new Date(currentMedicalRecord.glassesOrder.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}${currentMedicalRecord.glassesOrder.whatsappNotifiedBy ? ` (${currentMedicalRecord.glassesOrder.whatsappNotifiedBy})` : ""}`}
+                          title={`Notificare WhatsApp trimisă la ${safeFormatDate(currentMedicalRecord.glassesOrder.whatsappNotifiedAt, "dd.MM.yyyy HH:mm")}${currentMedicalRecord.glassesOrder.whatsappNotifiedBy ? ` (${currentMedicalRecord.glassesOrder.whatsappNotifiedBy})` : ""}`}
                         >
                           <span>📲</span>
-                          <span>Notificat WhatsApp la {format(new Date(currentMedicalRecord.glassesOrder.whatsappNotifiedAt), "dd.MM HH:mm")}</span>
+                          <span>Notificat WhatsApp la {safeFormatDate(currentMedicalRecord.glassesOrder.whatsappNotifiedAt, "dd.MM HH:mm")}</span>
                         </span>
                       )}
 
@@ -2964,39 +3002,18 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                           <button
                             type="button"
                             onClick={() => {
-                              let rawPhone = (currentMedicalRecord.patientPhone || "").trim();
-                              let phoneVal = cleanWhatsAppPhone(rawPhone);
+                              const rawPhone = (currentMedicalRecord.patientPhone || "").trim();
+                              const phoneVal = cleanWhatsAppPhone(rawPhone);
                               if (!phoneVal.isValid) {
-                                const inputPhone = window.prompt("Introduceți numărul de telefon al pacientului pentru notificarea WhatsApp:", rawPhone);
-                                if (!inputPhone) return;
-                                phoneVal = cleanWhatsAppPhone(inputPhone);
-                                if (!phoneVal.isValid) {
-                                  alert("Numărul de telefon introdus nu este valid.");
-                                  return;
-                                }
+                                setWhatsAppPhoneInput(rawPhone);
+                                setWhatsAppPhoneError(null);
+                                setIsWhatsAppPhoneModalOpen(true);
+                                return;
                               }
-
-                              const stripDiacriticsPref = localStorage.getItem("clinic_setting_whatsapp_strip_diacritics") === "true";
-                              const message = buildGlassesReadyMessage({
-                                patientName: currentMedicalRecord.patientName,
-                                removeDiacritics: stripDiacriticsPref,
-                              });
-                              const { url } = buildWhatsAppUrl(phoneVal.cleanPhone, message, { removeDiacritics: stripDiacriticsPref });
-                              const opened = openWhatsAppUrl(url);
-                              if (!opened) {
-                                navigator.clipboard?.writeText(message);
-                                alert("Fereastra pop-up WhatsApp a fost blocată de browser. Mesajul a fost copiat în clipboard!");
-                              }
-
-                              const nowIso = new Date().toISOString();
-                              const notifierName = profile?.displayName || (profile as any)?.name || "Recepție";
-                              updateOrder({
-                                whatsappNotifiedAt: nowIso,
-                                whatsappNotifiedBy: notifierName,
-                              });
+                              executeWhatsAppNotification(phoneVal.cleanPhone);
                             }}
                             className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-500/30 flex items-center gap-1.5 cursor-pointer animate-pulse-subtle"
-                            title={currentMedicalRecord.glassesOrder?.whatsappNotifiedAt ? `Notificat WhatsApp la ${format(new Date(currentMedicalRecord.glassesOrder.whatsappNotifiedAt), "dd.MM.yyyy HH:mm")}. Click pentru retrimitere.` : "Trimite mesaj WhatsApp pacientului"}
+                            title={currentMedicalRecord.glassesOrder?.whatsappNotifiedAt ? `Notificat WhatsApp la ${safeFormatDate(currentMedicalRecord.glassesOrder.whatsappNotifiedAt, "dd.MM.yyyy HH:mm")}. Click pentru retrimitere.` : "Trimite mesaj WhatsApp pacientului"}
                           >
                             <span className="text-sm">📲</span>
                             <span>{currentMedicalRecord.glassesOrder?.whatsappNotifiedAt ? "Retrimite WhatsApp" : "Trimite WhatsApp"}</span>
@@ -3144,14 +3161,19 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                         </button>
                         <button
                           onClick={async () => {
+                            if (!currentMedicalRecord.glassesOrder) return;
+                            const nowIso = new Date().toISOString();
+                            const handlerName = profile?.displayName || (profile as any)?.name || "Recepție";
                             const total =
                               currentMedicalRecord?.glassesOrder?.total || 0;
 
                             const updatedOrder = {
-                              ...currentMedicalRecord.glassesOrder!,
+                              ...currentMedicalRecord.glassesOrder,
                               advance: total,
                               balance: 0,
                               status: "completed" as const,
+                              deliveredAt: currentMedicalRecord.glassesOrder.deliveredAt || nowIso,
+                              deliveredBy: currentMedicalRecord.glassesOrder.deliveredBy || handlerName,
                             };
 
                             let newHistory = [
@@ -3162,20 +3184,22 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                               newHistory[activeOrderIndex]
                             ) {
                               newHistory[activeOrderIndex] = updatedOrder;
-                            } else if (
-                              newHistory.length > 0 &&
-                              newHistory[0].orderNumber ===
-                                updatedOrder.orderNumber
-                            ) {
-                              newHistory[0] = updatedOrder;
                             } else {
-                              newHistory = [updatedOrder, ...newHistory];
+                              const matchIdx = newHistory.findIndex(
+                                (o) => o.orderNumber === updatedOrder.orderNumber,
+                              );
+                              if (matchIdx !== -1) {
+                                newHistory[matchIdx] = updatedOrder;
+                              } else {
+                                newHistory = [updatedOrder, ...newHistory];
+                              }
                             }
 
                             const updatedRecord = {
                               ...currentMedicalRecord,
                               glassesOrder: updatedOrder,
                               orderHistory: newHistory,
+                              updatedAt: nowIso,
                             };
 
                             setLoading(true);
@@ -3187,6 +3211,37 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                                   currentMedicalRecord.id,
                                 ),
                                 removeUndefined(updatedRecord),
+                                { merge: true },
+                              );
+
+                              try {
+                                const qStandalone = query(
+                                  collection(db, "glasses_orders"),
+                                  where("orderNumber", "==", updatedOrder.orderNumber),
+                                );
+                                const snapStandalone = await getDocs(qStandalone);
+                                if (!snapStandalone.empty) {
+                                  const batch = writeBatch(db);
+                                  snapStandalone.docs.forEach((d) => {
+                                    batch.update(d.ref, {
+                                      status: "completed",
+                                      advance: total,
+                                      balance: 0,
+                                      deliveredAt: updatedOrder.deliveredAt,
+                                      deliveredBy: updatedOrder.deliveredBy,
+                                      updatedAt: nowIso,
+                                    });
+                                  });
+                                  await batch.commit();
+                                }
+                              } catch (standaloneErr) {
+                                console.warn("Could not sync standalone glasses_orders:", standaloneErr);
+                              }
+
+                              setMedicalRecords?.((prev) =>
+                                prev.some((r) => r.id === updatedRecord.id)
+                                  ? prev.map((r) => (r.id === updatedRecord.id ? updatedRecord : r))
+                                  : [updatedRecord, ...prev],
                               );
                               setCurrentMedicalRecord(updatedRecord);
                               setIsFinalizeConfirmationOpen(false);
@@ -3214,17 +3269,239 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
             </motion.div>
           </motion.div>
       )}
+      {isWhatsAppPhoneModalOpen && (
+        <div
+          className="fixed inset-0 z-[230] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm"
+          onClick={() => setIsWhatsAppPhoneModalOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className={cn(
+              "w-full max-w-md rounded-2xl p-6 shadow-2xl border space-y-4",
+              darkMode
+                ? "bg-slate-900 border-slate-800 text-slate-100"
+                : "bg-white border-slate-200 text-slate-900",
+            )}
+          >
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-black uppercase tracking-wider">
+                Telefon pentru WhatsApp
+              </h4>
+              <button
+                type="button"
+                onClick={() => setIsWhatsAppPhoneModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Introduceți numărul de telefon al pacientului{" "}
+              <strong className="text-slate-700 dark:text-slate-200">
+                {currentMedicalRecord.patientName || "Pacient"}
+              </strong>{" "}
+              pentru notificarea WhatsApp:
+            </p>
+            <input
+              type="tel"
+              autoFocus
+              value={whatsAppPhoneInput}
+              onChange={(e) => {
+                setWhatsAppPhoneInput(e.target.value);
+                if (whatsAppPhoneError) setWhatsAppPhoneError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const phoneVal = cleanWhatsAppPhone(whatsAppPhoneInput);
+                  if (!phoneVal.isValid) {
+                    setWhatsAppPhoneError("Numărul de telefon introdus nu este valid.");
+                    return;
+                  }
+                  setIsWhatsAppPhoneModalOpen(false);
+                  executeWhatsAppNotification(phoneVal.cleanPhone);
+                }
+              }}
+              placeholder="Ex: 0744 123 456"
+              className={cn(
+                "w-full px-3.5 py-2.5 rounded-xl border text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500/40",
+                darkMode
+                  ? "bg-slate-800 border-slate-700 text-white"
+                  : "bg-slate-50 border-slate-300 text-slate-900",
+              )}
+            />
+            {whatsAppPhoneError && (
+              <p className="text-xs font-bold text-rose-500">{whatsAppPhoneError}</p>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setIsWhatsAppPhoneModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Anulează
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const phoneVal = cleanWhatsAppPhone(whatsAppPhoneInput);
+                  if (!phoneVal.isValid) {
+                    setWhatsAppPhoneError("Numărul de telefon introdus nu este valid.");
+                    return;
+                  }
+                  setIsWhatsAppPhoneModalOpen(false);
+                  executeWhatsAppNotification(phoneVal.cleanPhone);
+                }}
+                className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-black uppercase tracking-wider cursor-pointer"
+              >
+                Trimite WhatsApp
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {isSmsModalOpen && currentMedicalRecord && (
         <SmsSendModal
           isOpen={isSmsModalOpen}
           onClose={() => setIsSmsModalOpen(false)}
           order={{
-            ...currentMedicalRecord.glassesOrder,
+            ...(currentMedicalRecord.glassesOrder || {}),
             patientName: currentMedicalRecord.patientName,
             patientPhone: currentMedicalRecord.patientPhone,
             patientId: currentMedicalRecord.id,
           }}
           darkMode={darkMode}
+          onSmsSent={async (info) => {
+            const nowIso = info.timestamp || new Date().toISOString();
+            const notifierName = profile?.displayName || (profile as any)?.name || "Recepție";
+            const shouldMarkReady = info.autoMarkReady !== false;
+
+            const currentMain = currentMedicalRecord.glassesOrder;
+            const nextMainStatus = currentMain
+              ? (currentMain.status === "completed"
+                  ? "completed"
+                  : shouldMarkReady
+                    ? "ready_for_pickup"
+                    : (currentMain.status || "in-progress"))
+              : (shouldMarkReady ? "ready_for_pickup" : "in-progress");
+
+            const updatedMain = currentMain
+              ? {
+                  ...currentMain,
+                  status: nextMainStatus as GlassesOrder["status"],
+                  smsNotifiedAt: nowIso,
+                  smsNotifiedBy: notifierName,
+                }
+              : undefined;
+
+            const nextHistory = (currentMedicalRecord.orderHistory || []).map((o) =>
+              o.orderNumber === info.orderNumber
+                ? {
+                    ...o,
+                    status: (o.status === "completed"
+                      ? "completed"
+                      : shouldMarkReady
+                        ? "ready_for_pickup"
+                        : (o.status || "in-progress")) as GlassesOrder["status"],
+                    smsNotifiedAt: nowIso,
+                    smsNotifiedBy: notifierName,
+                  }
+                : o,
+            );
+
+            const updatedRecord: MedicalRecord = {
+              ...currentMedicalRecord,
+              ...(updatedMain ? { glassesOrder: updatedMain } : {}),
+              orderHistory: nextHistory,
+              updatedAt: nowIso,
+            };
+
+            setCurrentMedicalRecord(updatedRecord);
+            setMedicalRecords?.((prev) =>
+              prev.some((r) => r.id === updatedRecord.id)
+                ? prev.map((r) => (r.id === updatedRecord.id ? updatedRecord : r))
+                : prev,
+            );
+
+            try {
+              const docRef = doc(db, "medicalRecords", currentMedicalRecord.id);
+              const docSnap = await getDoc(docRef);
+              if (docSnap.exists()) {
+                const dbData = docSnap.data() as MedicalRecord;
+                const dbHistory = (dbData.orderHistory || []).map((o) =>
+                  o.orderNumber === info.orderNumber
+                    ? {
+                        ...o,
+                        status: (o.status === "completed"
+                          ? "completed"
+                          : shouldMarkReady
+                            ? "ready_for_pickup"
+                            : (o.status || "in-progress")) as GlassesOrder["status"],
+                        smsNotifiedAt: nowIso,
+                        smsNotifiedBy: notifierName,
+                      }
+                    : o,
+                );
+                const isMainMatch = dbData.glassesOrder?.orderNumber === info.orderNumber;
+                const dbMain = isMainMatch && dbData.glassesOrder
+                  ? {
+                      ...dbData.glassesOrder,
+                      status: (dbData.glassesOrder.status === "completed"
+                        ? "completed"
+                        : shouldMarkReady
+                          ? "ready_for_pickup"
+                          : (dbData.glassesOrder.status || "in-progress")) as GlassesOrder["status"],
+                      smsNotifiedAt: nowIso,
+                      smsNotifiedBy: notifierName,
+                    }
+                  : dbData.glassesOrder;
+
+                await updateDoc(
+                  docRef,
+                  removeUndefined({
+                    orderHistory: dbHistory,
+                    ...(isMainMatch && dbMain ? { glassesOrder: dbMain } : {}),
+                    updatedAt: nowIso,
+                  }),
+                );
+              } else {
+                await setDoc(docRef, removeUndefined(updatedRecord), { merge: true });
+              }
+
+              const qStandalone = query(
+                collection(db, "glasses_orders"),
+                where("orderNumber", "==", info.orderNumber),
+              );
+              const snapStandalone = await getDocs(qStandalone);
+              if (!snapStandalone.empty) {
+                const batch = writeBatch(db);
+                snapStandalone.docs.forEach((d) => {
+                  const cur = d.data();
+                  const st =
+                    cur.status === "completed"
+                      ? "completed"
+                      : shouldMarkReady
+                        ? "ready_for_pickup"
+                        : (cur.status || "in-progress");
+                  batch.update(d.ref, {
+                    status: st,
+                    smsNotifiedAt: nowIso,
+                    smsNotifiedBy: notifierName,
+                    updatedAt: nowIso,
+                  });
+                });
+                await batch.commit();
+              }
+
+              await addDoc(collection(db, "activityLogs"), {
+                action: "Trimitere Notificare SMS Comandă Ochelari",
+                details: `Trimis SMS către ${info.phone} pentru pacient ${currentMedicalRecord.patientName || ""} (Comanda #${info.orderNumber}). Mesaj: "${info.message.slice(0, 50)}..."`,
+                user: notifierName,
+                timestamp: nowIso,
+              });
+            } catch (err) {
+              console.warn("Could not persist SMS notification metadata from GlassesOrderModal:", err);
+            }
+          }}
         />
       )}
     </AnimatePresence>

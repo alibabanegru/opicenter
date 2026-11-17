@@ -40,8 +40,6 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({
   formatPhoneNumber,
   logActivity,
 }) => {
-  if (!recipient) return null;
-
   const [copiedText, setCopiedText] = useState(false);
   const [stripDiacriticsOption, setStripDiacriticsOption] = useState<boolean>(() => {
     try {
@@ -50,6 +48,8 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({
       return false;
     }
   });
+
+  if (!recipient) return null;
 
   const phoneValidation = cleanWhatsAppPhone(recipient.phone);
 

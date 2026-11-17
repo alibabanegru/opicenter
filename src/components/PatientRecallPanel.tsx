@@ -18,7 +18,7 @@ import {
 import { format, parseISO, addMonths, differenceInDays } from "date-fns";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
-import { MedicalRecord, Appointment, cn } from "../appConstants";
+import { MedicalRecord, Appointment, cn, safeFormatDate } from "../appConstants";
 import { cleanWhatsAppPhone, buildWhatsAppUrl, openWhatsAppUrl } from "../utils/whatsappUtils";
 
 export type RecallType = "all" | "periodic" | "contact_lenses" | "glaucoma";
@@ -1172,7 +1172,7 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
                         <MessageSquare className="w-3 h-3" />
                         <span>
                           Notificat WhatsApp la{" "}
-                          {format(parseISO(item.recallNotifiedAt), "dd.MM.yyyy HH:mm")}
+                          {safeFormatDate(item.recallNotifiedAt, "dd.MM.yyyy HH:mm")}
                         </span>
                       </div>
                     )}

@@ -16,6 +16,8 @@ import {
   MedicalRecord,
   PrescriptionHistoryItem,
   formatPhoneNumber,
+  safeParseDate,
+  safeFormatDate,
 } from "../appConstants";
 
 export interface OrderTypeSelectionModalProps {
@@ -158,7 +160,8 @@ export const OrderTypeSelectionModal: React.FC<OrderTypeSelectionModalProps> = (
                     // Sort descending first to ensure we keep the latest prescription for each calendar day when filtering
                     allPrescriptions.sort(
                       (a, b) =>
-                        new Date(b.date).getTime() - new Date(a.date).getTime()
+                        (safeParseDate(b.date)?.getTime() || 0) -
+                        (safeParseDate(a.date)?.getTime() || 0)
                     );
 
                     const seenDates = new Set();
@@ -166,17 +169,15 @@ export const OrderTypeSelectionModal: React.FC<OrderTypeSelectionModalProps> = (
                       const isCyclo = item.cycloplegia?.enabled;
                       if (isCyclo) return false;
                       if (!item.date) return false;
+                      const dateObj = safeParseDate(item.date);
+                      if (!dateObj) return false;
                       try {
-                        const dateObj = new Date(item.date);
-                        if (isNaN(dateObj.getTime())) return false;
                         const dateKey = format(dateObj, "yyyy-MM-dd");
                         if (seenDates.has(dateKey)) return false;
                         seenDates.add(dateKey);
                         return true;
                       } catch {
-                        if (seenDates.has(item.date)) return false;
-                        seenDates.add(item.date);
-                        return true;
+                        return false;
                       }
                     });
 
@@ -210,8 +211,8 @@ export const OrderTypeSelectionModal: React.FC<OrderTypeSelectionModalProps> = (
                                 item.date && (
                                 <span className="inline-block w-2 h-2 bg-blue-500 rounded-full mr-2 animate-pulse" />
                               )}
-                              {format(
-                                new Date(item.date),
+                              {safeFormatDate(
+                                item.date,
                                 "dd MMM yyyy HH:mm",
                                 { locale: ro }
                               )}

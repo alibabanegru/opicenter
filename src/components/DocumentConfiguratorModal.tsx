@@ -188,11 +188,11 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                   ? "bg-slate-800 border-slate-700 text-white"
                                   : "bg-slate-50 border-slate-200 text-slate-900",
                               )}
-                              value={documentForm.patientJudet || ""}
+                              value={documentForm.unitJudet ?? ""}
                               onChange={(e) =>
                                 setDocumentForm({
                                   ...documentForm,
-                                  patientJudet: e.target.value,
+                                  unitJudet: e.target.value,
                                 })
                               }
                             />
@@ -209,11 +209,11 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                   ? "bg-slate-800 border-slate-700 text-white"
                                   : "bg-slate-50 border-slate-200 text-slate-900",
                               )}
-                              value={documentForm.patientLocalitate || ""}
+                              value={documentForm.unitLocalitate ?? ""}
                               onChange={(e) =>
                                 setDocumentForm({
                                   ...documentForm,
-                                  patientLocalitate: e.target.value,
+                                  unitLocalitate: e.target.value,
                                 })
                               }
                             />
@@ -695,11 +695,11 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                   ? "bg-slate-800 border-slate-700 text-white"
                                   : "bg-slate-50 border-slate-200 text-slate-900",
                               )}
-                              value={documentForm.patientJudet || ""}
+                              value={documentForm.unitJudet ?? ""}
                               onChange={(e) =>
                                 setDocumentForm({
                                   ...documentForm,
-                                  patientJudet: e.target.value,
+                                  unitJudet: e.target.value,
                                 })
                               }
                             />
@@ -716,11 +716,11 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                   ? "bg-slate-800 border-slate-700 text-white"
                                   : "bg-slate-50 border-slate-200 text-slate-900",
                               )}
-                              value={documentForm.patientLocalitate || ""}
+                              value={documentForm.unitLocalitate ?? ""}
                               onChange={(e) =>
                                 setDocumentForm({
                                   ...documentForm,
-                                  patientLocalitate: e.target.value,
+                                  unitLocalitate: e.target.value,
                                 })
                               }
                             />
@@ -2459,11 +2459,11 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                   ? "bg-slate-800 border-slate-700 text-white"
                                   : "bg-slate-50 border-slate-200 text-slate-900",
                               )}
-                              value={documentForm.patientJudet || ""}
+                              value={documentForm.unitJudet ?? ""}
                               onChange={(e) =>
                                 setDocumentForm({
                                   ...documentForm,
-                                  patientJudet: e.target.value,
+                                  unitJudet: e.target.value,
                                 })
                               }
                             />
@@ -2480,11 +2480,11 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                   ? "bg-slate-800 border-slate-700 text-white"
                                   : "bg-slate-50 border-slate-200 text-slate-900",
                               )}
-                              value={documentForm.patientLocalitate || ""}
+                              value={documentForm.unitLocalitate ?? ""}
                               onChange={(e) =>
                                 setDocumentForm({
                                   ...documentForm,
-                                  patientLocalitate: e.target.value,
+                                  unitLocalitate: e.target.value,
                                 })
                               }
                             />
@@ -2644,7 +2644,23 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                             </div>
                           </div>
     
-                          <div className="grid grid-cols-3 gap-3">
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div>
+                              <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1">
+                                Nr. Stradă
+                              </label>
+                              <input
+                                type="text"
+                                className="w-full p-2.5 text-xs font-semibold border rounded-xl dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={documentForm.patientStreetNumber || ""}
+                                onChange={(e) =>
+                                  setDocumentForm({
+                                    ...documentForm,
+                                    patientStreetNumber: e.target.value,
+                                  })
+                                }
+                              />
+                            </div>
                             <div>
                               <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1">
                                 Bloc
@@ -2954,11 +2970,11 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                   ? "bg-slate-800 border-slate-700 text-white"
                                   : "bg-slate-50 border-slate-200 text-slate-900",
                               )}
-                              value={documentForm.patientJudet || ""}
+                              value={documentForm.unitJudet ?? ""}
                               onChange={(e) =>
                                 setDocumentForm({
                                   ...documentForm,
-                                  patientJudet: e.target.value,
+                                  unitJudet: e.target.value,
                                 })
                               }
                             />
@@ -2975,11 +2991,11 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                   ? "bg-slate-800 border-slate-700 text-white"
                                   : "bg-slate-50 border-slate-200 text-slate-900",
                               )}
-                              value={documentForm.patientLocalitate || ""}
+                              value={documentForm.unitLocalitate ?? ""}
                               onChange={(e) =>
                                 setDocumentForm({
                                   ...documentForm,
-                                  patientLocalitate: e.target.value,
+                                  unitLocalitate: e.target.value,
                                 })
                               }
                             />

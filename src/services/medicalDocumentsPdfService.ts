@@ -46,11 +46,19 @@ export const generateAdeverintaMedicalaPdf = (
       10,
       6,
     );
-    doc.text(`Judetul unitatii: Arges`, 10, 10);
-    doc.text(
-      `Localitate unitate: Pitesti, Str. Calea Bucuresti, bl.30, sc. A, ap.2`,
+    drawPdfTextWithDiacritics(
+      doc,
+      `Județul unității: ${documentForm.unitJudet ?? "Argeș"}`,
+      10,
+      10,
+      { maxWidth: 110 },
+    );
+    drawPdfTextWithDiacritics(
+      doc,
+      `Localitate unitate: ${documentForm.unitLocalitate ?? "Pitești, Str. Calea București, bl.30, sc. A, ap.2"}`,
       10,
       14,
+      { maxWidth: 115 },
     );
 
     doc.setFontSize(8);
@@ -175,9 +183,18 @@ export const generateAdeverintaMedicalaPdf = (
     drawPdfTextWithDiacritics(doc, "Se recomandă:", 10, y);
     const treatmentRecs = (documentForm.treatment || "")
       .split("\n")
-      .filter(
-        (l: string) => l.trim() && !l.includes("Medicamentele se utilizeaza"),
-      )
+      .filter((l: string) => {
+        const trimmed = l.trim();
+        if (!trimmed) return false;
+        const low = trimmed
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase();
+        return (
+          !low.includes("medicamentele se utilizeaza") &&
+          !low.includes("medicamentele se administreaza")
+        );
+      })
       .join(", ");
     const scutire = documentForm.scutire || "";
     const recomandari = scutire
@@ -259,11 +276,19 @@ export const generateReferatPdf = (
       14,
       15,
     );
-    doc.text(`Judetul unitatii: Arges`, 14, 20);
-    doc.text(
-      `Localitate unitate: Pitesti, Str. Calea Bucuresti, bl.30, sc. A, ap.2`,
+    drawPdfTextWithDiacritics(
+      doc,
+      `Județul unității: ${documentForm.unitJudet ?? "Argeș"}`,
+      14,
+      20,
+      { maxWidth: 115 },
+    );
+    drawPdfTextWithDiacritics(
+      doc,
+      `Localitate unitate: ${documentForm.unitLocalitate ?? "Pitești, Str. Calea București, bl.30, sc. A, ap.2"}`,
       14,
       25,
+      { maxWidth: 160 },
     );
 
     doc.setFontSize(10);
@@ -553,8 +578,29 @@ export const generateReferatPdf = (
     y += lineSpacing;
     doc.setFont("helvetica", "normal");
 
-    const od_desc = `OD: SPH [ ${currentMedicalRecord.od.sph || "---"} ] CYL [ ${currentMedicalRecord.od.cyl || "---"} ] AXIS [ ${currentMedicalRecord.od.axis || "---"} ] ADD [ ${currentMedicalRecord.od.add || "---"} ] | AV f.c. [ ${currentMedicalRecord.od.va_without || "---"} ] AV c.c. [ ${documentForm.vaWithOd || "---"} ]`;
-    const os_desc = `OS: SPH [ ${currentMedicalRecord.os.sph || "---"} ] CYL [ ${currentMedicalRecord.os.cyl || "---"} ] AXIS [ ${currentMedicalRecord.os.axis || "---"} ] ADD [ ${currentMedicalRecord.os.add || "---"} ] | AV f.c. [ ${currentMedicalRecord.os.va_without || "---"} ] AV c.c. [ ${documentForm.vaWithOs || "---"} ]`;
+    const avFcOd =
+      documentForm.avFaraCorectieOd !== undefined
+        ? documentForm.avFaraCorectieOd || "---"
+        : currentMedicalRecord?.od?.va_without || "---";
+    const avFcOs =
+      documentForm.avFaraCorectieOs !== undefined
+        ? documentForm.avFaraCorectieOs || "---"
+        : currentMedicalRecord?.os?.va_without || "---";
+    const avCcOd =
+      documentForm.vaWithOd !== undefined
+        ? documentForm.vaWithOd || "---"
+        : documentForm.avCuCorectieOd !== undefined
+          ? documentForm.avCuCorectieOd || "---"
+          : currentMedicalRecord?.od?.va_with || "---";
+    const avCcOs =
+      documentForm.vaWithOs !== undefined
+        ? documentForm.vaWithOs || "---"
+        : documentForm.avCuCorectieOs !== undefined
+          ? documentForm.avCuCorectieOs || "---"
+          : currentMedicalRecord?.os?.va_with || "---";
+
+    const od_desc = `OD: SPH [ ${currentMedicalRecord?.od?.sph || "---"} ] CYL [ ${currentMedicalRecord?.od?.cyl || "---"} ] AXIS [ ${currentMedicalRecord?.od?.axis || "---"} ] ADD [ ${currentMedicalRecord?.od?.add || "---"} ] | AV f.c. [ ${avFcOd} ] AV c.c. [ ${avCcOd} ]`;
+    const os_desc = `OS: SPH [ ${currentMedicalRecord?.os?.sph || "---"} ] CYL [ ${currentMedicalRecord?.os?.cyl || "---"} ] AXIS [ ${currentMedicalRecord?.os?.axis || "---"} ] ADD [ ${currentMedicalRecord?.os?.add || "---"} ] | AV f.c. [ ${avFcOs} ] AV c.c. [ ${avCcOs} ]`;
 
     const od_lines = doc.splitTextToSize(cleanStr(od_desc), pageWidth - 28);
     const os_lines = doc.splitTextToSize(cleanStr(os_desc), pageWidth - 28);
@@ -775,11 +821,19 @@ export const generateRaportMedicalPdf = (
       14,
       11,
     );
-    doc.text(`Judetul unitatii: Arges`, 14, 15);
-    doc.text(
-      `Localitate unitate: Pitesti, Str. Calea Bucuresti, bl.30, sc. A, ap.2`,
+    drawPdfTextWithDiacritics(
+      doc,
+      `Județul unității: ${documentForm.unitJudet ?? "Argeș"}`,
+      14,
+      15,
+      { maxWidth: 120 },
+    );
+    drawPdfTextWithDiacritics(
+      doc,
+      `Localitate unitate: ${documentForm.unitLocalitate ?? "Pitești, Str. Calea București, bl.30, sc. A, ap.2"}`,
       14,
       19,
+      { maxWidth: 170 },
     );
 
     doc.setFontSize(9);
@@ -1583,11 +1637,19 @@ export const generateCertificatPdf = (
       10,
       14,
     );
-    doc.text(`Judetul unitatii: Arges`, 10, 18);
-    doc.text(
-      `Localitate unitate: Pitesti, Str. Calea Bucuresti, bl.30, sc. A, ap.2`,
+    drawPdfTextWithDiacritics(
+      doc,
+      `Județul unității: ${documentForm.unitJudet ?? "Argeș"}`,
+      10,
+      18,
+      { maxWidth: 110 },
+    );
+    drawPdfTextWithDiacritics(
+      doc,
+      `Localitate unitate: ${documentForm.unitLocalitate ?? "Pitești, Str. Calea București, bl.30, sc. A, ap.2"}`,
       10,
       22,
+      { maxWidth: 125 },
     );
     doc.setFontSize(8);
 
@@ -1741,6 +1803,12 @@ export const generateCertificatPdf = (
     doc.setFont("helvetica", "normal");
     drawPdfTextWithDiacritics(doc, "nr.", 57, y);
     drawDottedLine(63, 80, y);
+    doc.setFont("helvetica", "bold");
+    drawPdfTextWithDiacritics(doc, documentForm.patientStreetNumber || "", 71.5, y - 2, {
+      align: "center",
+      maxWidth: 16,
+    });
+    doc.setFont("helvetica", "normal");
     drawPdfTextWithDiacritics(doc, "bl.", 82, y);
     drawDottedLine(87, 105, y);
     doc.setFont("helvetica", "bold");

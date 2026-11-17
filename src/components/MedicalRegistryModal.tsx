@@ -5,7 +5,7 @@ import { format } from "date-fns";
 import { ro } from "date-fns/locale";
 import { doc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase";
-import { cn } from "../appConstants";
+import { cn, safeFormatDate } from "../appConstants";
 
 export interface MedicalRegistryModalProps {
   isOpen: boolean;
@@ -174,8 +174,8 @@ export const MedicalRegistryModal: React.FC<MedicalRegistryModalProps> = ({
                             {docRec.documentNumber}
                           </td>
                           <td className="p-4 whitespace-nowrap">
-                            {format(
-                              new Date(docRec.date),
+                            {safeFormatDate(
+                              docRec.date,
                               "dd.MM.yyyy HH:mm",
                               { locale: ro }
                             )}

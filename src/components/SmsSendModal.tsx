@@ -45,6 +45,7 @@ export interface SmsSendModalProps {
     phone: string;
     message: string;
     timestamp: string;
+    autoMarkReady: boolean;
   }) => void;
   darkMode?: boolean;
 }
@@ -272,6 +273,7 @@ export const SmsSendModal: React.FC<SmsSendModalProps> = ({
             phone: phone.trim(),
             message: finalMessage,
             timestamp: nowIso,
+            autoMarkReady,
           });
         }
         setTimeout(() => {

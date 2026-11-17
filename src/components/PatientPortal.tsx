@@ -23,9 +23,10 @@ import {
   Sun, 
   Stethoscope, 
   Sparkles,
+  AlertTriangle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { collection, addDoc, doc, setDoc } from "firebase/firestore";
+import { collection, addDoc, doc, getDoc, setDoc } from "firebase/firestore";
 import SignaturePad from "signature_pad";
 import { compressSignatureCanvas } from "../lib/signatureUtils";
 import { validateCNP } from "../appConstants";
@@ -360,22 +361,67 @@ export function PatientPortal({
       const appDuration = 30; // standard duration in minutes
       const endTime = addMinutes(selectedSlotTime, appDuration);
 
-      // Save/Merge GDPR data to medicalRecords
+      // Save/Merge GDPR data to medicalRecords without creating incomplete docs or overwriting existing prescriptions
+      const nowIso = new Date().toISOString();
       const recordId = `${patientName.trim()}_${patientPhone.trim()}`.replace(/\s+/g, "_").toLowerCase();
-      const medRecordData = {
-        id: recordId,
-        patientName: patientName.trim(),
-        patientPhone: patientPhone.trim(),
-        patientCnp: patientCnp.trim(),
-        patientBirthDate: patientBirthDate || "",
-        patientSex: patientSex || "",
-        gdprSigned: true,
-        gdprSignature: signature,
-        gdprSignedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+      const normalizedSex =
+        patientSex === "Masculin" ? "M" :
+        patientSex === "Feminin" ? "F" :
+        patientSex;
+      const medRecordRef = doc(db, "medicalRecords", recordId);
+      const existingMedSnap = await getDoc(medRecordRef);
+      const emptyEye = {
+        sph: "",
+        cyl: "",
+        axis: "",
+        add: "",
+        pd: "",
+        prism: "",
+        base: "",
+        va_without: "",
+        va_with: "",
       };
-      
-      await setDoc(doc(db, "medicalRecords", recordId), medRecordData, { merge: true });
+
+      const medRecordData = existingMedSnap.exists()
+        ? {
+            id: recordId,
+            patientName: patientName.trim(),
+            patientPhone: patientPhone.trim(),
+            ...(patientCnp.trim() ? { patientCnp: patientCnp.trim() } : {}),
+            ...(patientBirthDate ? { patientBirthDate } : {}),
+            ...(normalizedSex ? { patientSex: normalizedSex } : {}),
+            gdprSigned: true,
+            gdprSignature: signature,
+            gdprSignedAt: nowIso,
+            updatedAt: nowIso,
+          }
+        : {
+            id: recordId,
+            patientName: patientName.trim(),
+            patientPhone: patientPhone.trim(),
+            patientAge: calculatedAge ? Number(calculatedAge) : 0,
+            patientCnp: patientCnp.trim(),
+            patientBirthDate: patientBirthDate || "",
+            patientSex: normalizedSex || "",
+            symptoms: patientSymptomSelect || "",
+            history: "",
+            diagnostic: "",
+            treatment: "",
+            recomandari: "",
+            notes: patientNotes.trim(),
+            dp: "",
+            od: { ...emptyEye },
+            os: { ...emptyEye },
+            orderHistory: [],
+            prescriptionHistory: [],
+            gdprSigned: true,
+            gdprSignature: signature,
+            gdprSignedAt: nowIso,
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          };
+
+      await setDoc(medRecordRef, medRecordData, { merge: true });
 
       const appData = {
         patientName: patientName.trim(),
@@ -489,10 +535,12 @@ export function PatientPortal({
               {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
 
-            <div className={`hidden md:flex flex-col items-end text-right`}>
-              <span className={`text-[10px] font-bold ${darkMode ? "text-slate-400" : "text-slate-600"}`}>Conectat ca:</span>
-              <span className="text-xs font-black text-blue-500 max-w-[150px] truncate">{patientEmail}</span>
-            </div>
+            {patientEmail && (
+              <div className={`hidden md:flex flex-col items-end text-right`}>
+                <span className={`text-[10px] font-bold ${darkMode ? "text-slate-400" : "text-slate-600"}`}>Conectat ca:</span>
+                <span className="text-xs font-black text-blue-500 max-w-[150px] truncate">{patientEmail}</span>
+              </div>
+            )}
 
             <button
               onClick={onSignOut}
@@ -764,8 +812,8 @@ export function PatientPortal({
                             className={`w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-xs font-bold transition-all ${darkMode ? "bg-slate-950 border-slate-850 text-slate-300" : "bg-white border-slate-200"}`}
                           >
                             <option value="">Alegeți...</option>
-                            <option value="Masculin">Masculin</option>
-                            <option value="Feminin">Feminin</option>
+                            <option value="M">Masculin</option>
+                            <option value="F">Feminin</option>
                           </select>
                         </div>
                       </div>
@@ -842,9 +890,9 @@ export function PatientPortal({
                               if (cleaned.length > 0) {
                                 const firstDigit = cleaned.charAt(0);
                                 if (["1", "3", "5"].includes(firstDigit)) {
-                                  setPatientSex("Masculin");
+                                  setPatientSex("M");
                                 } else if (["2", "4", "6"].includes(firstDigit)) {
-                                  setPatientSex("Feminin");
+                                  setPatientSex("F");
                                 }
                               }
                             }}
@@ -924,9 +972,9 @@ export function PatientPortal({
                     </button>
                   </form>
                 </>
-              ) : (
+              ) : bookingSuccess ? (
                 <div className="text-center py-6 space-y-4 shrink-0">
-                  <div className="w-16 h-16 bg-emerald-555 rounded-full flex items-center justify-center mx-auto bg-emerald-500">
+                  <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto bg-emerald-500">
                     <Check className="w-10 h-10 text-white stroke-[3px]" />
                   </div>
                   
@@ -934,7 +982,7 @@ export function PatientPortal({
                     Rezervare Înregistrată!
                   </h3>
 
-                  <p className={`text-xs leading-relaxed ${darkMode ? "text-slate-300" : "text-slate-650"}`}>
+                  <p className={`text-xs leading-relaxed ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                     {bookingMessage}
                   </p>
 
@@ -944,6 +992,40 @@ export function PatientPortal({
                   >
                     Închide Fereastra
                   </button>
+                </div>
+              ) : (
+                <div className="text-center py-6 space-y-4 shrink-0">
+                  <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto bg-rose-500">
+                    <AlertTriangle className="w-9 h-9 text-white stroke-[2.5px]" />
+                  </div>
+
+                  <h3 className="text-lg font-black text-rose-600 dark:text-rose-400">
+                    Rezervare Nereușită
+                  </h3>
+
+                  <p className={`text-xs leading-relaxed ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                    {bookingMessage}
+                  </p>
+
+                  <div className="flex items-center justify-center gap-3 mt-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBookingSuccess(null);
+                        setBookingMessage("");
+                      }}
+                      className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all outline-none cursor-pointer"
+                    >
+                      Încearcă din nou
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCloseBookingModal}
+                      className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl transition-all outline-none cursor-pointer"
+                    >
+                      Închide
+                    </button>
+                  </div>
                 </div>
               )}
             </motion.div>

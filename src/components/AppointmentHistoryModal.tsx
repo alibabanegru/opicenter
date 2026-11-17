@@ -27,6 +27,8 @@ import {
   ROLE_PULSE_CLASSES,
   Role,
   UserProfile,
+  safeParseDate,
+  safeFormatDate,
 } from "../appConstants";
 
 export interface AppointmentHistoryModalProps {
@@ -497,7 +499,7 @@ export const AppointmentHistoryModal: React.FC<
                             )}
                           >
                             <td className="py-4 px-4">
-                              {app.createdAt ? (
+                              {app.createdAt && safeParseDate(app.createdAt) ? (
                                 <div className="flex flex-col">
                                   <span
                                     className={cn(
@@ -507,14 +509,14 @@ export const AppointmentHistoryModal: React.FC<
                                         : "text-slate-800"
                                     )}
                                   >
-                                    {format(
-                                      parseISO(app.createdAt),
+                                    {safeFormatDate(
+                                      app.createdAt,
                                       "dd  MMMM  yyyy",
                                       { locale: ro }
                                     )}
                                   </span>
                                   <span className="text-[10px] opacity-50 font-mono">
-                                    {format(parseISO(app.createdAt), "HH:mm")}
+                                    {safeFormatDate(app.createdAt, "HH:mm")}
                                   </span>
                                 </div>
                               ) : (
@@ -533,14 +535,14 @@ export const AppointmentHistoryModal: React.FC<
                                       : "text-slate-800"
                                   )}
                                 >
-                                  {format(
-                                    parseISO(app.startTime),
+                                  {safeFormatDate(
+                                    app.startTime,
                                     "dd  MMMM  yyyy",
                                     { locale: ro }
                                   )}
                                 </span>
                                 <span className="text-xs text-blue-500 font-mono flex items-center gap-1">
-                                  {format(parseISO(app.startTime), "HH:mm")}
+                                  {safeFormatDate(app.startTime, "HH:mm")}
                                   {getGdprStatus(
                                     app.patientName,
                                     app.patientPhone,
@@ -578,21 +580,19 @@ export const AppointmentHistoryModal: React.FC<
                                         ({app.age} ani)
                                       </span>
                                     )}
-                                  {app.patientBirthDate &&
-                                    isSameDay(
+                                  {(() => {
+                                    const bDate = safeParseDate(app.patientBirthDate);
+                                    return bDate && isSameDay(
                                       new Date(
                                         new Date().getFullYear(),
-                                        parseISO(
-                                          app.patientBirthDate
-                                        ).getMonth(),
-                                        parseISO(
-                                          app.patientBirthDate
-                                        ).getDate()
+                                        bDate.getMonth(),
+                                        bDate.getDate()
                                       ),
                                       startOfDay(new Date())
-                                    ) && (
+                                    ) ? (
                                       <Cake className="w-3 h-3 text-pink-500 animate-pulse" />
-                                    )}
+                                    ) : null;
+                                  })()}
                                 </span>
                                 {!isDoctor && (
                                   <span className="text-xs text-slate-500">
@@ -648,28 +648,28 @@ export const AppointmentHistoryModal: React.FC<
                                   )}
                                 </div>
                               ) : (
-                                <span
-                                  className={cn(
-                                    "text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border",
-                                    app.status === "cancelled"
-                                      ? "bg-slate-900/50 border-slate-700 text-slate-500"
-                                      : isBefore(
-                                            parseISO(app.startTime),
-                                            new Date()
-                                          )
-                                        ? "bg-amber-900/20 border-amber-900/30 text-amber-500"
-                                        : "bg-emerald-900/20 border-emerald-900/30 text-emerald-500"
-                                  )}
-                                >
-                                  {app.status === "cancelled"
-                                    ? "Anulată"
-                                    : isBefore(
-                                          parseISO(app.startTime),
-                                          new Date()
-                                        )
-                                      ? "Finalizată"
-                                      : "Programată"}
-                                </span>
+                                (() => {
+                                  const parsedStart = safeParseDate(app.startTime);
+                                  const isPastApp = parsedStart ? isBefore(parsedStart, new Date()) : false;
+                                  return (
+                                    <span
+                                      className={cn(
+                                        "text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border",
+                                        app.status === "cancelled"
+                                          ? "bg-slate-900/50 border-slate-700 text-slate-500"
+                                          : isPastApp
+                                            ? "bg-amber-900/20 border-amber-900/30 text-amber-500"
+                                            : "bg-emerald-900/20 border-emerald-900/30 text-emerald-500"
+                                      )}
+                                    >
+                                      {app.status === "cancelled"
+                                        ? "Anulată"
+                                        : isPastApp
+                                          ? "Finalizată"
+                                          : "Programată"}
+                                    </span>
+                                  );
+                                })()
                               )}
                             </td>
                             <td className="py-4 px-4 text-right">

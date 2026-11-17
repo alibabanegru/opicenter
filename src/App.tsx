@@ -245,6 +245,8 @@ import {
   FrameStockItem,
   MONTHS_RO,
   SlotLock,
+  safeParseDate,
+  safeFormatDate,
 } from "./appConstants";
 import {
   buildWhatsAppUrl,
@@ -1915,6 +1917,7 @@ export default function App() {
   const loadedArchiveMonthsRef = useRef<Set<string>>(new Set());
   const searchedRegistryQueriesRef = useRef<Set<string>>(new Set());
   const isSavingMedicalRecordRef = useRef<boolean>(false);
+  const inFlightSavePromiseRef = useRef<Promise<boolean> | null>(null);
 
   const omniboxMatches = useMemo(() => {
     const q = deferredUniversalSearchQuery.trim();
@@ -2937,8 +2940,25 @@ export default function App() {
   const [prescriptionToDeleteIndex, setPrescriptionToDeleteIndex] = useState<
     number | null
   >(null);
-  const [currentMedicalRecord, setCurrentMedicalRecord] =
+  const [currentMedicalRecord, _setCurrentMedicalRecord] =
     useState<MedicalRecord | null>(null);
+  const currentMedicalRecordRef = useRef<MedicalRecord | null>(null);
+  const activePrescriptionIndexRef = useRef<number | null>(activePrescriptionIndex);
+  useEffect(() => {
+    activePrescriptionIndexRef.current = activePrescriptionIndex;
+  }, [activePrescriptionIndex]);
+  const setCurrentMedicalRecord: React.Dispatch<
+    React.SetStateAction<MedicalRecord | null>
+  > = useCallback((action) => {
+    if (typeof action === "function") {
+      const next = action(currentMedicalRecordRef.current);
+      currentMedicalRecordRef.current = next;
+      _setCurrentMedicalRecord(next);
+    } else {
+      currentMedicalRecordRef.current = action;
+      _setCurrentMedicalRecord(action);
+    }
+  }, []);
   const [draftRestoredNotice, setDraftRestoredNotice] = useState<string | null>(null);
   const [lastLocalSavedAt, setLastLocalSavedAt] = useState<Date | null>(null);
   const [lastServerSavedAt, setLastServerSavedAt] = useState<Date | null>(null);
@@ -3030,8 +3050,38 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [isMedicalRecordModalOpen, currentMedicalRecord]);
 
-  const checkAndRestoreDraftForRecord = (rec: MedicalRecord, hasServerCopy = false): MedicalRecord => {
+  const createEmptyEyeData = () => ({
+    sph: "",
+    cyl: "",
+    axis: "",
+    add: "",
+    pd: "",
+    prism: "",
+    base: "",
+    va_without: "",
+    va_with: "",
+  });
+
+  const normalizeMedicalRecordShape = (rec: MedicalRecord): MedicalRecord => {
     if (!rec) return rec;
+    const rawSex = (rec.patientSex as string) || "";
+    const normalizedSex =
+      rawSex === "Masculin" ? "M" :
+      rawSex === "Feminin" ? "F" :
+      rec.patientSex;
+    return {
+      ...rec,
+      patientSex: normalizedSex as MedicalRecord["patientSex"],
+      od: { ...createEmptyEyeData(), ...(rec.od || {}) },
+      os: { ...createEmptyEyeData(), ...(rec.os || {}) },
+      orderHistory: Array.isArray(rec.orderHistory) ? rec.orderHistory : [],
+      prescriptionHistory: Array.isArray(rec.prescriptionHistory) ? rec.prescriptionHistory : [],
+    };
+  };
+
+  const checkAndRestoreDraftForRecord = (rawRec: MedicalRecord, hasServerCopy = false): MedicalRecord => {
+    if (!rawRec) return rawRec;
+    const rec = normalizeMedicalRecordShape(rawRec);
     const cleanName = (rec.patientName || "").trim().toLowerCase();
     const cleanPhone = (rec.patientPhone || "").replace(/\D/g, "");
     const targetId = rec.id || `${cleanName}_${cleanPhone}`.replace(/\s+/g, "_");
@@ -3140,7 +3190,7 @@ export default function App() {
           setDraftRestoredNotice(
             `Ciornă salvată anterior recuperată cu succes (${timeStr}). Datele sunt disponibile acum în fișă.`,
           );
-          return restored;
+          return normalizeMedicalRecordShape(restored);
         }
       }
     } catch (e) {
@@ -3286,6 +3336,8 @@ export default function App() {
   };
   const [documentForm, setDocumentForm] = useState<any>({
     patientName: "",
+    unitJudet: "Arges",
+    unitLocalitate: "Pitesti, Str. Calea Bucuresti, bl.30, sc. A, ap.2",
     patientJudet: "",
     patientLocalitate: "",
     patientStrada: "",
@@ -4345,6 +4397,14 @@ export default function App() {
     orderNumber: string;
     patientName: string;
   } | null>(null);
+  const [standalonePortalBypass, setStandalonePortalBypass] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return (
+      window.location.search.includes("portal=patient") ||
+      window.location.search.includes("mode=patient-portal") ||
+      window.location.hash === "#portal"
+    );
+  });
 
   const getDoctorName = (doctorId: string): string => {
     const doctorObj = availableUsers.find(
@@ -7560,7 +7620,7 @@ export default function App() {
     };
     loadUsers();
 
-    if (!profile) {
+    if (!profile && !standalonePortalBypass) {
       setAppointments([]);
       setConfigs([]);
       setMedicalRecords([]);
@@ -7626,6 +7686,15 @@ export default function App() {
         handleFirestoreError(error, OperationType.GET, "configs");
       }
     );
+
+    if (!profile) {
+      setMedicalRecords([]);
+      setMedicalDocuments([]);
+      return () => {
+        unsubAppointments();
+        unsubConfigs();
+      };
+    }
 
     // 4. Medical Records (Smart / Lazy Loading - ultimele 50 de fișe recente)
     // Încarcă în timp real doar cele mai recente 50 de fișe ordonate după data actualizării (updatedAt).
@@ -7718,7 +7787,7 @@ export default function App() {
       unsubMedicalDocuments();
       unsubFrameStock();
     };
-  }, [profile]);
+  }, [profile, standalonePortalBypass]);
 
   useEffect(() => {
     if (!googleUser || !googleUser.email) {
@@ -9590,10 +9659,9 @@ export default function App() {
           ? history.findIndex((item) => (item.date ? isSameDay(parseISO(item.date), appDate!) : false))
           : -1;
 
-        // Verificam daca fisa a fost salvata sau actualizata in aceeasi zi cu programarea
+        // Verificam daca exista deja o consultatie salvata in istoric in aceeasi zi cu programarea
         const recordUpdatedToday = appDate && (
-          (data.updatedAt && isSameDay(parseISO(data.updatedAt), appDate)) ||
-          (history.length > 0 && history[0]?.date && isSameDay(parseISO(history[0].date), appDate))
+          history.length > 0 && history[0]?.date && isSameDay(parseISO(history[0].date), appDate)
         );
 
         // Verificam daca programarea curenta a fost deja consultata / salvata
@@ -10390,18 +10458,27 @@ export default function App() {
     allowSkipDpCheck = false,
     recordOverride?: MedicalRecord | null,
   ): Promise<boolean> => {
-    const activeRecord = recordOverride || currentMedicalRecord;
+    if (isSavingMedicalRecordRef.current) {
+      if (shouldClose && inFlightSavePromiseRef.current) {
+        try {
+          await inFlightSavePromiseRef.current;
+        } catch {}
+      }
+      if (isSavingMedicalRecordRef.current) return false;
+    }
+
+    const executeSave = async (): Promise<boolean> => {
+    const activeRecord = recordOverride || currentMedicalRecordRef.current || currentMedicalRecord;
     if (!activeRecord) return false;
-    // Prevenire trimiteri paralele sau dublu-click accidental (Point 3.B)
-    if (isSavingMedicalRecordRef.current) return false;
     isSavingMedicalRecordRef.current = true;
 
     const isExternalOverride = !!(
       recordOverride &&
-      currentMedicalRecord &&
-      recordOverride.id !== currentMedicalRecord.id
+      (currentMedicalRecordRef.current || currentMedicalRecord) &&
+      recordOverride.id !== (currentMedicalRecordRef.current || currentMedicalRecord)!.id
     );
-    const effectivePrescriptionIndex = isExternalOverride ? null : activePrescriptionIndex;
+    const currentIdx = activePrescriptionIndexRef.current;
+    const effectivePrescriptionIndex = isExternalOverride ? null : currentIdx;
     const effectiveAppointment = isExternalOverride ? null : activeAppointment;
 
     try {
@@ -10512,14 +10589,29 @@ export default function App() {
       const hasData =
         activeRecord.od.sph ||
         activeRecord.od.cyl ||
+        activeRecord.od.add ||
+        activeRecord.od.prism ||
+        activeRecord.od.near_sph ||
+        activeRecord.od.intermediate_sph ||
         activeRecord.os.sph ||
         activeRecord.os.cyl ||
+        activeRecord.os.add ||
+        activeRecord.os.prism ||
+        activeRecord.os.near_sph ||
+        activeRecord.os.intermediate_sph ||
         activeRecord.dp ||
+        activeRecord.dp_od ||
+        activeRecord.dp_os ||
+        activeRecord.dp_aproape ||
+        activeRecord.dp_aproape_od ||
+        activeRecord.dp_aproape_os ||
+        activeRecord.intermediate_dp ||
         activeRecord.axialLength?.od ||
         activeRecord.axialLength?.os ||
         activeRecord.examinations ||
         activeRecord.treatment ||
         activeRecord.diagnostic ||
+        activeRecord.recomandari ||
         activeRecord.symptoms ||
         activeRecord.history ||
         activeRecord.medications ||
@@ -10544,6 +10636,10 @@ export default function App() {
 
       if (hasData) {
         newHistory = [currentItem, ...newHistory];
+        if (!isExternalOverride) {
+          activePrescriptionIndexRef.current = 0;
+          setActivePrescriptionIndex(0);
+        }
       }
     }
 
@@ -11273,7 +11369,13 @@ export default function App() {
     } finally {
       setLoading(false);
       isSavingMedicalRecordRef.current = false;
+      inFlightSavePromiseRef.current = null;
     }
+    };
+
+    const promise = executeSave();
+    inFlightSavePromiseRef.current = promise;
+    return promise;
   };
 
   const updateOrder = (
@@ -11597,44 +11699,46 @@ export default function App() {
   };
 
   const updateLensRecommendation = (field: string, value: string) => {
-    if (!currentMedicalRecord) return;
+    setCurrentMedicalRecord((prev) => {
+      if (!prev) return prev;
 
-    const updatedRecord = { ...currentMedicalRecord, [field]: value };
+      const updatedRecord = { ...prev, [field]: value };
 
-    const type = updatedRecord.lensType || "";
-    const mat = updatedRecord.lensMaterial || "";
-    const treat = updatedRecord.lensTreatment || "";
-    const helio = (updatedRecord as any).lensHeliomat || "";
+      const type = updatedRecord.lensType || "";
+      const mat = updatedRecord.lensMaterial || "";
+      const treat = updatedRecord.lensTreatment || "";
+      const helio = (updatedRecord as any).lensHeliomat || "";
 
-    let recommendation = "";
-    if (type || mat || treat || helio) {
-      const parts = [type, mat, helio, treat].filter(Boolean);
-      recommendation = `Recomandare tip lentila: ${parts.join(", ")}`;
-    }
+      let recommendation = "";
+      if (type || mat || treat || helio) {
+        const parts = [type, mat, helio, treat].filter(Boolean);
+        recommendation = `Recomandare tip lentila: ${parts.join(", ")}`;
+      }
 
-    let currentDiag = updatedRecord.diagnostic || "";
-    const diagLines = currentDiag.split("\n");
-    const filteredDiagLines = diagLines.filter(
-      (line) => !line.trim().startsWith("Recomandare tip lentila:")
-    );
-    updatedRecord.diagnostic = filteredDiagLines.join("\n").trim();
+      let currentDiag = updatedRecord.diagnostic || "";
+      const diagLines = currentDiag.split("\n");
+      const filteredDiagLines = diagLines.filter(
+        (line) => !line.trim().startsWith("Recomandare tip lentila:")
+      );
+      updatedRecord.diagnostic = filteredDiagLines.join("\n").trim();
 
-    let currentRec = updatedRecord.recomandari || "";
-    const recLines = currentRec.split("\n");
-    const filteredRecLines = recLines.filter(
-      (line) => !line.trim().startsWith("Recomandare tip lentila:")
-    );
-    let cleanedRec = filteredRecLines.join("\n").trim();
+      let currentRec = updatedRecord.recomandari || "";
+      const recLines = currentRec.split("\n");
+      const filteredRecLines = recLines.filter(
+        (line) => !line.trim().startsWith("Recomandare tip lentila:")
+      );
+      let cleanedRec = filteredRecLines.join("\n").trim();
 
-    if (recommendation) {
-      updatedRecord.recomandari = cleanedRec
-        ? cleanedRec + "\n" + recommendation
-        : recommendation;
-    } else {
-      updatedRecord.recomandari = cleanedRec;
-    }
+      if (recommendation) {
+        updatedRecord.recomandari = cleanedRec
+          ? cleanedRec + "\n" + recommendation
+          : recommendation;
+      } else {
+        updatedRecord.recomandari = cleanedRec;
+      }
 
-    setCurrentMedicalRecord(updatedRecord);
+      return updatedRecord;
+    });
   };
 
   const saveAndSwitchOrder = (
@@ -14486,7 +14590,8 @@ export default function App() {
 
     const filteredApps = appointments
       .filter((app) => {
-        const appDate = parseISO(app.startTime);
+        const appDate = safeParseDate(app.startTime);
+        if (!appDate) return false;
         const isDoctorMatch =
           doctorFilter === "all" || app.doctorId === doctorFilter;
 
@@ -14500,10 +14605,10 @@ export default function App() {
           return isWithinInterval(appDate, { start, end });
         }
       })
-      .sort((a, b) => a.startTime.localeCompare(b.startTime));
+      .sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""));
 
     const tableData = filteredApps.map((app) => [
-      format(parseISO(app.startTime), "dd.MM HH:mm"),
+      safeFormatDate(app.startTime, "dd.MM HH:mm"),
       app.patientName,
       app.patientPhone,
       app.doctorId === "admin" ? "Ing. Optometrist" : (getRoleLabel(app.doctorId as Role) || app.doctorId),
@@ -14537,9 +14642,10 @@ export default function App() {
       const weekDays = Array.from({ length: 6 }, (_, i) => addDays(start, i)); // Mon-Sat
 
       weekDays.forEach((day, idx) => {
-        const count = filteredApps.filter((app) =>
-          isSameDay(parseISO(app.startTime), day),
-        ).length;
+        const count = filteredApps.filter((app) => {
+          const d = safeParseDate(app.startTime);
+          return d ? isSameDay(d, day) : false;
+        }).length;
         doc.text(
           normalizeForPDF(
             `${format(day, "EEEE, dd.MM", { locale: ro })}: ${count} pacienți`,
@@ -14867,13 +14973,15 @@ export default function App() {
   };
 
   const saveAndSwitchPrescription = (newIndex: number | null) => {
+    const currentMedicalRecord = currentMedicalRecordRef.current;
     if (!currentMedicalRecord) return;
+    const curPrescIdx = activePrescriptionIndexRef.current;
 
     let newHistory = [...(currentMedicalRecord.prescriptionHistory || [])];
     const currentItem: PrescriptionHistoryItem = {
       date:
-        activePrescriptionIndex !== null && newHistory[activePrescriptionIndex]
-          ? newHistory[activePrescriptionIndex].date
+        curPrescIdx !== null && newHistory[curPrescIdx]
+          ? newHistory[curPrescIdx].date
           : new Date().toISOString(),
       doctorId: activeAppointment?.doctorId || profile?.role || "all",
       od: { ...currentMedicalRecord.od },
@@ -14962,20 +15070,45 @@ export default function App() {
     };
 
     let shifted = false;
-    if (activePrescriptionIndex !== null) {
-      newHistory[activePrescriptionIndex] = currentItem;
+    if (curPrescIdx !== null) {
+      newHistory[curPrescIdx] = currentItem;
     } else {
       const hasData =
         currentMedicalRecord.od.sph ||
         currentMedicalRecord.od.cyl ||
+        currentMedicalRecord.od.axis ||
+        currentMedicalRecord.od.add ||
+        currentMedicalRecord.od.prism ||
+        currentMedicalRecord.od.near_sph ||
+        currentMedicalRecord.od.near_cyl ||
+        currentMedicalRecord.od.intermediate_sph ||
+        currentMedicalRecord.od.intermediate_cyl ||
+        currentMedicalRecord.od.va_without ||
+        currentMedicalRecord.od.va_with ||
         currentMedicalRecord.os.sph ||
         currentMedicalRecord.os.cyl ||
+        currentMedicalRecord.os.axis ||
+        currentMedicalRecord.os.add ||
+        currentMedicalRecord.os.prism ||
+        currentMedicalRecord.os.near_sph ||
+        currentMedicalRecord.os.near_cyl ||
+        currentMedicalRecord.os.intermediate_sph ||
+        currentMedicalRecord.os.intermediate_cyl ||
+        currentMedicalRecord.os.va_without ||
+        currentMedicalRecord.os.va_with ||
         currentMedicalRecord.dp ||
+        currentMedicalRecord.dp_od ||
+        currentMedicalRecord.dp_os ||
+        currentMedicalRecord.dp_aproape ||
+        currentMedicalRecord.dp_aproape_od ||
+        currentMedicalRecord.dp_aproape_os ||
+        currentMedicalRecord.intermediate_dp ||
         currentMedicalRecord.axialLength?.od ||
         currentMedicalRecord.axialLength?.os ||
         currentMedicalRecord.examinations ||
         currentMedicalRecord.treatment ||
         currentMedicalRecord.diagnostic ||
+        currentMedicalRecord.recomandari ||
         currentMedicalRecord.symptoms ||
         currentMedicalRecord.history ||
         currentMedicalRecord.medications ||
@@ -15138,6 +15271,7 @@ export default function App() {
         cl_od: undefined,
         cl_os: undefined,
       });
+      activePrescriptionIndexRef.current = 0;
       setActivePrescriptionIndex(0);
     } else {
       const targetIndex = shifted ? newIndex + 1 : newIndex;
@@ -15226,6 +15360,7 @@ export default function App() {
         cl_od: targetItem.cl_od ? { ...targetItem.cl_od } : undefined,
         cl_os: targetItem.cl_os ? { ...targetItem.cl_os } : undefined,
       });
+      activePrescriptionIndexRef.current = targetIndex;
       setActivePrescriptionIndex(targetIndex);
       if (targetItem.date) {
         const dObj = new Date(targetItem.date);
@@ -15306,6 +15441,59 @@ export default function App() {
       setBookingError(msg);
       setErrorMessage(msg);
       return;
+    }
+
+    const odDistCylPdf = parseFloat(String(currentMedicalRecord.od?.cyl || "").replace(",", ".")) || 0;
+    if (currentMedicalRecord.od?.cyl && odDistCylPdf !== 0 && !currentMedicalRecord.od?.axis) {
+      const msg = "Atenție: Ochiul drept (Distanță) are cilindru fără ax completat. Completați axul pentru a putea printa și salva fișa.";
+      setBookingError(msg);
+      setErrorMessage(msg);
+      return;
+    }
+    const osDistCylPdf = parseFloat(String(currentMedicalRecord.os?.cyl || "").replace(",", ".")) || 0;
+    if (currentMedicalRecord.os?.cyl && osDistCylPdf !== 0 && !currentMedicalRecord.os?.axis) {
+      const msg = "Atenție: Ochiul stâng (Distanță) are cilindru fără ax completat. Completați axul pentru a putea printa și salva fișa.";
+      setBookingError(msg);
+      setErrorMessage(msg);
+      return;
+    }
+    if (currentMedicalRecord.od?.add) {
+      const nearCylOD = currentMedicalRecord.od?.near_cyl !== undefined && currentMedicalRecord.od?.near_cyl !== "" ? currentMedicalRecord.od.near_cyl : (currentMedicalRecord.od?.cyl || "");
+      const nearCylNumOD = parseFloat(String(nearCylOD).replace(",", ".")) || 0;
+      const nearAxisOD = currentMedicalRecord.od?.near_axis !== undefined && currentMedicalRecord.od?.near_axis !== "" ? currentMedicalRecord.od.near_axis : (currentMedicalRecord.od?.axis || "");
+      if (nearCylNumOD !== 0 && !nearAxisOD) {
+        const msg = "Atenție: Ochiul drept (Aproape) are cilindru fără ax completat. Completați axul pentru a putea printa și salva fișa.";
+        setBookingError(msg);
+        setErrorMessage(msg);
+        return;
+      }
+    }
+    if (currentMedicalRecord.os?.add) {
+      const nearCylOS = currentMedicalRecord.os?.near_cyl !== undefined && currentMedicalRecord.os?.near_cyl !== "" ? currentMedicalRecord.os.near_cyl : (currentMedicalRecord.os?.cyl || "");
+      const nearCylNumOS = parseFloat(String(nearCylOS).replace(",", ".")) || 0;
+      const nearAxisOS = currentMedicalRecord.os?.near_axis !== undefined && currentMedicalRecord.os?.near_axis !== "" ? currentMedicalRecord.os.near_axis : (currentMedicalRecord.os?.axis || "");
+      if (nearCylNumOS !== 0 && !nearAxisOS) {
+        const msg = "Atenție: Ochiul stâng (Aproape) are cilindru fără ax completat. Completați axul pentru a putea printa și salva fișa.";
+        setBookingError(msg);
+        setErrorMessage(msg);
+        return;
+      }
+    }
+    if (currentMedicalRecord.intermediate_enabled) {
+      const interOdCyl = parseFloat(String(currentMedicalRecord.od?.intermediate_cyl || "").replace(",", ".")) || 0;
+      if (currentMedicalRecord.od?.intermediate_cyl && interOdCyl !== 0 && !currentMedicalRecord.od?.intermediate_axis) {
+        const msg = "Atenție: Ochiul drept (Intermediar) are cilindru fără ax completat. Completați axul pentru a putea printa și salva fișa.";
+        setBookingError(msg);
+        setErrorMessage(msg);
+        return;
+      }
+      const interOsCyl = parseFloat(String(currentMedicalRecord.os?.intermediate_cyl || "").replace(",", ".")) || 0;
+      if (currentMedicalRecord.os?.intermediate_cyl && interOsCyl !== 0 && !currentMedicalRecord.os?.intermediate_axis) {
+        const msg = "Atenție: Ochiul stâng (Intermediar) are cilindru fără ax completat. Completați axul pentru a putea printa și salva fișa.";
+        setBookingError(msg);
+        setErrorMessage(msg);
+        return;
+      }
     }
 
     const isBirthdayOnConsultDay = (() => {
@@ -17589,10 +17777,11 @@ export default function App() {
       doc,
       `Prescriptie_${cleanStr(currentMedicalRecord.patientName).replace(/\s+/g, "_")}.pdf`,
     );
-    })(recordOverride || currentMedicalRecord);
+    })(recordOverride || currentMedicalRecordRef.current || currentMedicalRecord);
   };
 
   const printTreatment = async () => {
+    await (async (currentMedicalRecord) => {
     if (!currentMedicalRecord) return;
 
     // Salvează schema de tratament pe fișă în fundal fără a bloca acțiunea directă de tipărire
@@ -17873,13 +18062,14 @@ export default function App() {
       doc,
       `Tratament_${currentMedicalRecord.patientName.replace(/\s+/g, "_")}.pdf`,
     );
+    })(currentMedicalRecordRef.current || currentMedicalRecord);
   };
 
   const openDocumentModal = (
     type: "adeverinta" | "referat" | "raport" | "certificat" | "expertiza",
     targetRecord?: any,
   ) => {
-    let activeRecord = targetRecord || currentMedicalRecord;
+    let activeRecord = targetRecord || currentMedicalRecordRef.current || currentMedicalRecord;
     if (!activeRecord && activeAppointment) {
       activeRecord = {
         patientName: activeAppointment.patientName || "",
@@ -18124,6 +18314,14 @@ export default function App() {
           currentMedicalRecord.patientName ||
           (isSamePatient ? patientFormGeneral?.patientName : "") ||
           "",
+        unitJudet:
+          (isSamePrescription ? prevForm?.unitJudet : undefined) ??
+          (isSamePatient ? patientFormGeneral?.unitJudet : undefined) ??
+          "Arges",
+        unitLocalitate:
+          (isSamePrescription ? prevForm?.unitLocalitate : undefined) ??
+          (isSamePatient ? patientFormGeneral?.unitLocalitate : undefined) ??
+          "Pitesti, Str. Calea Bucuresti, bl.30, sc. A, ap.2",
         patientJudet:
           currentMedicalRecord.patientJudet ||
           (isSamePatient ? patientFormGeneral?.patientJudet : "") ||
@@ -18526,6 +18724,10 @@ export default function App() {
     const savedValues = docRecord.formValues || {};
     setDocumentForm({
       ...savedValues,
+      unitJudet: savedValues.unitJudet ?? "Arges",
+      unitLocalitate:
+        savedValues.unitLocalitate ??
+        "Pitesti, Str. Calea Bucuresti, bl.30, sc. A, ap.2",
       documentNumber: docRecord.documentNumber || savedValues.documentNumber || "",
       certificatNumber: docRecord.documentNumber || savedValues.certificatNumber || "",
       patientName: docRecord.patientName || savedValues.patientName || "",
@@ -18547,7 +18749,7 @@ export default function App() {
   };
 
   const handleSaveAndPrintDocument = async (printMyopiaToo = false) => {
-    let activeRec = currentMedicalRecord;
+    let activeRec = currentMedicalRecordRef.current || currentMedicalRecord;
     if (!activeRec && activeAppointment) {
       activeRec =
         findPatientMedicalRecord(
@@ -18716,17 +18918,62 @@ export default function App() {
       const docDate = documentRecord.date;
       let updatedHistory = [...(activeRec.prescriptionHistory || [])];
       const docTime = new Date(docDate).getTime();
-      const existingIdx = updatedHistory.findIndex((h) => {
-        return Math.abs(new Date(h.date).getTime() - docTime) < 60000;
-      });
+      const appStartISO = activeAppointment?.startTime ? new Date(activeAppointment.startTime).toISOString() : null;
+      const currentModalIdx = activePrescriptionIndexRef.current;
+      let existingIdx = -1;
+      if (
+        !editingMedicalDocId &&
+        currentModalIdx !== null &&
+        currentModalIdx >= 0 &&
+        currentModalIdx < updatedHistory.length &&
+        isMedicalRecordModalOpen
+      ) {
+        existingIdx = currentModalIdx;
+      } else {
+        existingIdx = updatedHistory.findIndex((h) => {
+          if (appStartISO && h.date === appStartISO) return true;
+          return Math.abs(new Date(h.date).getTime() - docTime) < 60000;
+        });
+      }
+
+      const preservedBase = existingIdx !== -1
+        ? updatedHistory[existingIdx]
+        : {
+            date: appStartISO || docDate,
+            doctorId: activeAppointment?.doctorId || profile?.role || "all",
+            od: { ...(activeRec.od || { sph: "", cyl: "", axis: "", add: "", pd: "", prism: "", base: "", va_without: "", va_with: "" }) },
+            os: { ...(activeRec.os || { sph: "", cyl: "", axis: "", add: "", pd: "", prism: "", base: "", va_without: "", va_with: "" }) },
+            dp: activeRec.dp || "",
+            dp_od: activeRec.dp_od || "",
+            dp_os: activeRec.dp_os || "",
+            dp_aproape: activeRec.dp_aproape || "",
+            dp_aproape_od: activeRec.dp_aproape_od || "",
+            dp_aproape_os: activeRec.dp_aproape_os || "",
+            intermediate_enabled: !!activeRec.intermediate_enabled,
+            intermediate_distance: activeRec.intermediate_enabled ? (activeRec.intermediate_distance || "") : "",
+            intermediate_dp: activeRec.intermediate_enabled ? (activeRec.intermediate_dp || "") : "",
+            intermediate_dp_od: activeRec.intermediate_enabled ? (activeRec.intermediate_dp_od || "") : "",
+            intermediate_dp_os: activeRec.intermediate_enabled ? (activeRec.intermediate_dp_os || "") : "",
+            recomandari: activeRec.recomandari || "",
+            lensType: activeRec.lensType || "",
+            lensMaterial: activeRec.lensMaterial || "",
+            lensTreatment: activeRec.lensTreatment || "",
+            lensHeliomat: (activeRec as any).lensHeliomat || "",
+            cycloplegia: activeRec.cycloplegia ? { ...activeRec.cycloplegia } : undefined,
+            nonCycloplegic: activeRec.nonCycloplegic ? { ...activeRec.nonCycloplegic } : undefined,
+            cl_od: activeRec.cl_od ? { ...activeRec.cl_od } : undefined,
+            cl_os: activeRec.cl_os ? { ...activeRec.cl_os } : undefined,
+          };
+
+      const detectedFormSex = formCnpTrimmed ? getSexFromCNP(formCnpTrimmed) : null;
+      const detectedFormBirth = formCnpTrimmed ? getBirthDateFromCNP(formCnpTrimmed) : null;
+      // Preia și sincronizează tipul de consult (Consult Complet / Revenire / Gratis) din document
+      const docIsConsultComplet = !!finalFormValues.isConsultComplet;
+      const docIsControl = !!finalFormValues.isControl;
+      const docIsGratis = !!finalFormValues.isGratis;
 
       const updatedHistoryItem: PrescriptionHistoryItem = {
-        ...(existingIdx !== -1 ? updatedHistory[existingIdx] : {
-          date: docDate,
-          od: { sph: "", cyl: "", axis: "", add: "", pd: "", prism: "", base: "", va_without: "", va_with: "" },
-          os: { sph: "", cyl: "", axis: "", add: "", pd: "", prism: "", base: "", va_without: "", va_with: "" },
-          dp: "",
-        }),
+        ...preservedBase,
         specialMentions: (existingIdx !== -1 ? updatedHistory[existingIdx]?.specialMentions : "") || activeRec.specialMentions || "",
         diagnostic: diagVal,
         treatment: treatVal,
@@ -18746,20 +18993,20 @@ export default function App() {
         contrastSensitivity: finalFormValues.contrastSensitivity || activeRec.contrastSensitivity || "",
         colorVision: finalFormValues.colorVision || activeRec.colorVision || "",
         binocularVision: finalFormValues.binocularVision || activeRec.binocularVision || "",
+        isConsultComplet: docIsConsultComplet,
+        isControl: docIsControl,
+        isGratis: docIsGratis,
       };
 
       if (existingIdx !== -1) {
         updatedHistory[existingIdx] = updatedHistoryItem;
       } else {
         updatedHistory.unshift(updatedHistoryItem);
+        if (isMedicalRecordModalOpen && currentModalIdx === null) {
+          activePrescriptionIndexRef.current = 0;
+          setActivePrescriptionIndex(0);
+        }
       }
-
-      const detectedFormSex = formCnpTrimmed ? getSexFromCNP(formCnpTrimmed) : null;
-      const detectedFormBirth = formCnpTrimmed ? getBirthDateFromCNP(formCnpTrimmed) : null;
-      // Preia și sincronizează tipul de consult (Consult Complet / Revenire / Gratis) din document
-      const docIsConsultComplet = !!finalFormValues.isConsultComplet;
-      const docIsControl = !!finalFormValues.isControl;
-      const docIsGratis = !!finalFormValues.isGratis;
 
       const updatedRecord: MedicalRecord = {
         ...activeRec,
@@ -18794,6 +19041,9 @@ export default function App() {
 
       latestRecord = updatedRecord;
       setCurrentMedicalRecord(updatedRecord);
+      if (isMedicalRecordModalOpen) {
+        draftBaselineSnapshotRef.current = JSON.stringify(updatedRecord);
+      }
       setMedicalRecords((prev) =>
         prev.map((r) => (r.id === updatedRecord.id ? updatedRecord : r))
       );
@@ -19713,7 +19963,6 @@ export default function App() {
 
   // Export Comenzi Ochelari în format CSV (Excel compatibil UTF-8 BOM)
   const handleExportOrdersCSV = () => {
-    
     const headers = [
       "Număr Comandă",
       "Nume Pacient",
@@ -19731,43 +19980,104 @@ export default function App() {
       "Operator"
     ];
 
+    const orderTypeLabelMap: Record<string, string> = {
+      distance: "Distanță",
+      near: "Aproape",
+      both: "Distanță + Aproape",
+      contact_lens: "Lentile Contact",
+      progressive_bifocal: "Progresiv / Bifocal",
+    };
+
+    const statusLabelMap: Record<string, string> = {
+      completed: "Finalizată / Predată",
+      ready_for_pickup: "Gata de ridicare",
+      "in-progress": "În lucru",
+      pending: "În așteptare",
+    };
+
     const allOrdersList: any[] = [];
     medicalRecords.forEach((r) => {
-      if (r.glassesOrder) {
+      const history = Array.isArray(r.orderHistory) ? r.orderHistory : [];
+      const current = r.glassesOrder ? [r.glassesOrder] : [];
+      const mergedByOrderNumber = new Map<string, any>();
+      const noNumberOrders: any[] = [];
+
+      const pushCandidate = (o: any) => {
+        if (!o) return;
+        const hasMeaningfulOrder =
+          Boolean(o.orderNumber) ||
+          Boolean(o.frameCode) ||
+          Boolean(o.nearFrameCode) ||
+          Boolean(o.lensRightName) ||
+          Boolean(o.lensLeftName) ||
+          Boolean(o.nearLensRightName) ||
+          Boolean(o.nearLensLeftName) ||
+          Number(o.total || 0) > 0;
+        if (!hasMeaningfulOrder) return;
+
+        const key = String(o.orderNumber || "").trim();
+        if (key) {
+          const prev = mergedByOrderNumber.get(key);
+          mergedByOrderNumber.set(key, prev ? { ...prev, ...o, isDeleted: Boolean(prev.isDeleted || o.isDeleted) } : o);
+        } else {
+          noNumberOrders.push(o);
+        }
+      };
+
+      history.forEach(pushCandidate);
+      current.forEach(pushCandidate);
+
+      [...Array.from(mergedByOrderNumber.values()), ...noNumberOrders].forEach((o) => {
+        if (o.isDeleted) return;
         allOrdersList.push({
-          ...r.glassesOrder,
-          patientName: r.glassesOrder.patientName || r.patientName,
-          patientPhone: r.glassesOrder.patientPhone || r.patientPhone,
+          ...o,
+          patientName: o.patientName || r.patientName,
+          patientPhone: o.patientPhone || r.patientPhone,
         });
-      }
-      if (r.orderHistory && r.orderHistory.length > 0) {
-        r.orderHistory.forEach((o) => {
-          allOrdersList.push({
-            ...o,
-            patientName: o.patientName || r.patientName,
-            patientPhone: o.patientPhone || r.patientPhone,
-          });
-        });
-      }
+      });
     });
 
     const rows = allOrdersList.map((o) => {
-      const treatments = Array.isArray(o.lensTreatments) ? o.lensTreatments.join("; ") : (o.lensTreatments || "");
+      const resolvedStatus = statusLabelMap[o.status || "pending"] || o.status || "În așteptare";
+      const resolvedDeliveryDate = o.deliveryDate || o.nearDeliveryDate || o.estimatedReadyDate || "";
+      const resolvedFrameCode = [o.frameCode || o.frameModel, o.nearFrameCode].filter(Boolean).join(" / ");
+      const baseTypeLabel = o.orderType === "progressive_bifocal" && o.lensStyle === "bifocal"
+        ? "Bifocal"
+        : (orderTypeLabelMap[o.orderType || ""] || o.orderType || "");
+      const resolvedLensType = [baseTypeLabel, o.lensType, o.lensMaterial].filter(Boolean).join(" - ");
+      const lensNamesPart = [
+        o.lensRightName && `OD: ${o.lensRightName}`,
+        o.lensLeftName && `OS: ${o.lensLeftName}`,
+        o.nearLensRightName && `OD Aproape: ${o.nearLensRightName}`,
+        o.nearLensLeftName && `OS Aproape: ${o.nearLensLeftName}`,
+      ]
+        .filter(Boolean)
+        .join(" | ");
+      const treatmentsPart = Array.isArray(o.lensTreatments)
+        ? o.lensTreatments.join("; ")
+        : [o.lensTreatment, o.lensHeliomat].filter(Boolean).join("; ");
+      const resolvedTreatments = [treatmentsPart, lensNamesPart].filter(Boolean).join(" ; ");
+      const totalVal = o.total ?? o.totalPrice ?? 0;
+      const advanceVal = o.advance ?? o.advancePayment ?? 0;
+      const balanceVal =
+        o.balance ?? o.remainingPayment ?? Math.max(0, Number(totalVal || 0) - Number(advanceVal || 0));
+      const resolvedOperator = o.sellerName || o.operatorName || o.optometrist || "";
+
       return [
         escapeCsvField(o.orderNumber),
         escapeCsvField(o.patientName),
         escapeCsvField(o.patientPhone),
-        escapeCsvField(o.status),
+        escapeCsvField(resolvedStatus),
         escapeCsvField(o.orderDate || o.createdAt),
-        escapeCsvField(o.estimatedReadyDate),
-        escapeCsvField(o.frameCode || o.frameModel),
-        escapeCsvField(o.lensType),
-        escapeCsvField(treatments),
-        escapeCsvField(o.totalPrice),
-        escapeCsvField(o.advancePayment),
-        escapeCsvField(o.remainingPayment),
+        escapeCsvField(resolvedDeliveryDate),
+        escapeCsvField(resolvedFrameCode),
+        escapeCsvField(resolvedLensType),
+        escapeCsvField(resolvedTreatments),
+        escapeCsvField(totalVal),
+        escapeCsvField(advanceVal),
+        escapeCsvField(balanceVal),
         escapeCsvField(o.whatsappNotifiedAt),
-        escapeCsvField(o.operatorName || o.optometrist)
+        escapeCsvField(resolvedOperator),
       ].join(",");
     });
 
@@ -19814,21 +20124,45 @@ export default function App() {
             if (json.availableUsers) setAvailableUsers(json.availableUsers);
             if (json.configs) setConfigs(json.configs);
             if (json.clinicConfig) setClinicConfig(json.clinicConfig);
+            if (Array.isArray(json.frameStockList)) {
+              setFrameStockList(json.frameStockList);
+            }
 
             for (const app of json.appointments) {
+              if (!app?.id) continue;
               await setDoc(
                 doc(db, "appointments", app.id),
                 removeUndefined(app),
               );
             }
             for (const rec of json.medicalRecords) {
+              if (!rec?.id) continue;
               await setDoc(
                 doc(db, "medicalRecords", rec.id),
                 removeUndefined(rec),
               );
             }
+            if (Array.isArray(json.availableUsers)) {
+              for (const usr of json.availableUsers) {
+                if (!usr?.id) continue;
+                await setDoc(doc(db, "users", usr.id), removeUndefined(usr));
+              }
+              try {
+                sessionStorage.setItem("clinic_cached_users", JSON.stringify(deduplicateUsers(json.availableUsers)));
+              } catch {}
+            }
+            if (Array.isArray(json.frameStockList)) {
+              for (const frame of json.frameStockList) {
+                if (!frame?.id) continue;
+                await setDoc(
+                  doc(db, "frame_stock", frame.id),
+                  removeUndefined(frame),
+                );
+              }
+            }
             if (json.configs) {
               for (const cfg of json.configs) {
+                if (!cfg?.id) continue;
                 await setDoc(doc(db, "configs", cfg.id), removeUndefined(cfg));
               }
             }
@@ -19861,6 +20195,41 @@ export default function App() {
     reader.readAsText(file);
     e.target.value = "";
   };
+
+  if (standalonePortalBypass && (!profile || profile.role === "patient")) {
+    const activePatientProfile: UserProfile = profile || {
+      uid: googleUser?.uid || "patient_portal",
+      displayName: googleUser?.email || "Portal Pacienți",
+      role: "patient" as Role,
+      color: "bg-blue-600",
+      email: googleUser?.email || "",
+    };
+    return (
+      <PatientPortal
+        db={db}
+        appointments={appointments}
+        configs={configs}
+        availableUsers={availableUsers}
+        profile={activePatientProfile}
+        onSignOut={() => {
+          logout();
+          setStandalonePortalBypass(false);
+          if (
+            typeof window !== "undefined" &&
+            (window.location.search.includes("portal=patient") ||
+              window.location.search.includes("mode=patient-portal") ||
+              window.location.hash === "#portal")
+          ) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        }}
+        darkMode={darkMode}
+        setDarkMode={setDarkMode}
+        clinicConfig={clinicConfig}
+        symptomOptions={symptomOptionsState}
+      />
+    );
+  }
 
   if (!googleUser) {
     return (
@@ -20589,25 +20958,14 @@ export default function App() {
     return <WacomSignaturePad />;
   }
 
-  const isStandalonePatientPortal =
-    window.location.search.includes("portal=patient") ||
-    window.location.search.includes("mode=patient-portal") ||
-    window.location.hash === "#portal";
-
-  if (profile?.role === "patient" || (isStandalonePatientPortal && !profile)) {
-    const activePatientProfile = profile || {
-      uid: "patient_portal",
-      displayName: "Portal Pacienți",
-      role: "patient" as Role,
-      color: "bg-blue-600",
-    };
+  if (profile?.role === "patient") {
     return (
       <PatientPortal
         db={db}
         appointments={appointments}
         configs={configs}
         availableUsers={availableUsers}
-        profile={activePatientProfile}
+        profile={profile}
         onSignOut={logout}
         darkMode={darkMode}
         setDarkMode={setDarkMode}
@@ -21184,7 +21542,7 @@ export default function App() {
                                                       item.patientName.toLowerCase().trim()
                                                 );
                                               if (record) {
-                                                setCurrentMedicalRecord(record);
+                                                setCurrentMedicalRecord(normalizeMedicalRecordShape(record));
                                                 setActiveAppointment(syntheticApp);
                                                 setActivePrescriptionIndex(null);
                                                 setActiveOrderIndex(null);
@@ -21885,7 +22243,7 @@ export default function App() {
                                     a.patientName === record.patientName &&
                                     a.patientPhone === record.patientPhone
                                 );
-                                setCurrentMedicalRecord(record);
+                                setCurrentMedicalRecord(normalizeMedicalRecordShape(record));
                                 setActiveAppointment(apt || null);
                                 setActivePrescriptionIndex(null);
                                 setActiveOrderIndex(null);
@@ -21947,7 +22305,7 @@ export default function App() {
                                               a.patientName === record.patientName &&
                                               a.patientPhone === record.patientPhone
                                           );
-                                          setCurrentMedicalRecord(record);
+                                          setCurrentMedicalRecord(normalizeMedicalRecordShape(record));
                                           setActiveAppointment(apt || null);
                                           setActivePrescriptionIndex(null);
                                           setActiveOrderIndex(null);
@@ -22750,8 +23108,8 @@ export default function App() {
 
               const appointmentsForDay = appointments.filter((app) => {
                 if (app.status !== "scheduled") return false;
-                const appDate = parseISO(app.startTime);
-                if (!isSameDay(appDate, day)) return false;
+                const appDate = safeParseDate(app.startTime);
+                if (!appDate || !isSameDay(appDate, day)) return false;
                 return visibleDoctorRoles.includes(app.doctorId as Role);
               });
 
@@ -23106,9 +23464,10 @@ export default function App() {
                                  ) || null)
                               : null;
 
-                            const historyItemForSlot = matchingRecord?.prescriptionHistory?.find((item) =>
-                              item.date ? isSameDay(parseISO(item.date), time) : false
-                            );
+                            const historyItemForSlot = matchingRecord?.prescriptionHistory?.find((item) => {
+                              const d = safeParseDate(item.date);
+                              return d ? isSameDay(d, time) : false;
+                            });
 
                             const isConsultCompletStatus =
                               !!appointment?.isConsultComplet ||
@@ -23700,10 +24059,10 @@ export default function App() {
               <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
                 {(() => {
                   const filtered = searchResults.filter((app) => {
-                    const isPast = isBefore(
-                      parseISO(app.startTime),
-                      new Date(),
-                    );
+                    const parsedAppTime = safeParseDate(app.startTime);
+                    const isPast = parsedAppTime
+                      ? isBefore(parsedAppTime, new Date())
+                      : false;
                     if (searchFilter === "past") return isPast;
                     if (searchFilter === "future") return !isPast;
                     return true;
@@ -23775,12 +24134,17 @@ export default function App() {
                           (app.patientPhone || "").trim(),
                     );
 
+                    const parsedAppStart = safeParseDate(app.startTime);
+                    const isAppInPast = parsedAppStart
+                      ? isBefore(parsedAppStart, new Date())
+                      : false;
+
                     return (
                       <div
                         key={app.id}
                         className={cn(
                           "p-4 rounded-2xl border",
-                          isBefore(parseISO(app.startTime), new Date())
+                          isAppInPast
                             ? darkMode
                               ? "bg-slate-900/40 border-slate-800 opacity-70"
                               : "bg-slate-50 border-slate-200 opacity-75"
@@ -23824,10 +24188,7 @@ export default function App() {
                                 <span
                                   className={cn(
                                     "inline-block px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider align-middle shadow-sm",
-                                    isBefore(
-                                      parseISO(app.startTime),
-                                      new Date(),
-                                    )
+                                    isAppInPast
                                       ? darkMode
                                         ? "bg-slate-700/80 text-slate-300"
                                         : "bg-slate-200 text-slate-600"
@@ -23836,7 +24197,7 @@ export default function App() {
                                         : "bg-blue-100/80 text-blue-700 border border-blue-200/55",
                                   )}
                                 >
-                                  {isBefore(parseISO(app.startTime), new Date())
+                                  {isAppInPast
                                     ? "Trecută"
                                     : "Viitoare"}
                                 </span>
@@ -23871,7 +24232,7 @@ export default function App() {
                                       openBookingModal(
                                         {
                                           doctorId: app.doctorId,
-                                          time: parseISO(app.startTime),
+                                          time: parsedAppStart || new Date(),
                                         },
                                         app,
                                       );
@@ -24092,7 +24453,7 @@ export default function App() {
                                               app.patientName.toLowerCase().trim()
                                         );
                                       if (record) {
-                                        setCurrentMedicalRecord(record);
+                                        setCurrentMedicalRecord(normalizeMedicalRecordShape(record));
                                         setActiveAppointment(app);
                                         setActivePrescriptionIndex(null);
                                         setActiveOrderIndex(null);
@@ -24163,7 +24524,7 @@ export default function App() {
                               )}
                             >
                               <Calendar className="w-4 h-4 text-blue-500" />
-                              {format(parseISO(app.startTime), "dd  MMMM  yyyy", {
+                              {safeFormatDate(app.startTime, "dd  MMMM  yyyy", {
                                 locale: ro,
                               })}
                             </div>
@@ -24175,7 +24536,7 @@ export default function App() {
                             >
                               <ClockIcon className="w-4 h-4 text-blue-500" />
                               <div className="flex items-center gap-1">
-                                {format(parseISO(app.startTime), "HH:mm")}
+                                {safeFormatDate(app.startTime, "HH:mm")}
                                 {getGdprStatus(
                                   app.patientName,
                                   app.patientPhone,
@@ -24270,7 +24631,7 @@ export default function App() {
                               <div className="space-y-2 max-h-60 overflow-y-auto pr-1.5 custom-scrollbar">
                                 {patientRecord.prescriptionHistory.map((item, index) => {
                                   const doctorName = getDoctorLabelForHistoryItem(item.doctorId, app);
-                                  const itemDate = new Date(item.date);
+                                  const itemDate = safeParseDate(item.date) || new Date();
                                   const itemAge = patientRecord.patientBirthDate
                                     ? calculateAge(patientRecord.patientBirthDate, itemDate)
                                     : patientRecord.patientAge;
@@ -24291,13 +24652,13 @@ export default function App() {
                                             "text-xs font-bold",
                                             darkMode ? "text-slate-200" : "text-slate-800"
                                           )}>
-                                            {format(parseISO(item.date), "dd MMMM yyyy", { locale: ro })}
+                                            {safeFormatDate(item.date, "dd MMMM yyyy", { locale: ro })}
                                           </span>
                                           <span className={cn(
                                             "text-[10px] font-mono font-semibold",
                                             darkMode ? "text-slate-400" : "text-slate-500"
                                           )}>
-                                            {format(parseISO(item.date), "HH:mm")}
+                                            {safeFormatDate(item.date, "HH:mm")}
                                           </span>
                                           {itemAge !== undefined && (
                                             <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
@@ -25171,6 +25532,9 @@ export default function App() {
         setActiveOrderIndex={setActiveOrderIndex}
         setIsGlassesOrderModalOpen={setIsGlassesOrderModalOpen}
         setOrderToDelete={setOrderToDelete}
+        setIsOrderDeleteConfirmOpen={(open) => {
+          if (!open) setOrderToDelete(null);
+        }}
         setIsPermanentDelete={setIsPermanentDelete}
         availableUsers={availableUsers}
         handleExportData={handleExportData}
@@ -25801,6 +26165,7 @@ export default function App() {
         draftRestoredNotice={draftRestoredNotice}
         setDraftRestoredNotice={setDraftRestoredNotice}
         bookingError={bookingError}
+        setBookingError={setBookingError}
         diagnosticOptionsState={diagnosticOptionsState}
         recommendationOptionsState={recommendationOptionsState}
         treatmentCategoriesState={treatmentCategoriesState}
@@ -25922,6 +26287,7 @@ export default function App() {
         darkMode={darkMode}
         currentMedicalRecord={currentMedicalRecord}
         setCurrentMedicalRecord={setCurrentMedicalRecord}
+        setMedicalRecords={setMedicalRecords}
         activeOrderIndex={activeOrderIndex}
         profile={profile}
         isDoctor={isDoctor}
@@ -27145,8 +27511,8 @@ export default function App() {
                                   <p className="text-xs font-bold text-slate-400 mt-2">
                                     Data Nașterii:{" "}
                                     <span className="text-slate-600 dark:text-slate-300">
-                                      {format(
-                                        parseISO(app.patientBirthDate),
+                                      {safeFormatDate(
+                                        app.patientBirthDate,
                                         "d  MMMM  yyyy",
                                         { locale: ro },
                                       )}{" "}
@@ -31002,8 +31368,9 @@ export default function App() {
                 // Grupăm pe Luna -> Zi
                 const groupedByMonth: { [monthKey: string]: { [dayKey: string]: Appointment[] } } = {};
                 filtered.forEach((app) => {
+                  const d = safeParseDate(app.startTime);
+                  if (!d) return;
                   try {
-                    const d = parseISO(app.startTime);
                     const monthKey = format(d, "yyyy-MM");
                     const dayKey = format(d, "yyyy-MM-dd");
                     if (!groupedByMonth[monthKey]) groupedByMonth[monthKey] = {};
@@ -31019,7 +31386,7 @@ export default function App() {
                     {monthKeys.map((mKey) => {
                       const [y, mStr] = mKey.split("-");
                       const monthDate = new Date(parseInt(y), parseInt(mStr) - 1, 1);
-                      const monthName = format(monthDate, "MMMM yyyy", { locale: ro });
+                      const monthName = safeFormatDate(monthDate, "MMMM yyyy", { locale: ro }, mKey);
                       const dayKeys = Object.keys(groupedByMonth[mKey]).sort().reverse();
                       const totalInMonth = dayKeys.reduce((acc, dk) => acc + groupedByMonth[mKey][dk].length, 0);
 
@@ -31040,8 +31407,7 @@ export default function App() {
                           <div className="space-y-4 pl-2 sm:pl-4 border-l-2 border-slate-200 dark:border-slate-800">
                             {dayKeys.map((dKey) => {
                               const dayApps = groupedByMonth[mKey][dKey];
-                              const dayDate = parseISO(dKey);
-                              const dayFormatted = format(dayDate, "EEEE, d MMMM yyyy", { locale: ro });
+                              const dayFormatted = safeFormatDate(dKey, "EEEE, d MMMM yyyy", { locale: ro }, dKey);
 
                               return (
                                 <div key={dKey} className="space-y-2">
@@ -31053,7 +31419,7 @@ export default function App() {
 
                                   <div className="space-y-1.5">
                                     {dayApps.map((app) => {
-                                      const appHour = format(parseISO(app.startTime), "HH:mm");
+                                      const appHour = safeFormatDate(app.startTime, "HH:mm");
                                       const birthFmt = (() => {
                                         const b = app.patientBirthDate;
                                         if (!b) return "-";
@@ -31956,6 +32322,9 @@ export default function App() {
 
         orderToDelete={orderToDelete}
         setOrderToDelete={setOrderToDelete}
+        setIsOrderDeleteConfirmOpen={(open) => {
+          if (!open) setOrderToDelete(null);
+        }}
         isPermanentDelete={isPermanentDelete}
         setIsPermanentDelete={setIsPermanentDelete}
         handlePermanentDeleteOrder={handlePermanentDeleteOrder}
