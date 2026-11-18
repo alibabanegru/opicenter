@@ -7,7 +7,7 @@ interface DocumentConfiguratorModalProps {
   activeDocumentModal: string | null;
   setActiveDocumentModal: (val: any) => void;
   documentForm: any;
-  setDocumentForm: (val: any) => void;
+  setDocumentForm: React.Dispatch<React.SetStateAction<any>>;
   darkMode: boolean;
   handleSaveAndPrintDocument: () => Promise<void>;
   syncPatientUniversal?: (
@@ -20,6 +20,16 @@ interface DocumentConfiguratorModalProps {
     updates: any,
   ) => Promise<void>;
 }
+
+const computeCorrectedIop = (iopRaw: string, cctRaw: string): string => {
+  const iopClean = (iopRaw || "").trim().replace(",", ".");
+  const cctClean = (cctRaw || "").trim().replace(",", ".");
+  if (!iopClean || !cctClean) return "";
+  const iop = parseFloat(iopClean);
+  const cct = parseFloat(cctClean);
+  if (isNaN(iop) || isNaN(cct) || cct <= 0) return "";
+  return (iop + (545 - cct) * 0.05).toFixed(1);
+};
 
 const BASE_DOCTOR_OPTIONS = [
   "Dr. Turcanu Irina",
@@ -1779,12 +1789,26 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     type="text"
                                     className="w-full p-2 text-xs border rounded-lg font-bold outline-none"
                                     value={documentForm.iopOd || ""}
-                                    onChange={(e) =>
-                                      setDocumentForm({
-                                        ...documentForm,
-                                        iopOd: e.target.value,
-                                      })
-                                    }
+                                    onChange={(e) => {
+                                      const nextIop = e.target.value;
+                                      setDocumentForm((prev: any) => {
+                                        const prevIop = prev.iopOd || "";
+                                        const cctVal = prev.pachymetryOd || "";
+                                        const calculated = computeCorrectedIop(nextIop, cctVal);
+                                        const hadBothPrev = !!(prevIop.trim() && cctVal.trim());
+                                        const nextCorrected =
+                                          calculated !== ""
+                                            ? calculated
+                                            : (!nextIop.trim() && hadBothPrev) || (!nextIop.trim() && !cctVal.trim())
+                                              ? ""
+                                              : prev.correctedIopOd || "";
+                                        return {
+                                          ...prev,
+                                          iopOd: nextIop,
+                                          correctedIopOd: nextCorrected,
+                                        };
+                                      });
+                                    }}
                                   />
                                 </div>
                                 <div>
@@ -1795,12 +1819,26 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     type="text"
                                     className="w-full p-2 text-xs border rounded-lg font-bold outline-none"
                                     value={documentForm.pachymetryOd || ""}
-                                    onChange={(e) =>
-                                      setDocumentForm({
-                                        ...documentForm,
-                                        pachymetryOd: e.target.value,
-                                      })
-                                    }
+                                    onChange={(e) => {
+                                      const nextCct = e.target.value;
+                                      setDocumentForm((prev: any) => {
+                                        const iopVal = prev.iopOd || "";
+                                        const prevCct = prev.pachymetryOd || "";
+                                        const calculated = computeCorrectedIop(iopVal, nextCct);
+                                        const hadBothPrev = !!(iopVal.trim() && prevCct.trim());
+                                        const nextCorrected =
+                                          calculated !== ""
+                                            ? calculated
+                                            : (!nextCct.trim() && hadBothPrev) || (!iopVal.trim() && !nextCct.trim())
+                                              ? ""
+                                              : prev.correctedIopOd || "";
+                                        return {
+                                          ...prev,
+                                          pachymetryOd: nextCct,
+                                          correctedIopOd: nextCorrected,
+                                        };
+                                      });
+                                    }}
                                   />
                                 </div>
                                 <div>
@@ -1811,12 +1849,13 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     type="text"
                                     className="w-full p-2 text-xs border rounded-lg font-bold outline-none"
                                     value={documentForm.correctedIopOd || ""}
-                                    onChange={(e) =>
-                                      setDocumentForm({
-                                        ...documentForm,
-                                        correctedIopOd: e.target.value,
-                                      })
-                                    }
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setDocumentForm((prev: any) => ({
+                                        ...prev,
+                                        correctedIopOd: val,
+                                      }));
+                                    }}
                                   />
                                 </div>
                                 <div>
@@ -2017,12 +2056,26 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     type="text"
                                     className="w-full p-2 text-xs border rounded-lg font-bold outline-none"
                                     value={documentForm.iopOs || ""}
-                                    onChange={(e) =>
-                                      setDocumentForm({
-                                        ...documentForm,
-                                        iopOs: e.target.value,
-                                      })
-                                    }
+                                    onChange={(e) => {
+                                      const nextIop = e.target.value;
+                                      setDocumentForm((prev: any) => {
+                                        const prevIop = prev.iopOs || "";
+                                        const cctVal = prev.pachymetryOs || "";
+                                        const calculated = computeCorrectedIop(nextIop, cctVal);
+                                        const hadBothPrev = !!(prevIop.trim() && cctVal.trim());
+                                        const nextCorrected =
+                                          calculated !== ""
+                                            ? calculated
+                                            : (!nextIop.trim() && hadBothPrev) || (!nextIop.trim() && !cctVal.trim())
+                                              ? ""
+                                              : prev.correctedIopOs || "";
+                                        return {
+                                          ...prev,
+                                          iopOs: nextIop,
+                                          correctedIopOs: nextCorrected,
+                                        };
+                                      });
+                                    }}
                                   />
                                 </div>
                                 <div>
@@ -2033,12 +2086,26 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     type="text"
                                     className="w-full p-2 text-xs border rounded-lg font-bold outline-none"
                                     value={documentForm.pachymetryOs || ""}
-                                    onChange={(e) =>
-                                      setDocumentForm({
-                                        ...documentForm,
-                                        pachymetryOs: e.target.value,
-                                      })
-                                    }
+                                    onChange={(e) => {
+                                      const nextCct = e.target.value;
+                                      setDocumentForm((prev: any) => {
+                                        const iopVal = prev.iopOs || "";
+                                        const prevCct = prev.pachymetryOs || "";
+                                        const calculated = computeCorrectedIop(iopVal, nextCct);
+                                        const hadBothPrev = !!(iopVal.trim() && prevCct.trim());
+                                        const nextCorrected =
+                                          calculated !== ""
+                                            ? calculated
+                                            : (!nextCct.trim() && hadBothPrev) || (!iopVal.trim() && !nextCct.trim())
+                                              ? ""
+                                              : prev.correctedIopOs || "";
+                                        return {
+                                          ...prev,
+                                          pachymetryOs: nextCct,
+                                          correctedIopOs: nextCorrected,
+                                        };
+                                      });
+                                    }}
                                   />
                                 </div>
                                 <div>
@@ -2049,12 +2116,13 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     type="text"
                                     className="w-full p-2 text-xs border rounded-lg font-bold outline-none"
                                     value={documentForm.correctedIopOs || ""}
-                                    onChange={(e) =>
-                                      setDocumentForm({
-                                        ...documentForm,
-                                        correctedIopOs: e.target.value,
-                                      })
-                                    }
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setDocumentForm((prev: any) => ({
+                                        ...prev,
+                                        correctedIopOs: val,
+                                      }));
+                                    }}
                                   />
                                 </div>
                                 <div>

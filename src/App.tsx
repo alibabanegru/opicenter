@@ -1140,6 +1140,8 @@ export default function App() {
     const sanitized = sanitizeProfile(newProfile);
     setProfileState(sanitized);
   };
+  const profileRef = useRef<UserProfile | null>(profile);
+  profileRef.current = profile;
   const isDoctor = !!(
     profile?.role?.startsWith("doctor") ||
     (profile?.role && DOCTOR_ROLES.includes(profile?.role as any))
@@ -1255,7 +1257,7 @@ export default function App() {
     );
 
     return () => unsubscribe();
-  }, [profile]);
+  }, [profile?.uid, profile?.role]);
 
   const isGoogleUserBanned = useMemo(() => {
     if (!googleUser || !googleUser.email) return false;
@@ -1471,6 +1473,10 @@ export default function App() {
           try {
             initialProfile = JSON.parse(savedProfileStr);
             if (initialProfile) {
+              try {
+                localStorage.setItem("clinic_last_interaction_ts", Date.now().toString());
+              } catch {}
+              setIsAutoClosedForInactivity(false);
               setProfile(initialProfile);
               return;
             }
@@ -1488,6 +1494,10 @@ export default function App() {
             color: "bg-blue-600",
             email: email,
           };
+          try {
+            localStorage.setItem("clinic_last_interaction_ts", Date.now().toString());
+          } catch {}
+          setIsAutoClosedForInactivity(false);
           setProfile(newProfile);
           sessionStorage.setItem("clinic_user", JSON.stringify(newProfile));
           localStorage.setItem("clinic_user", JSON.stringify(newProfile));
@@ -1510,6 +1520,10 @@ export default function App() {
           try {
             const savedProfile = JSON.parse(savedProfileStr);
             if (savedProfile && savedProfile.role !== "patient") {
+              try {
+                localStorage.setItem("clinic_last_interaction_ts", Date.now().toString());
+              } catch {}
+              setIsAutoClosedForInactivity(false);
               setProfile(savedProfile);
               return;
             }
@@ -1525,22 +1539,24 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (googleUser && profile) {
-      if (profile.role === "patient" || profile.role === "tv" || profile.role === "frontdesk" || profile.uid === "tv" || profile.uid === "receptie") return;
+    const currProfile = profileRef.current;
+    if (googleUser && currProfile) {
+      if (currProfile.role === "patient" || currProfile.role === "tv" || currProfile.role === "frontdesk" || currProfile.uid === "tv" || currProfile.uid === "receptie") return;
       const userCheck = checkEmailPermissionForAccount(
         {
-          role: profile.role,
-          id: profile.uid,
-          name: profile.displayName,
+          role: currProfile.role,
+          id: currProfile.uid,
+          name: currProfile.displayName,
         },
         googleUser.email,
       );
       if (!userCheck.allowed) {
         setProfile(null);
+        sessionStorage.removeItem("clinic_user");
         localStorage.removeItem("clinic_user");
       }
     }
-  }, [googleUser, profile]);
+  }, [googleUser?.email, profile?.uid, profile?.role]);
 
   // Connection logs listener moved to run only when isConfigModalOpen is true
 
@@ -4123,29 +4139,32 @@ export default function App() {
       });
     };
   }, [
-    profile,
+    profile?.uid,
+    profile?.role,
     showScreenSaver,
     clinicConfig?.inactivityTimeoutMinutes,
     isScreenSaverEnabledForCurrentUser,
   ]);
 
-  // Închidere automată și deconectare completă pentru tab-uri inactive (peste 2 ore) - 0 Costuri Firebase
+  // Deconectare automată pentru sesiuni inactive (peste 2 ore) fără a forța închiderea ferestrei de browser - 0 Costuri Firebase
   useEffect(() => {
-    if (!profile || profile.role === "tv") return;
+    if (!profile?.uid || profile.role === "tv") return;
 
     const TWO_HOURS_MS = 2 * 60 * 60 * 1000; // 2 ore = 7.200.000 ms
     let lastRecordedTs = Date.now();
+    let lastLocalStorageWriteTs = lastRecordedTs;
+
+    // Resetează necondiționat timestamp-ul la activarea/autentificarea sesiunii pentru a preveni deconectările false din sesiuni anterioare
     try {
-      if (!localStorage.getItem("clinic_last_interaction_ts")) {
-        localStorage.setItem("clinic_last_interaction_ts", Date.now().toString());
-      }
+      localStorage.setItem("clinic_last_interaction_ts", lastRecordedTs.toString());
     } catch {}
 
     const updateActivity = () => {
       const now = Date.now();
-      // Throttle: scriem în localStorage cel mult o dată la 30 secunde pentru 0 consum CPU
-      if (now - lastRecordedTs > 30000) {
-        lastRecordedTs = now;
+      lastRecordedTs = now;
+      // Throttle: scriem în localStorage cel mult o dată la 15 secunde pentru 0 consum CPU
+      if (now - lastLocalStorageWriteTs > 15000) {
+        lastLocalStorageWriteTs = now;
         try {
           localStorage.setItem("clinic_last_interaction_ts", now.toString());
         } catch {}
@@ -4154,7 +4173,7 @@ export default function App() {
 
     const triggerInactivityClose = () => {
       setIsAutoClosedForInactivity(true);
-      // 1. Deconectează complet sesiunea din memorie -> oprește instantaneu toți ascultătorii Firestore
+      // Deconectează complet sesiunea din memorie -> oprește instantaneu toți ascultătorii Firestore fără a închide forțat fereastra browserului
       setProfile(null);
       setShowAdminAppointments(false);
       try {
@@ -4163,18 +4182,19 @@ export default function App() {
       } catch {}
       setGoogleUser(null);
       signOut(auth).catch(() => {});
-
-      // 2. Încearcă închiderea automată a paginii / tab-ului
-      try {
-        window.close();
-      } catch {}
     };
 
     const checkInactivity = () => {
       try {
+        const now = Date.now();
         const storedStr = localStorage.getItem("clinic_last_interaction_ts");
-        const lastActive = storedStr ? Number(storedStr) : lastRecordedTs;
-        if (Date.now() - lastActive >= TWO_HOURS_MS) {
+        const parsedStored = storedStr ? Number(storedStr) : 0;
+        const validStored =
+          Number.isFinite(parsedStored) && parsedStored > 0 && parsedStored <= now + 60000
+            ? parsedStored
+            : 0;
+        const lastActive = Math.max(lastRecordedTs, validStored);
+        if (now - lastActive >= TWO_HOURS_MS) {
           triggerInactivityClose();
         }
       } catch {}
@@ -4183,7 +4203,7 @@ export default function App() {
     // Verificare periodică la fiecare 60 de secunde
     const checkInterval = setInterval(checkInactivity, 60000);
 
-    // Verifică și când utilizatorul deschide din nou tab-ul după inactivitate/sleep
+    // Verifică și când utilizatorul revine în tab după inactivitate/sleep
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         checkInactivity();
@@ -4205,7 +4225,7 @@ export default function App() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       activityEvents.forEach((ev) => window.removeEventListener(ev, updateActivity));
     };
-  }, [profile]);
+  }, [profile?.uid, profile?.role]);
 
   const [passwordDrafts, setPasswordDrafts] = useState<Record<string, string>>(
     {},
@@ -5959,9 +5979,15 @@ export default function App() {
     };
   }, []);
 
+  const hasCleanedDuplicateUsersRef = useRef(false);
   useEffect(() => {
+    if (profile?.role !== "admin") {
+      hasCleanedDuplicateUsersRef.current = false;
+      return;
+    }
+    if (hasCleanedDuplicateUsersRef.current || !availableUsers || availableUsers.length === 0) return;
+    hasCleanedDuplicateUsersRef.current = true;
     const cleanupDuplicates = async () => {
-      if (profile?.role !== "admin" || !availableUsers || availableUsers.length === 0) return;
       try {
         const canonicalIds: Record<string, string> = {
           admin: "admin",
@@ -6003,7 +6029,7 @@ export default function App() {
       }
     };
     cleanupDuplicates();
-  }, [profile, availableUsers]);
+  }, [profile?.uid, profile?.role, availableUsers]);
 
   const handleDeleteUser = async (userId: string) => {
     if (userId === "admin") {
@@ -7544,7 +7570,7 @@ export default function App() {
       unsubSlotLocks();
       window.removeEventListener("beforeunload", handleBeforeUnload);
     };
-  }, [profile]);
+  }, [profile?.uid, profile?.role]);
 
   useEffect(() => {
     if (isBookingModalOpen || isNewPatientFromSearchModalOpen) {
@@ -7787,7 +7813,7 @@ export default function App() {
       unsubMedicalDocuments();
       unsubFrameStock();
     };
-  }, [profile, standalonePortalBypass]);
+  }, [profile?.uid, profile?.role, standalonePortalBypass]);
 
   useEffect(() => {
     if (!googleUser || !googleUser.email) {
@@ -7898,49 +7924,55 @@ export default function App() {
       },
     );
 
-    if (!profile) {
+    const activeUid = profile?.uid;
+    const activeRole = profile?.role;
+    if (!activeUid) {
       return () => {
         unsubClinicConfig();
       };
     }
 
     let unsubCurrentProfile: (() => void) | undefined;
-    if (profile?.uid && profile.role !== "patient") {
+    if (activeUid && activeRole !== "patient") {
       unsubCurrentProfile = onSnapshot(
-        doc(db, "users", profile.uid),
+        doc(db, "users", activeUid),
         (snapshot) => {
+          const currProfile = profileRef.current;
+          if (!currProfile || currProfile.uid !== activeUid) return;
+          const isFromCache = snapshot.metadata.fromCache;
           if (snapshot.exists()) {
             const data = snapshot.data();
-            if (data.name && data.name !== profile.displayName) {
-              const updatedProfile = { ...profile, displayName: data.name };
+            if (data.name && data.name !== currProfile.displayName) {
+              const updatedProfile = { ...currProfile, displayName: data.name };
               setProfile(updatedProfile);
-              sessionStorage.setItem(
-                "clinic_user",
-                JSON.stringify(updatedProfile),
-              );
+              try {
+                sessionStorage.setItem("clinic_user", JSON.stringify(updatedProfile));
+                localStorage.setItem("clinic_user", JSON.stringify(updatedProfile));
+              } catch {}
             }
-          } else {
-            const canonicalId = USERS_DATA[profile.uid]
-              ? profile.uid
-              : profile.role === "tv"
-              ? "tv"
-              : profile.role === "admin"
-              ? "admin"
-              : null;
+          } else if (!isFromCache) {
+            const roleFallbackIds: Record<string, string> = {
+              tv: "tv",
+              admin: "admin",
+              frontdesk: "receptie",
+              doctor1: "turcanu",
+              doctor2: "zorila",
+              doctor3: "ilie",
+            };
+            const canonicalId = USERS_DATA[currProfile.uid]
+              ? currProfile.uid
+              : roleFallbackIds[currProfile.role] || null;
 
             if (canonicalId && USERS_DATA[canonicalId]) {
               setDoc(
                 doc(db, "users", canonicalId),
                 {
-                  name: profile.displayName || USERS_DATA[canonicalId]?.name || "Utilizator",
-                  role: profile.role,
+                  name: currProfile.displayName || USERS_DATA[canonicalId]?.name || "Utilizator",
+                  role: currProfile.role,
                   pass: USERS_DATA[canonicalId]?.pass || "123",
                 },
                 { merge: true }
               ).catch((e) => console.error("Error auto-creating missing user document:", e));
-            } else {
-              setProfile(null);
-              localStorage.removeItem("clinic_user");
             }
           }
         },
@@ -7948,7 +7980,7 @@ export default function App() {
           handleFirestoreError(
             error,
             OperationType.GET,
-            `users/${profile.uid}`,
+            `users/${activeUid}`,
           );
         },
       );
@@ -7958,19 +7990,23 @@ export default function App() {
       unsubClinicConfig();
       if (unsubCurrentProfile) unsubCurrentProfile();
     };
-  }, [profile]);
+  }, [profile?.uid, profile?.role]);
 
   useEffect(() => {
-    if (profile && DOCTOR_ROLES.includes(profile.role as Role)) {
+    const currProfile = profileRef.current;
+    if (currProfile && DOCTOR_ROLES.includes(currProfile.role as Role)) {
       const currentName =
-        roleLabelsState[profile.role as keyof typeof roleLabelsState];
-      if (currentName && currentName !== profile.displayName) {
-        const updatedProfile = { ...profile, displayName: currentName };
+        roleLabelsState[currProfile.role as keyof typeof roleLabelsState];
+      if (currentName && currentName !== currProfile.displayName) {
+        const updatedProfile = { ...currProfile, displayName: currentName };
         setProfile(updatedProfile);
-        localStorage.setItem("clinic_user", JSON.stringify(updatedProfile));
+        try {
+          sessionStorage.setItem("clinic_user", JSON.stringify(updatedProfile));
+          localStorage.setItem("clinic_user", JSON.stringify(updatedProfile));
+        } catch {}
       }
     }
-  }, [roleLabelsState, profile?.role]);
+  }, [roleLabelsState, profile?.uid, profile?.role]);
 
   useEffect(() => {
     if (!isConfigModalOpen || configActiveTab !== "audit") return;
@@ -8923,6 +8959,10 @@ export default function App() {
         }
 
         setShowScreenSaver(false);
+        setIsAutoClosedForInactivity(false);
+        try {
+          localStorage.setItem("clinic_last_interaction_ts", Date.now().toString());
+        } catch {}
         setDarkMode(false);
         localStorage.setItem("clinic_dark_mode_preference", "false");
         document.documentElement.classList.remove("dark");
@@ -18309,6 +18349,64 @@ export default function App() {
         return activePresc ? (activePresc.os as any)?.[prop] : (currentMedicalRecord.os as any)?.[prop];
       };
 
+      const calcCorrectedOnOpen = (iopRaw: string, cctRaw: string) => {
+        const iopClean = (iopRaw || "").trim().replace(",", ".");
+        const cctClean = (cctRaw || "").trim().replace(",", ".");
+        if (!iopClean || !cctClean) return "";
+        const iopNum = parseFloat(iopClean);
+        const cctNum = parseFloat(cctClean);
+        if (isNaN(iopNum) || isNaN(cctNum) || cctNum <= 0) return "";
+        return (iopNum + (545 - cctNum) * 0.05).toFixed(1);
+      };
+      const initIopOd =
+        currentMedicalRecord.iop?.od ||
+        getVal("iop", "od") ||
+        (isSamePrescription ? prevForm?.iopOd : "") ||
+        "";
+      const initIopOs =
+        currentMedicalRecord.iop?.os ||
+        getVal("iop", "os") ||
+        (isSamePrescription ? prevForm?.iopOs : "") ||
+        "";
+      const initPachymetryOd =
+        currentMedicalRecord.pachymetry?.od ||
+        getVal("pachymetry", "od") ||
+        (isSamePrescription ? prevForm?.pachymetryOd : "") ||
+        "";
+      const initPachymetryOs =
+        currentMedicalRecord.pachymetry?.os ||
+        getVal("pachymetry", "os") ||
+        (isSamePrescription ? prevForm?.pachymetryOs : "") ||
+        "";
+      const recCorrOd =
+        currentMedicalRecord.correctedIop?.od ||
+        getVal("correctedIop", "od") ||
+        "";
+      const recCorrOs =
+        currentMedicalRecord.correctedIop?.os ||
+        getVal("correctedIop", "os") ||
+        "";
+      const prevMatchesOd =
+        isSamePrescription &&
+        (prevForm?.iopOd || "") === initIopOd &&
+        (prevForm?.pachymetryOd || "") === initPachymetryOd;
+      const prevMatchesOs =
+        isSamePrescription &&
+        (prevForm?.iopOs || "") === initIopOs &&
+        (prevForm?.pachymetryOs || "") === initPachymetryOs;
+      const initCorrectedIopOd =
+        recCorrOd ||
+        (prevMatchesOd && prevForm?.correctedIopOd ? prevForm.correctedIopOd : "") ||
+        calcCorrectedOnOpen(initIopOd, initPachymetryOd) ||
+        (isSamePrescription ? prevForm?.correctedIopOd : "") ||
+        "";
+      const initCorrectedIopOs =
+        recCorrOs ||
+        (prevMatchesOs && prevForm?.correctedIopOs ? prevForm.correctedIopOs : "") ||
+        calcCorrectedOnOpen(initIopOs, initPachymetryOs) ||
+        (isSamePrescription ? prevForm?.correctedIopOs : "") ||
+        "";
+
       setDocumentForm({
         patientName:
           currentMedicalRecord.patientName ||
@@ -18436,26 +18534,10 @@ export default function App() {
             )?.toString() || ""
           : currentMedicalRecord.patientAge?.toString() || "",
         ageDetailed: displayAgeVal,
-        iopOd:
-          currentMedicalRecord.iop?.od ||
-          (isSamePrescription ? prevForm?.iopOd : "") ||
-          patientFormGeneral?.iopOd ||
-          "",
-        iopOs:
-          currentMedicalRecord.iop?.os ||
-          (isSamePrescription ? prevForm?.iopOs : "") ||
-          patientFormGeneral?.iopOs ||
-          "",
-        pachymetryOd:
-          currentMedicalRecord.pachymetry?.od ||
-          (isSamePrescription ? prevForm?.pachymetryOd : "") ||
-          patientFormGeneral?.pachymetryOd ||
-          "",
-        pachymetryOs:
-          currentMedicalRecord.pachymetry?.os ||
-          (isSamePrescription ? prevForm?.pachymetryOs : "") ||
-          patientFormGeneral?.pachymetryOs ||
-          "",
+        iopOd: initIopOd,
+        iopOs: initIopOs,
+        pachymetryOd: initPachymetryOd,
+        pachymetryOs: initPachymetryOs,
         axialLengthOd:
           currentMedicalRecord.axialLength?.od ||
           (isSamePrescription ? prevForm?.axialLengthOd : "") ||
@@ -18474,16 +18556,8 @@ export default function App() {
             ? currentMedicalRecord.axialLengthHistory[currentMedicalRecord.axialLengthHistory.length - 1]?.os || ""
             : "") ||
           "",
-        correctedIopOd:
-          currentMedicalRecord.correctedIop?.od ||
-          (isSamePrescription ? prevForm?.correctedIopOd : "") ||
-          patientFormGeneral?.correctedIopOd ||
-          "",
-        correctedIopOs:
-          currentMedicalRecord.correctedIop?.os ||
-          (isSamePrescription ? prevForm?.correctedIopOs : "") ||
-          patientFormGeneral?.correctedIopOs ||
-          "",
+        correctedIopOd: initCorrectedIopOd,
+        correctedIopOs: initCorrectedIopOs,
         keratometryOd:
           [
             currentMedicalRecord.keratometry?.od || "",
@@ -19729,7 +19803,7 @@ export default function App() {
 
       setLastCleanupResult(resMsg);
 
-      if (clinicConfig?.autoCleanupEnabled || total > 0) {
+      if (profileRef.current?.role === "admin" && (clinicConfig?.autoCleanupEnabled || total > 0)) {
         updateClinicConfig({ lastAutoCleanupDate: todayStr }).catch(() => {});
       }
     } catch (err: any) {
@@ -19741,9 +19815,9 @@ export default function App() {
     }
   };
 
-  // Schedule auto-cleanup în fundal dacă setarea este activată
+  // Schedule auto-cleanup în fundal dacă setarea este activată (doar administratorul actualizează clinicConfig)
   useEffect(() => {
-    if (!profile || (profile.role !== "admin" && profile.role !== "frontdesk")) return;
+    if (profile?.role !== "admin") return;
     if (!clinicConfig?.autoCleanupEnabled) return;
 
     const todayStr = new Date().toISOString().substring(0, 10);
@@ -19754,7 +19828,7 @@ export default function App() {
     }, 7000);
 
     return () => clearTimeout(timer);
-  }, [clinicConfig?.autoCleanupEnabled, clinicConfig?.autoCleanupDays, clinicConfig?.lastAutoCleanupDate, profile]);
+  }, [clinicConfig?.autoCleanupEnabled, clinicConfig?.autoCleanupDays, clinicConfig?.lastAutoCleanupDate, profile?.uid, profile?.role]);
 
 
   const compressAndResizeImage = (
@@ -20231,6 +20305,39 @@ export default function App() {
     );
   }
 
+  if (isAutoClosedForInactivity) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center select-none">
+        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl flex flex-col items-center">
+          <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mb-6 text-amber-500">
+            <ClockIcon className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl sm:text-2xl font-black text-white mb-3">
+            Sesiune Deconectată / Inactivă
+          </h2>
+          <p className="text-xs sm:text-sm text-slate-400 mb-6 leading-relaxed">
+            Pentru a proteja datele pacienților și pentru a economisi conexiunile Firebase, această sesiune a fost deconectată automat după <strong className="text-amber-400">2 ore de inactivitate</strong>.
+          </p>
+          <div className="w-full flex flex-col gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  localStorage.setItem("clinic_last_interaction_ts", Date.now().toString());
+                } catch {}
+                setIsAutoClosedForInactivity(false);
+              }}
+              className="w-full py-3.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm transition-all shadow-lg shadow-blue-900/30 cursor-pointer active:scale-98 flex items-center justify-center gap-2"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Reconectare / Înapoi la Autentificare
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!googleUser) {
     return (
       <div
@@ -20668,6 +20775,10 @@ export default function App() {
                 color: "bg-blue-600",
                 email: email,
               };
+              try {
+                localStorage.setItem("clinic_last_interaction_ts", Date.now().toString());
+              } catch {}
+              setIsAutoClosedForInactivity(false);
               setProfile(newProfile);
               sessionStorage.setItem("clinic_user", JSON.stringify(newProfile));
               localStorage.setItem("clinic_user", JSON.stringify(newProfile));
