@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1d4ed8" />
+      <stop offset="100%" stop-color="#2563eb" />
+    </linearGradient>
+    <linearGradient id="lensGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60a5fa" />
+      <stop offset="100%" stop-color="#1e40af" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+  <path
+    d="M72 256C116 176 184 140 256 140C328 140 396 176 440 256C396 336 328 372 256 372C184 372 116 336 72 256Z"
+    fill="#ffffff"
+  />
+  <circle cx="256" cy="256" r="78" fill="url(#lensGrad)" />
+  <circle cx="256" cy="256" r="34" fill="#0f172a" />
+  <circle cx="280" cy="232" r="14" fill="#ffffff" opacity="0.9" />
+  <path
+    d="M256 112v24M256 376v24M112 256h24M376 256h24"
+    stroke="#93c5fd"
+    stroke-width="10"
+    stroke-linecap="round"
+    opacity="0.7"
+  />
+</svg>

@@ -99,7 +99,6 @@ export const BNRModal: React.FC<BNRModalProps> = ({
     setBnrLoading(true);
     setBnrError(null);
     try {
-      let response = null;
       const apiUrls = [
         "https://open.er-api.com/v6/latest/RON",
         "https://api.exchangerate-api.com/v4/latest/RON",
@@ -107,28 +106,38 @@ export const BNRModal: React.FC<BNRModalProps> = ({
         "https://api.frankfurter.dev/latest?from=RON&to=EUR,USD,GBP,CHF,HUF,BGN",
       ];
 
-      for (const url of apiUrls) {
-        try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 6000);
-          const res = await fetch(url, { signal: controller.signal });
-          clearTimeout(timer);
-          if (res && res.ok) {
-            response = res;
-            break;
+      const controllers = apiUrls.map(() => new AbortController());
+      const data = await Promise.any(
+        apiUrls.map(async (url, idx) => {
+          const controller = controllers[idx];
+          const timer = setTimeout(() => controller.abort(), 4000);
+          try {
+            const res = await fetch(url, { signal: controller.signal });
+            if (!res || !res.ok) {
+              throw new Error(`HTTP ${res?.status || "error"} from ${url}`);
+            }
+            const parsed = await res.json();
+            if (!parsed || !parsed.rates) {
+              throw new Error(`Invalid rates payload from ${url}`);
+            }
+            controllers.forEach((ctrl, cIdx) => {
+              if (cIdx !== idx) {
+                try { ctrl.abort(); } catch {}
+              }
+            });
+            return parsed;
+          } finally {
+            clearTimeout(timer);
           }
-        } catch (err) {
-          console.warn(`Failed to fetch exchange rates from URL ${url}:`, err);
-        }
-      }
+        })
+      ).catch(() => null);
 
-      if (!response) {
+      if (!data) {
         throw new Error(
           "Nu s-a putut realiza conexiunea cu niciunul dintre serverele de curs valuar (Open ER, ExchangeRate-API, Frankfurter)."
         );
       }
 
-      const data = await response.json();
       if (data && data.rates) {
         const getRate = (curr: string) => {
           const r = data.rates[curr];
@@ -168,41 +177,50 @@ export const BNRModal: React.FC<BNRModalProps> = ({
             const startStr = format(fiveDaysAgo, "yyyy-MM-dd");
             const endStr = format(new Date(), "yyyy-MM-dd");
 
-            const trendUrl = `https://api.frankfurter.app/${startStr}..${endStr}?from=RON&to=EUR,USD,GBP,CHF,HUF,BGN`;
-            let histRes = null;
-            try {
-              histRes = await fetch(trendUrl);
-            } catch (e) {
-              const fallbackUrl = `https://api.frankfurter.dev/${startStr}..${endStr}?from=RON&to=EUR,USD,GBP,CHF,HUF,BGN`;
-              histRes = await fetch(fallbackUrl);
-            }
-
-            if (histRes && !histRes.ok) {
-              const fallbackUrl = `https://api.frankfurter.dev/${startStr}..${endStr}?from=RON&to=EUR,USD,GBP,CHF,HUF,BGN`;
-              histRes = await fetch(fallbackUrl);
-            }
-
-            if (histRes && histRes.ok) {
-              const histData = await histRes.json();
-              if (histData && histData.rates) {
-                const dates = Object.keys(histData.rates).sort();
-                if (dates.length >= 2) {
-                  const lastDate = dates[dates.length - 1];
-                  const prevDate = dates[dates.length - 2];
-                  const lastRates = histData.rates[lastDate];
-                  const prevRates = histData.rates[prevDate];
-
-                  ["EUR", "USD", "GBP", "CHF", "HUF", "BGN"].forEach((curr) => {
-                    const last = lastRates[curr];
-                    const prev = prevRates[curr];
-                    if (last && prev) {
-                      if (last < prev) trends[curr] = "up";
-                      else if (last > prev) trends[curr] = "down";
-                      else trends[curr] = "flat";
+            const trendUrls = [
+              `https://api.frankfurter.app/${startStr}..${endStr}?from=RON&to=EUR,USD,GBP,CHF,HUF,BGN`,
+              `https://api.frankfurter.dev/${startStr}..${endStr}?from=RON&to=EUR,USD,GBP,CHF,HUF,BGN`,
+            ];
+            const trendControllers = trendUrls.map(() => new AbortController());
+            const histData = await Promise.any(
+              trendUrls.map(async (url, idx) => {
+                const controller = trendControllers[idx];
+                const timer = setTimeout(() => controller.abort(), 4000);
+                try {
+                  const res = await fetch(url, { signal: controller.signal });
+                  if (!res || !res.ok) throw new Error("Trend HTTP error");
+                  const parsed = await res.json();
+                  if (!parsed || !parsed.rates) throw new Error("Invalid trend payload");
+                  trendControllers.forEach((ctrl, cIdx) => {
+                    if (cIdx !== idx) {
+                      try { ctrl.abort(); } catch {}
                     }
                   });
-                  setBnrTrends(trends);
+                  return parsed;
+                } finally {
+                  clearTimeout(timer);
                 }
+              })
+            ).catch(() => null);
+
+            if (histData && histData.rates) {
+              const dates = Object.keys(histData.rates).sort();
+              if (dates.length >= 2) {
+                const lastDate = dates[dates.length - 1];
+                const prevDate = dates[dates.length - 2];
+                const lastRates = histData.rates[lastDate];
+                const prevRates = histData.rates[prevDate];
+
+                ["EUR", "USD", "GBP", "CHF", "HUF", "BGN"].forEach((curr) => {
+                  const last = lastRates[curr];
+                  const prev = prevRates[curr];
+                  if (last && prev) {
+                    if (last < prev) trends[curr] = "up";
+                    else if (last > prev) trends[curr] = "down";
+                    else trends[curr] = "flat";
+                  }
+                });
+                setBnrTrends(trends);
               }
             }
           } catch (trendErr) {

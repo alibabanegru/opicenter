@@ -1217,12 +1217,24 @@ export default function App() {
     }
   }, []);
 
+  const hasLiveAlerts = useMemo(() => {
+    if (!receptionAlerts || receptionAlerts.length === 0) return false;
+    const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
+    return receptionAlerts.some((alert) => {
+      if (dismissedAlertIds.includes(alert.id)) return false;
+      const alertTime = alert.createdAt ? new Date(alert.createdAt).getTime() : 0;
+      return alertTime > tenMinutesAgo;
+    });
+  }, [receptionAlerts, dismissedAlertIds]);
+
   useEffect(() => {
+    if (!hasLiveAlerts) return;
+    setNowTick(Date.now());
     const timer = setInterval(() => {
       setNowTick(Date.now());
     }, 10000);
     return () => clearInterval(timer);
-  }, []);
+  }, [hasLiveAlerts]);
 
   useEffect(() => {
     if (
@@ -1693,6 +1705,14 @@ export default function App() {
     let doarTratamentCount = 0;
     let alteCount = 0;
 
+    const recordLookupMap = new Map<string, MedicalRecord>();
+    for (const r of medicalRecords) {
+      const key = `${r.patientName || ""}__${r.patientPhone || ""}`;
+      if (!recordLookupMap.has(key)) {
+        recordLookupMap.set(key, r);
+      }
+    }
+
     appointments.forEach((app) => {
       if (app.status === "cancelled") return;
 
@@ -1719,8 +1739,8 @@ export default function App() {
 
       totalPatients++;
 
-      const matchingRecord = medicalRecords.find(
-        (r) => r.patientName === app.patientName && r.patientPhone === app.patientPhone
+      const matchingRecord = recordLookupMap.get(
+        `${app.patientName || ""}__${app.patientPhone || ""}`,
       );
 
       const isControl = !!app.isControl || !!matchingRecord?.isControl;
@@ -2177,54 +2197,84 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOmniboxOpen]);
 
+  const [isLoadingAllHistory, setIsLoadingAllHistory] = useState(false);
+  const [isLoading30Days, setIsLoading30Days] = useState(false);
+  const [hasLoadedAllHistory, setHasLoadedAllHistory] = useState(false);
+  const fullArchivePromiseRef = useRef<Promise<{ allApps: Appointment[]; allMeds: MedicalRecord[] } | null> | null>(null);
+  const hasLoadedAllMedicalDocumentsRef = useRef<boolean>(false);
+
+  const ensureFullArchiveLoaded = useCallback(
+    async (silent = true): Promise<{ allApps: Appointment[]; allMeds: MedicalRecord[] } | null> => {
+      if (hasLoadedAllHistory) {
+        return { allApps: appointments, allMeds: medicalRecords };
+      }
+      if (fullArchivePromiseRef.current) {
+        return fullArchivePromiseRef.current;
+      }
+      if (!silent) {
+        setIsLoadingAllHistory(true);
+      }
+      const p = (async () => {
+        try {
+          const [appSnap, medSnap] = await Promise.all([
+            getDocs(collection(db, "appointments")),
+            getDocs(collection(db, "medicalRecords")),
+          ]);
+          const allApps = appSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Appointment));
+          const allMeds = medSnap.docs.map((d) => ({ id: d.id, ...d.data() } as MedicalRecord));
+          setAppointments(allApps);
+          setMedicalRecords(allMeds);
+          setHasLoadedAllHistory(true);
+          if (!silent) {
+            setSuccessMessage(`Toată arhiva a fost încărcată cu succes! (${allApps.length} programări, ${allMeds.length} fișe medicale)`);
+          }
+          return { allApps, allMeds };
+        } catch (e) {
+          console.error("Error loading full archive:", e);
+          if (!silent) {
+            setErrorMessage("Eroare la descărcarea arhivei din baza de date. Verificați conexiunea la internet.");
+          }
+          return null;
+        } finally {
+          fullArchivePromiseRef.current = null;
+          if (!silent) {
+            setIsLoadingAllHistory(false);
+          }
+        }
+      })();
+      fullArchivePromiseRef.current = p;
+      return p;
+    },
+    [hasLoadedAllHistory, appointments, medicalRecords]
+  );
+
   // Smart / Lazy Loading: Căutare automată în arhivă pentru Omnibox (Spotlight)
-  // Optimizat Firebase (Point 3.C): nu declanșează citiri dacă pacientul a fost deja găsit în memorie,
-  // nu re-interoghează medicalRecords (care sunt deja sincronizate integral),
-  // și memorează interogările recente pentru a elimina citirile repetitive la tastare.
   useEffect(() => {
     const q = deferredUniversalSearchQuery.trim();
-    if (q.length < 3) return;
+    if (q.length < 2) return;
     const qNorm = q.toLowerCase();
 
     // 1. Dacă pacientul există deja în memoria locală, nu mai consumăm citiri Firebase
     if (omniboxMatches.length > 0) return;
 
-    // 2. Dacă termenul a fost deja căutat în această sesiune, nu mai re-interogăm
+    // 2. Dacă arhiva completă a fost deja încărcată în memorie, nu mai sunt alte potriviri de căutat în server
+    if (hasLoadedAllHistory) return;
+
+    // 3. Dacă termenul a fost deja verificat în această sesiune, nu mai re-interogăm
     if (searchedOmniboxQueriesRef.current.has(qNorm)) return;
 
     const timer = setTimeout(async () => {
       try {
         searchedOmniboxQueriesRef.current.add(qNorm);
-        const cleanDigits = q.replace(/\D/g, "");
-        const fetchedAppointments: Appointment[] = [];
-
-        // Căutare doar în arhiva de programări vechi (medicalRecords sunt deja în memorie)
-        if (cleanDigits.length >= 4) {
-          const snapApps = await getDocs(
-            query(collection(db, "appointments"), where("patientPhone", "==", q))
-          ).catch(() => null);
-          snapApps?.forEach((d) => fetchedAppointments.push({ id: d.id, ...d.data() } as Appointment));
-        }
-
-        const snapNameApp = await getDocs(
-          query(collection(db, "appointments"), where("patientName", "==", q))
-        ).catch(() => null);
-        snapNameApp?.forEach((d) => fetchedAppointments.push({ id: d.id, ...d.data() } as Appointment));
-
-        if (fetchedAppointments.length > 0) {
-          setAppointments((prev) => {
-            const existingIds = new Set(prev.map((a) => a.id));
-            const toAdd = fetchedAppointments.filter((a) => !existingIds.has(a.id));
-            return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
-          });
-        }
+        // Încărcare automată a arhivei pentru căutări parțiale / case-insensitive / fără diacritice
+        await ensureFullArchiveLoaded(true);
       } catch (err) {
         console.warn("Omnibox archive search notice:", err);
       }
-    }, 500);
+    }, 350);
 
     return () => clearTimeout(timer);
-  }, [deferredUniversalSearchQuery, omniboxMatches.length]);
+  }, [deferredUniversalSearchQuery, omniboxMatches.length, hasLoadedAllHistory, ensureFullArchiveLoaded]);
 
 
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
@@ -2298,10 +2348,6 @@ export default function App() {
     }
   }, [selectedDate, profile]);
 
-  const [isLoadingAllHistory, setIsLoadingAllHistory] = useState(false);
-  const [isLoading30Days, setIsLoading30Days] = useState(false);
-  const [hasLoadedAllHistory, setHasLoadedAllHistory] = useState(false);
-
   const handleLoadFullArchive = async () => {
     if (isLoadingAllHistory || hasLoadedAllHistory) {
       if (hasLoadedAllHistory) {
@@ -2309,24 +2355,7 @@ export default function App() {
       }
       return;
     }
-    setIsLoadingAllHistory(true);
-    try {
-      const [appSnap, medSnap] = await Promise.all([
-        getDocs(collection(db, "appointments")),
-        getDocs(collection(db, "medicalRecords")),
-      ]);
-      const allApps = appSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Appointment));
-      const allMeds = medSnap.docs.map((d) => ({ id: d.id, ...d.data() } as MedicalRecord));
-      setAppointments(allApps);
-      setMedicalRecords(allMeds);
-      setHasLoadedAllHistory(true);
-      setSuccessMessage(`Toată arhiva a fost încărcată cu succes! (${allApps.length} programări, ${allMeds.length} fișe medicale)`);
-    } catch (e) {
-      console.error("Error loading full archive:", e);
-      setErrorMessage("Eroare la descărcarea arhivei din baza de date. Verificați conexiunea la internet.");
-    } finally {
-      setIsLoadingAllHistory(false);
-    }
+    await ensureFullArchiveLoaded(false);
   };
 
   const handleLoad30Days = async () => {
@@ -2334,20 +2363,46 @@ export default function App() {
     setIsLoading30Days(true);
     try {
       const thirtyDaysAgoISO = subDays(startOfDay(new Date()), 30).toISOString();
-      const appSnap = await getDocs(
-        query(
-          collection(db, "appointments"),
-          where("startTime", ">=", thirtyDaysAgoISO),
+      const [appSnap, medSnap, docsSnap] = await Promise.all([
+        getDocs(
+          query(
+            collection(db, "appointments"),
+            where("startTime", ">=", thirtyDaysAgoISO),
+          ),
         ),
-      );
+        getDocs(
+          query(
+            collection(db, "medicalRecords"),
+            orderBy("updatedAt", "desc"),
+            limit(50),
+          ),
+        ),
+        getDocs(
+          query(
+            collection(db, "medicalDocuments"),
+            where("date", ">=", thirtyDaysAgoISO),
+          ),
+        ),
+      ]);
       const apps30 = appSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Appointment));
+      const meds50 = medSnap.docs.map((d) => ({ id: d.id, ...d.data() } as MedicalRecord));
+      const docs30 = docsSnap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((d: any) => !d.isDeleted);
+
       setAppointments((prev) => {
         const freshIds = new Set(apps30.map((a) => a.id));
         const futureOrOther = prev.filter((a) => !freshIds.has(a.id) && a.startTime >= thirtyDaysAgoISO);
         return [...apps30, ...futureOrOther];
       });
+      setMedicalRecords(meds50);
+      setMedicalDocuments(docs30);
+      hasLoadedAllMedicalDocumentsRef.current = false;
+      searchedOmniboxQueriesRef.current.clear();
+      searchedRegistryQueriesRef.current.clear();
+      loadedArchiveMonthsRef.current.clear();
       setHasLoadedAllHistory(false);
-      setSuccessMessage(`Modul Smart Loading (30 zile) a fost activat! (${apps30.length} programări recente)`);
+      setSuccessMessage(`Modul Smart Loading (30 zile) a fost activat! (${apps30.length} programări recente, ${meds50.length} fișe recente)`);
     } catch (e) {
       console.error("Error loading 30 days:", e);
       setErrorMessage("Eroare la sincronizarea ultimelor 30 de zile.");
@@ -3301,22 +3356,21 @@ export default function App() {
       });
   }, [medicalDocuments, registrySearchQuery]);
 
-  // Lazy search pentru documente medicale vechi în registru (Point 3.C):
-  // Caută pe server doar dacă nu sunt găsite în memoria locală și memorează termenii pentru a evita re-interogarea
+  // Lazy search pentru documente medicale vechi în registru (inclusiv căutări parțiale / case-insensitive)
   useEffect(() => {
     const q = registrySearchQuery.trim();
-    if (q.length < 3) return;
+    if (q.length < 2) return;
     const qNorm = q.toLowerCase();
+    if (hasLoadedAllMedicalDocumentsRef.current) return;
     if (searchedRegistryQueriesRef.current.has(qNorm)) return;
     if (filteredRegistryDocs.length > 0) return;
 
     searchedRegistryQueriesRef.current.add(qNorm);
     const timer = setTimeout(async () => {
       try {
-        const snap = await getDocs(
-          query(collection(db, "medicalDocuments"), where("patientName", "==", q))
-        ).catch(() => null);
-        if (snap && !snap.empty) {
+        const snap = await getDocs(collection(db, "medicalDocuments")).catch(() => null);
+        if (snap) {
+          hasLoadedAllMedicalDocumentsRef.current = true;
           const fetched = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })).filter((d: any) => !d.isDeleted);
           setMedicalDocuments((prev) => {
             const existingIds = new Set(prev.map((d: any) => d.id));
@@ -3327,7 +3381,7 @@ export default function App() {
       } catch (e) {
         console.warn("Registry archive search notice:", e);
       }
-    }, 400);
+    }, 350);
 
     return () => clearTimeout(timer);
   }, [registrySearchQuery, filteredRegistryDocs.length]);
@@ -3787,6 +3841,33 @@ export default function App() {
 
     return Array.from(patientMap.values());
   }, [medicalRecords, appointments]);
+
+  const todayBirthdayCount = useMemo(() => {
+    const all = getAllPatients();
+    return all.filter((p) => getBirthdayStatus(p.birthDate)?.isToday).length;
+  }, [getAllPatients, getBirthdayStatus]);
+
+  useEffect(() => {
+    if (!profile || hasLoadedAllHistory) return;
+    const needsFullArchive =
+      isBirthdayModalOpen ||
+      (isConfigModalOpen &&
+        (profile.role === "admin" ||
+          configActiveTab === "recall" ||
+          configActiveTab === "backup" ||
+          configActiveTab === "noshow" ||
+          configActiveTab === "elderly"));
+    if (needsFullArchive) {
+      ensureFullArchiveLoaded(true);
+    }
+  }, [
+    profile,
+    hasLoadedAllHistory,
+    isBirthdayModalOpen,
+    isConfigModalOpen,
+    configActiveTab,
+    ensureFullArchiveLoaded,
+  ]);
 
   const [showSavedAnimation, setShowSavedAnimation] = useState(false);
   const [isPrismModalOpen, setIsPrismModalOpen] = useState(false);
@@ -8578,11 +8659,72 @@ export default function App() {
     setSearchFilter("all");
     setIsSearchModalOpen(true);
 
-    // Căutare la cerere în arhivă pentru programări și fișe medicale mai vechi
+    // Căutare la cerere în arhivă pentru programări și fișe medicale mai vechi (inclusiv potriviri parțiale / fără diacritice / lowercase)
     const trimmedQuery = queryStr.trim();
-    if (trimmedQuery.length >= 3) {
+    if (trimmedQuery.length >= 2 && !hasLoadedAllHistory) {
       (async () => {
         try {
+          if (uniqueResults.length === 0) {
+            const loaded = await ensureFullArchiveLoaded(true);
+            if (loaded) {
+              const { allApps, allMeds } = loaded;
+              const archiveAppResults = allApps.filter((app) => {
+                if (type === "name") {
+                  return (
+                    matchPatientName(app.patientName, queryStr) ||
+                    (cleanDigits.length >= 3 && (app.patientPhone || "").replace(/\D/g, "").includes(cleanDigits)) ||
+                    (app.patientCnp && app.patientCnp.includes(trimmedQuery))
+                  );
+                } else {
+                  const cleanPhone = (app.patientPhone || "").replace(/\D/g, "");
+                  return cleanPhone.includes(cleanDigits) || (app.patientPhone || "").includes(queryStr);
+                }
+              });
+
+              const appKeys = new Set(allApps.map((a) => `${a.patientName || ""}_${a.patientPhone || ""}`));
+              const archiveMedResults = allMeds
+                .filter((med) => {
+                  const name = med.patientName || "";
+                  const phone = med.patientPhone || "";
+                  if (type === "name") {
+                    return (
+                      matchPatientName(name, queryStr) ||
+                      (cleanDigits.length >= 3 && phone.replace(/\D/g, "").includes(cleanDigits)) ||
+                      (med.patientCnp && med.patientCnp.includes(trimmedQuery))
+                    );
+                  } else {
+                    const cleanPhone = phone.replace(/\D/g, "");
+                    return cleanPhone.includes(cleanDigits) || phone.includes(queryStr);
+                  }
+                })
+                .filter((med) => !appKeys.has(`${med.patientName || ""}_${med.patientPhone || ""}`))
+                .map((med) => ({
+                  id: `med_${med.id}`,
+                  patientName: med.patientName || "",
+                  patientPhone: med.patientPhone || "",
+                  patientAge: med.patientAge?.toString() || "",
+                  patientBirthDate: med.patientBirthDate || "",
+                  patientSex: med.patientSex || "",
+                  startTime: med.updatedAt || med.createdAt || new Date(0).toISOString(),
+                  endTime: med.updatedAt || med.createdAt || new Date(0).toISOString(),
+                  doctorId: "all",
+                  status: "completed" as const,
+                  isFromHistoryOnly: true,
+                } as unknown as Appointment));
+
+              const archiveCombined = Array.from(
+                new Map<string, any>([...archiveAppResults, ...archiveMedResults].map((item) => [item.id, item])).values()
+              ).sort(
+                (a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime()
+              );
+
+              if (archiveCombined.length > 0) {
+                setSearchResults(archiveCombined);
+              }
+              return;
+            }
+          }
+
           const extraApps: Appointment[] = [];
           const extraMeds: MedicalRecord[] = [];
 
@@ -12799,6 +12941,8 @@ export default function App() {
       {
         patientRecordForToday: MedicalRecord | null;
         hasMedicalReportToday: boolean;
+        matchingRecord: MedicalRecord | null;
+        hasDioptersOrContactLenses: boolean;
       }
     >();
 
@@ -12815,7 +12959,18 @@ export default function App() {
         : "";
 
     const recMap = new Map<string, MedicalRecord[]>();
+    const recByIdMap = new Map<string, MedicalRecord>();
+    const recByCnpMap = new Map<string, MedicalRecord[]>();
+    const recByTokenMap = new Map<string, MedicalRecord[]>();
+
     medicalRecords.forEach((r) => {
+      if (r.id) recByIdMap.set(r.id, r);
+      const rCnp = (r.patientCnp || "").trim();
+      if (rCnp) {
+        if (!recByCnpMap.has(rCnp)) recByCnpMap.set(rCnp, []);
+        recByCnpMap.get(rCnp)!.push(r);
+      }
+
       const nameKey = cleanStr(r.patientName);
       const phoneKey = (r.patientPhone || "").replace(/\D/g, "");
       if (nameKey) {
@@ -12825,7 +12980,18 @@ export default function App() {
       if (phoneKey) {
         if (!recMap.has(phoneKey)) recMap.set(phoneKey, []);
         recMap.get(phoneKey)!.push(r);
+        if (phoneKey.length >= 6) {
+          const phoneSuffix = phoneKey.slice(-6);
+          if (!recMap.has(phoneSuffix)) recMap.set(phoneSuffix, []);
+          recMap.get(phoneSuffix)!.push(r);
+        }
       }
+
+      const normTokens = normalizePatientName(r.patientName).split(" ").filter((t) => t.length >= 2);
+      normTokens.forEach((tok) => {
+        if (!recByTokenMap.has(tok)) recByTokenMap.set(tok, []);
+        recByTokenMap.get(tok)!.push(r);
+      });
     });
 
     const docMap = new Map<string, any[]>();
@@ -12886,7 +13052,70 @@ export default function App() {
         return isSameDay(parseISO(d.date), appTime);
       });
 
-      map.set(app.id, { patientRecordForToday, hasMedicalReportToday });
+      // Collect O(1) candidate set for matchingRecord & diopter flag
+      const candidateSet = new Set<MedicalRecord>();
+      const bySameId = recByIdMap.get(app.id);
+      if (bySameId) candidateSet.add(bySameId);
+      const targetMedId = (app as any).medicalRecordId;
+      if (targetMedId) {
+        const byTargetId = recByIdMap.get(targetMedId);
+        if (byTargetId) candidateSet.add(byTargetId);
+      }
+      const appCnp = (app.patientCnp || "").trim();
+      if (appCnp && recByCnpMap.has(appCnp)) {
+        recByCnpMap.get(appCnp)!.forEach((r) => candidateSet.add(r));
+      }
+      if (appName && recMap.has(appName)) {
+        recMap.get(appName)!.forEach((r) => candidateSet.add(r));
+      }
+      if (appPhone) {
+        if (recMap.has(appPhone)) recMap.get(appPhone)!.forEach((r) => candidateSet.add(r));
+        if (appPhone.length >= 6) {
+          const suffix = appPhone.slice(-6);
+          if (recMap.has(suffix)) recMap.get(suffix)!.forEach((r) => candidateSet.add(r));
+        }
+      }
+      const appNormTokens = normalizePatientName(app.patientName).split(" ").filter((t) => t.length >= 2);
+      appNormTokens.forEach((tok) => {
+        const bucket = recByTokenMap.get(tok);
+        if (bucket && bucket.length <= 40) {
+          bucket.forEach((r) => candidateSet.add(r));
+        }
+      });
+
+      const candidates = Array.from(candidateSet);
+      const matchingRecord =
+        candidates.find((r) => isMedicalRecordMatchForAppointment(r, app)) ||
+        findPatientMedicalRecord(
+          app.patientName,
+          app.patientPhone,
+          app.patientCnp,
+          candidates,
+          app.patientBirthDate
+        ) ||
+        null;
+
+      const hasDioptersOrContactLenses = matchingRecord
+        ? hasFinalDioptersOrContactLenses(matchingRecord)
+        : candidates.some(
+            (r) =>
+              (isMedicalRecordMatchForAppointment(r, app) ||
+                findPatientMedicalRecord(
+                  app.patientName,
+                  app.patientPhone,
+                  app.patientCnp,
+                  [r],
+                  app.patientBirthDate
+                )) &&
+              hasFinalDioptersOrContactLenses(r)
+          );
+
+      map.set(app.id, {
+        patientRecordForToday,
+        hasMedicalReportToday,
+        matchingRecord,
+        hasDioptersOrContactLenses,
+      });
     });
 
     return map;
@@ -19724,17 +19953,13 @@ export default function App() {
       let deletedActivity = 0;
       let deletedConnection = 0;
       let deletedAlerts = 0;
+      const cutoffISO = cutoffDate.toISOString();
 
-      // 1. activityLogs
-      const actSnap = await getDocs(collection(db, "activityLogs"));
-      const actBatchDocs: any[] = [];
-      actSnap.docs.forEach((d) => {
-        const data = d.data();
-        const dateStr = data.timestamp || data.createdAt || data.date;
-        if (dateStr && new Date(dateStr) < cutoffDate) {
-          actBatchDocs.push(d.ref);
-        }
-      });
+      // 1. activityLogs (query filtrat direct în Firestore după vechime)
+      const actSnap = await getDocs(
+        query(collection(db, "activityLogs"), where("timestamp", "<", cutoffISO))
+      );
+      const actBatchDocs = actSnap.docs.map((d) => d.ref);
 
       for (let i = 0; i < actBatchDocs.length; i += 300) {
         const chunk = actBatchDocs.slice(i, i + 300);
@@ -19744,16 +19969,11 @@ export default function App() {
         deletedActivity += chunk.length;
       }
 
-      // 2. connection_logs
-      const connSnap = await getDocs(collection(db, "connection_logs"));
-      const connBatchDocs: any[] = [];
-      connSnap.docs.forEach((d) => {
-        const data = d.data();
-        const dateStr = data.timestamp || data.createdAt || data.date;
-        if (dateStr && new Date(dateStr) < cutoffDate) {
-          connBatchDocs.push(d.ref);
-        }
-      });
+      // 2. connection_logs (query filtrat direct în Firestore după vechime)
+      const connSnap = await getDocs(
+        query(collection(db, "connection_logs"), where("timestamp", "<", cutoffISO))
+      );
+      const connBatchDocs = connSnap.docs.map((d) => d.ref);
 
       for (let i = 0; i < connBatchDocs.length; i += 300) {
         const chunk = connBatchDocs.slice(i, i + 300);
@@ -19763,25 +19983,11 @@ export default function App() {
         deletedConnection += chunk.length;
       }
 
-      // 3. reception_alerts
-      const alertSnap = await getDocs(collection(db, "reception_alerts"));
-      const alertBatchDocs: any[] = [];
-      alertSnap.docs.forEach((d) => {
-        const data = d.data();
-        const dateStr = data.createdAt || data.timestamp || data.date;
-        let isOld = false;
-        if (dateStr) {
-          isOld = new Date(dateStr) < cutoffDate;
-        } else {
-          const match = d.id.match(/_(\d{13})$/);
-          if (match) {
-            isOld = new Date(parseInt(match[1], 10)) < cutoffDate;
-          }
-        }
-        if (isOld) {
-          alertBatchDocs.push(d.ref);
-        }
-      });
+      // 3. reception_alerts (query filtrat direct în Firestore după createdAt)
+      const alertSnap = await getDocs(
+        query(collection(db, "reception_alerts"), where("createdAt", "<", cutoffISO))
+      );
+      const alertBatchDocs = alertSnap.docs.map((d) => d.ref);
 
       for (let i = 0; i < alertBatchDocs.length; i += 300) {
         const chunk = alertBatchDocs.slice(i, i + 300);
@@ -19942,10 +20148,14 @@ export default function App() {
     }
   };
 
-  const handleExportData = () => {
+  const handleExportData = async () => {
+    const loaded = await ensureFullArchiveLoaded(true);
+    const exportAppointments = loaded?.allApps ?? appointments;
+    const exportRecords = loaded?.allMeds ?? medicalRecords;
+
     const backupData = {
-      appointments,
-      medicalRecords,
+      appointments: exportAppointments,
+      medicalRecords: exportRecords,
       availableUsers,
       configs,
       clinicConfig,
@@ -19971,8 +20181,10 @@ export default function App() {
   };
 
   // Export Pacienți & Fișe Medicale în format CSV (Excel compatibil UTF-8 BOM)
-  const handleExportPatientsCSV = () => {
-    
+  const handleExportPatientsCSV = async () => {
+    const loaded = await ensureFullArchiveLoaded(true);
+    const exportRecords = loaded?.allMeds ?? medicalRecords;
+
     const headers = [
       "ID Fișă",
       "Nume Pacient",
@@ -19997,7 +20209,7 @@ export default function App() {
       "Actualizat La"
     ];
 
-    const rows = medicalRecords.map((r) => [
+    const rows = exportRecords.map((r) => [
       escapeCsvField(r.id),
       escapeCsvField(r.patientName),
       escapeCsvField(r.patientPhone),
@@ -20032,11 +20244,14 @@ export default function App() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    logActivity("Export Tabel Pacienți (Excel/CSV)", `Descărcat tabel CSV cu ${medicalRecords.length} pacienți.`).catch(() => {});
+    logActivity("Export Tabel Pacienți (Excel/CSV)", `Descărcat tabel CSV cu ${exportRecords.length} pacienți.`).catch(() => {});
   };
 
   // Export Comenzi Ochelari în format CSV (Excel compatibil UTF-8 BOM)
-  const handleExportOrdersCSV = () => {
+  const handleExportOrdersCSV = async () => {
+    const loaded = await ensureFullArchiveLoaded(true);
+    const exportRecords = loaded?.allMeds ?? medicalRecords;
+
     const headers = [
       "Număr Comandă",
       "Nume Pacient",
@@ -20070,7 +20285,7 @@ export default function App() {
     };
 
     const allOrdersList: any[] = [];
-    medicalRecords.forEach((r) => {
+    exportRecords.forEach((r) => {
       const history = Array.isArray(r.orderHistory) ? r.orderHistory : [];
       const current = r.glassesOrder ? [r.glassesOrder] : [];
       const mergedByOrderNumber = new Map<string, any>();
@@ -20303,6 +20518,11 @@ export default function App() {
         symptomOptions={symptomOptionsState}
       />
     );
+  }
+
+  const isWacomMode = typeof window !== "undefined" && (window.location.search.includes("wacom=true") || window.location.hash === "#wacom");
+  if (isWacomMode) {
+    return <WacomSignaturePad />;
   }
 
   if (isAutoClosedForInactivity) {
@@ -21062,11 +21282,6 @@ export default function App() {
         </footer>
       </div>
     );
-  }
-
-  const isWacomMode = window.location.search.includes("wacom=true") || window.location.hash === "#wacom";
-  if (isWacomMode) {
-    return <WacomSignaturePad />;
   }
 
   if (profile?.role === "patient") {
@@ -22803,21 +23018,11 @@ export default function App() {
                   title="Aniversări Pacienți (Astăzi & În curând)"
                 >
                   <Cake className="w-4 h-4" />
-                  {(() => {
-                    const all = getAllPatients();
-                    const todayCount = all.filter((p) => {
-                      const bStatus = getBirthdayStatus(p.birthDate);
-                      return bStatus?.isToday;
-                    }).length;
-                    if (todayCount > 0) {
-                      return (
-                        <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white font-black text-[9px] w-4.5 h-4.5 rounded-full flex items-center justify-center border border-white dark:border-slate-900">
-                          {todayCount}
-                        </span>
-                      );
-                    }
-                    return null;
-                  })()}
+                  {todayBirthdayCount > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white font-black text-[9px] w-4.5 h-4.5 rounded-full flex items-center justify-center border border-white dark:border-slate-900">
+                      {todayBirthdayCount}
+                    </span>
+                  )}
                 </button>
               )}
 
@@ -23563,17 +23768,7 @@ export default function App() {
                             const slotMeta = appointment ? slotMetadataMap.get(appointment.id) : null;
                             const patientRecordForToday = slotMeta?.patientRecordForToday || null;
                             const hasMedicalReportToday = slotMeta?.hasMedicalReportToday || false;
-
-                            const matchingRecord = appointment
-                              ? (medicalRecords.find((r) => isMedicalRecordMatchForAppointment(r, appointment)) ||
-                                 findPatientMedicalRecord(
-                                   appointment.patientName,
-                                   appointment.patientPhone,
-                                   appointment.patientCnp,
-                                   medicalRecords,
-                                   appointment.patientBirthDate
-                                 ) || null)
-                              : null;
+                            const matchingRecord = slotMeta?.matchingRecord || null;
 
                             const historyItemForSlot = matchingRecord?.prescriptionHistory?.find((item) => {
                               const d = safeParseDate(item.date);
@@ -23826,21 +24021,7 @@ export default function App() {
                                       )}
                                       {canDeleteOrReschedule && (
                                         <div className="flex items-center gap-0.5 opacity-70 group-hover:opacity-100">
-                                          {canManageOrders &&
-                                            (matchingRecord
-                                              ? hasFinalDioptersOrContactLenses(matchingRecord)
-                                              : medicalRecords.some(
-                                                  (r) =>
-                                                    (isMedicalRecordMatchForAppointment(r, appointment) ||
-                                                     findPatientMedicalRecord(
-                                                       appointment.patientName,
-                                                       appointment.patientPhone,
-                                                       appointment.patientCnp,
-                                                       [r],
-                                                       appointment.patientBirthDate
-                                                     )) &&
-                                                    hasFinalDioptersOrContactLenses(r),
-                                                )) && (
+                                          {canManageOrders && slotMeta?.hasDioptersOrContactLenses && (
                                               <button
                                                 onClick={(e) => {
                                                   e.stopPropagation();
