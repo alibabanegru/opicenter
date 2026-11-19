@@ -1217,24 +1217,11 @@ export default function App() {
     }
   }, []);
 
-  const hasLiveAlerts = useMemo(() => {
-    if (!receptionAlerts || receptionAlerts.length === 0) return false;
-    const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
-    return receptionAlerts.some((alert) => {
-      if (dismissedAlertIds.includes(alert.id)) return false;
-      const alertTime = alert.createdAt ? new Date(alert.createdAt).getTime() : 0;
-      return alertTime > tenMinutesAgo;
-    });
-  }, [receptionAlerts, dismissedAlertIds]);
-
   useEffect(() => {
-    if (!hasLiveAlerts) return;
-    setNowTick(Date.now());
-    const timer = setInterval(() => {
+    if (receptionAlerts.length > 0) {
       setNowTick(Date.now());
-    }, 10000);
-    return () => clearInterval(timer);
-  }, [hasLiveAlerts]);
+    }
+  }, [receptionAlerts]);
 
   useEffect(() => {
     if (
@@ -1287,6 +1274,14 @@ export default function App() {
     });
     return filtered.slice(0, 5);
   }, [receptionAlerts, nowTick, dismissedAlertIds]);
+
+  useEffect(() => {
+    if (activeAlerts.length === 0) return;
+    const timer = setInterval(() => {
+      setNowTick(Date.now());
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [activeAlerts.length]);
 
   useEffect(() => {
     const tenMinutesAgo = nowTick - 10 * 60 * 1000;
@@ -2248,10 +2243,174 @@ export default function App() {
     [hasLoadedAllHistory, appointments, medicalRecords]
   );
 
-  // Smart / Lazy Loading: Căutare automată în arhivă pentru Omnibox (Spotlight)
+  const searchArchiveByPrefix = useCallback(
+    async (
+      rawQuery: string,
+      mode: "all" | "docsOnly" = "all"
+    ): Promise<{ apps: Appointment[]; meds: MedicalRecord[]; docs: any[] }> => {
+      const trimmed = rawQuery.trim();
+      const cleanDigits = trimmed.replace(/\D/g, "");
+      const appsMap = new Map<string, Appointment>();
+      const medsMap = new Map<string, MedicalRecord>();
+      const docsMap = new Map<string, any>();
+
+      if (trimmed.length < 3 && cleanDigits.length < 4) {
+        return { apps: [], meds: [], docs: [] };
+      }
+
+      const namePrefixes = Array.from(
+        new Set(
+          [trimmed, capitalizeWords(trimmed), trimmed.toUpperCase()].filter(
+            (s) => s.length >= 3 && /[a-zA-ZăâîșțĂÂÎȘȚ]/.test(s)
+          )
+        )
+      ).slice(0, 3);
+
+      const tasks: Promise<void>[] = [];
+
+      if (mode === "all") {
+        namePrefixes.forEach((prefix) => {
+          const endPrefix = `${prefix}\uf8ff`;
+          tasks.push(
+            getDocs(
+              query(
+                collection(db, "appointments"),
+                where("patientName", ">=", prefix),
+                where("patientName", "<=", endPrefix),
+                limit(15)
+              )
+            )
+              .then((snap) => {
+                snap.forEach((d) => appsMap.set(d.id, { id: d.id, ...d.data() } as Appointment));
+              })
+              .catch(() => {})
+          );
+          tasks.push(
+            getDocs(
+              query(
+                collection(db, "medicalRecords"),
+                where("patientName", ">=", prefix),
+                where("patientName", "<=", endPrefix),
+                limit(15)
+              )
+            )
+              .then((snap) => {
+                snap.forEach((d) => medsMap.set(d.id, { id: d.id, ...d.data() } as MedicalRecord));
+              })
+              .catch(() => {})
+          );
+        });
+
+        if (cleanDigits.length >= 4) {
+          const phoneEnd = `${cleanDigits}\uf8ff`;
+          tasks.push(
+            getDocs(
+              query(
+                collection(db, "appointments"),
+                where("patientPhone", ">=", cleanDigits),
+                where("patientPhone", "<=", phoneEnd),
+                limit(15)
+              )
+            )
+              .then((snap) => {
+                snap.forEach((d) => appsMap.set(d.id, { id: d.id, ...d.data() } as Appointment));
+              })
+              .catch(() => {})
+          );
+          tasks.push(
+            getDocs(
+              query(
+                collection(db, "medicalRecords"),
+                where("patientPhone", ">=", cleanDigits),
+                where("patientPhone", "<=", phoneEnd),
+                limit(15)
+              )
+            )
+              .then((snap) => {
+                snap.forEach((d) => medsMap.set(d.id, { id: d.id, ...d.data() } as MedicalRecord));
+              })
+              .catch(() => {})
+          );
+        }
+
+        if (cleanDigits.length === 13) {
+          tasks.push(
+            getDocs(
+              query(
+                collection(db, "medicalRecords"),
+                where("patientCnp", "==", cleanDigits),
+                limit(5)
+              )
+            )
+              .then((snap) => {
+                snap.forEach((d) => medsMap.set(d.id, { id: d.id, ...d.data() } as MedicalRecord));
+              })
+              .catch(() => {})
+          );
+        }
+      } else {
+        namePrefixes.forEach((prefix) => {
+          const endPrefix = `${prefix}\uf8ff`;
+          tasks.push(
+            getDocs(
+              query(
+                collection(db, "medicalDocuments"),
+                where("patientName", ">=", prefix),
+                where("patientName", "<=", endPrefix),
+                limit(20)
+              )
+            )
+              .then((snap) => {
+                snap.forEach((d) => {
+                  const data = d.data() as any;
+                  if (!data.isDeleted) {
+                    docsMap.set(d.id, { id: d.id, ...data });
+                  }
+                });
+              })
+              .catch(() => {})
+          );
+        });
+      }
+
+      await Promise.all(tasks);
+
+      const apps = Array.from(appsMap.values());
+      const meds = Array.from(medsMap.values());
+      const docs = Array.from(docsMap.values());
+
+      if (apps.length > 0) {
+        setAppointments((prev) => {
+          const existingIds = new Set(prev.map((a) => a.id));
+          const toAdd = apps.filter((a) => !existingIds.has(a.id));
+          return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+        });
+      }
+      if (meds.length > 0) {
+        setMedicalRecords((prev) => {
+          const existingIds = new Set(prev.map((m) => m.id));
+          const toAdd = meds.filter((m) => !existingIds.has(m.id));
+          return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+        });
+      }
+      if (docs.length > 0) {
+        setMedicalDocuments((prev) => {
+          const existingIds = new Set(prev.map((d: any) => d.id));
+          const toAdd = docs.filter((d: any) => !existingIds.has(d.id));
+          return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+        });
+      }
+
+      return { apps, meds, docs };
+    },
+    []
+  );
+
+  // Smart / Lazy Loading: Căutare țintită prin prefix în arhivă pentru Omnibox (max 15 rezultate/interogare, fără descărcare masivă)
   useEffect(() => {
     const q = deferredUniversalSearchQuery.trim();
-    if (q.length < 2) return;
+    const cleanDigits = q.replace(/\D/g, "");
+    if (q.length < 3 && cleanDigits.length < 4) return;
     const qNorm = q.toLowerCase();
 
     // 1. Dacă pacientul există deja în memoria locală, nu mai consumăm citiri Firebase
@@ -2266,15 +2425,14 @@ export default function App() {
     const timer = setTimeout(async () => {
       try {
         searchedOmniboxQueriesRef.current.add(qNorm);
-        // Încărcare automată a arhivei pentru căutări parțiale / case-insensitive / fără diacritice
-        await ensureFullArchiveLoaded(true);
+        await searchArchiveByPrefix(q, "all");
       } catch (err) {
         console.warn("Omnibox archive search notice:", err);
       }
-    }, 350);
+    }, 400);
 
     return () => clearTimeout(timer);
-  }, [deferredUniversalSearchQuery, omniboxMatches.length, hasLoadedAllHistory, ensureFullArchiveLoaded]);
+  }, [deferredUniversalSearchQuery, omniboxMatches.length, hasLoadedAllHistory, searchArchiveByPrefix]);
 
 
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
@@ -3356,10 +3514,10 @@ export default function App() {
       });
   }, [medicalDocuments, registrySearchQuery]);
 
-  // Lazy search pentru documente medicale vechi în registru (inclusiv căutări parțiale / case-insensitive)
+  // Lazy search țintit prin prefix pentru documente medicale vechi în registru (consum minim de citiri Firebase)
   useEffect(() => {
     const q = registrySearchQuery.trim();
-    if (q.length < 2) return;
+    if (q.length < 3) return;
     const qNorm = q.toLowerCase();
     if (hasLoadedAllMedicalDocumentsRef.current) return;
     if (searchedRegistryQueriesRef.current.has(qNorm)) return;
@@ -3368,23 +3526,14 @@ export default function App() {
     searchedRegistryQueriesRef.current.add(qNorm);
     const timer = setTimeout(async () => {
       try {
-        const snap = await getDocs(collection(db, "medicalDocuments")).catch(() => null);
-        if (snap) {
-          hasLoadedAllMedicalDocumentsRef.current = true;
-          const fetched = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })).filter((d: any) => !d.isDeleted);
-          setMedicalDocuments((prev) => {
-            const existingIds = new Set(prev.map((d: any) => d.id));
-            const toAdd = fetched.filter((d: any) => !existingIds.has(d.id));
-            return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
-          });
-        }
+        await searchArchiveByPrefix(q, "docsOnly");
       } catch (e) {
         console.warn("Registry archive search notice:", e);
       }
-    }, 350);
+    }, 400);
 
     return () => clearTimeout(timer);
-  }, [registrySearchQuery, filteredRegistryDocs.length]);
+  }, [registrySearchQuery, filteredRegistryDocs.length, searchArchiveByPrefix]);
   const [activeDocumentModal, setActiveDocumentModal] = useState<
     "adeverinta" | "referat" | "raport" | "certificat" | "expertiza" | null
   >(null);
@@ -3851,12 +4000,7 @@ export default function App() {
     if (!profile || hasLoadedAllHistory) return;
     const needsFullArchive =
       isBirthdayModalOpen ||
-      (isConfigModalOpen &&
-        (profile.role === "admin" ||
-          configActiveTab === "recall" ||
-          configActiveTab === "backup" ||
-          configActiveTab === "noshow" ||
-          configActiveTab === "elderly"));
+      (isConfigModalOpen && configActiveTab === "recall");
     if (needsFullArchive) {
       ensureFullArchiveLoaded(true);
     }
@@ -7664,10 +7808,17 @@ export default function App() {
 
 
   useEffect(() => {
+    try {
+      if (localStorage.getItem("clinic_users_seeded_v1") === "1") return;
+    } catch {}
     const seedAndCleanupUsers = async () => {
       try {
         const clinicDocSnap = await getDoc(doc(db, "clinic_config", "main")).catch(() => null);
-        if (clinicDocSnap && !clinicDocSnap.data()?.usersSeeded) {
+        if (clinicDocSnap && clinicDocSnap.data()?.usersSeeded) {
+          try {
+            localStorage.setItem("clinic_users_seeded_v1", "1");
+          } catch {}
+        } else if (clinicDocSnap && !clinicDocSnap.data()?.usersSeeded) {
           for (const [id, data] of Object.entries(USERS_DATA)) {
             const userDocRef = doc(db, "users", id);
             await setDoc(
@@ -7685,6 +7836,9 @@ export default function App() {
             { usersSeeded: true },
             { merge: true },
           ).catch(() => {});
+          try {
+            localStorage.setItem("clinic_users_seeded_v1", "1");
+          } catch {}
         }
       } catch (err: any) {
         if (!err?.message?.toLowerCase().includes("quota")) {
@@ -7945,14 +8099,13 @@ export default function App() {
     return () => unsubLock();
   }, [googleUser]);
 
+  // Ascultător permanent pentru setările și logo-urile clinicii (nu se re-abonă la schimbarea profilului)
   useEffect(() => {
-    // Încărcare și ascultare setări clinică și logo-uri (activă permanent pentru toate componentele și documentele PDF)
     const unsubClinicConfig = onSnapshot(
       doc(db, "settings", "clinic"),
       async (snapshot) => {
         if (snapshot.exists()) {
           const cfg = snapshot.data() as ClinicConfig;
-          // Dacă documentul settings/clinic nu are logoUrl, încercăm fallback din clinic_config/main
           if (!cfg.logoUrl && !cfg.secondaryLogoUrl) {
             try {
               const fallbackSnap = await getDoc(doc(db, "clinic_config", "main")).catch(() => null);
@@ -7980,7 +8133,6 @@ export default function App() {
             localStorage.setItem("opticenter_clinic_config", JSON.stringify(cfg));
           } catch {}
         } else {
-          // Fallback din clinic_config/main dacă documentul settings/clinic nu a fost încă creat
           try {
             const fallbackSnap = await getDoc(doc(db, "clinic_config", "main")).catch(() => null);
             if (fallbackSnap && fallbackSnap.exists()) {
@@ -8005,71 +8157,69 @@ export default function App() {
       },
     );
 
-    const activeUid = profile?.uid;
-    const activeRole = profile?.role;
-    if (!activeUid) {
-      return () => {
-        unsubClinicConfig();
-      };
-    }
-
-    let unsubCurrentProfile: (() => void) | undefined;
-    if (activeUid && activeRole !== "patient") {
-      unsubCurrentProfile = onSnapshot(
-        doc(db, "users", activeUid),
-        (snapshot) => {
-          const currProfile = profileRef.current;
-          if (!currProfile || currProfile.uid !== activeUid) return;
-          const isFromCache = snapshot.metadata.fromCache;
-          if (snapshot.exists()) {
-            const data = snapshot.data();
-            if (data.name && data.name !== currProfile.displayName) {
-              const updatedProfile = { ...currProfile, displayName: data.name };
-              setProfile(updatedProfile);
-              try {
-                sessionStorage.setItem("clinic_user", JSON.stringify(updatedProfile));
-                localStorage.setItem("clinic_user", JSON.stringify(updatedProfile));
-              } catch {}
-            }
-          } else if (!isFromCache) {
-            const roleFallbackIds: Record<string, string> = {
-              tv: "tv",
-              admin: "admin",
-              frontdesk: "receptie",
-              doctor1: "turcanu",
-              doctor2: "zorila",
-              doctor3: "ilie",
-            };
-            const canonicalId = USERS_DATA[currProfile.uid]
-              ? currProfile.uid
-              : roleFallbackIds[currProfile.role] || null;
-
-            if (canonicalId && USERS_DATA[canonicalId]) {
-              setDoc(
-                doc(db, "users", canonicalId),
-                {
-                  name: currProfile.displayName || USERS_DATA[canonicalId]?.name || "Utilizator",
-                  role: currProfile.role,
-                  pass: USERS_DATA[canonicalId]?.pass || "123",
-                },
-                { merge: true }
-              ).catch((e) => console.error("Error auto-creating missing user document:", e));
-            }
-          }
-        },
-        (error) => {
-          handleFirestoreError(
-            error,
-            OperationType.GET,
-            `users/${activeUid}`,
-          );
-        },
-      );
-    }
-
     return () => {
       unsubClinicConfig();
-      if (unsubCurrentProfile) unsubCurrentProfile();
+    };
+  }, []);
+
+  useEffect(() => {
+    const activeUid = profile?.uid;
+    const activeRole = profile?.role;
+    if (!activeUid || activeRole === "patient") return;
+
+    const unsubCurrentProfile = onSnapshot(
+      doc(db, "users", activeUid),
+      (snapshot) => {
+        const currProfile = profileRef.current;
+        if (!currProfile || currProfile.uid !== activeUid) return;
+        const isFromCache = snapshot.metadata.fromCache;
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          if (data.name && data.name !== currProfile.displayName) {
+            const updatedProfile = { ...currProfile, displayName: data.name };
+            setProfile(updatedProfile);
+            try {
+              sessionStorage.setItem("clinic_user", JSON.stringify(updatedProfile));
+              localStorage.setItem("clinic_user", JSON.stringify(updatedProfile));
+            } catch {}
+          }
+        } else if (!isFromCache) {
+          const roleFallbackIds: Record<string, string> = {
+            tv: "tv",
+            admin: "admin",
+            frontdesk: "receptie",
+            doctor1: "turcanu",
+            doctor2: "zorila",
+            doctor3: "ilie",
+          };
+          const canonicalId = USERS_DATA[currProfile.uid]
+            ? currProfile.uid
+            : roleFallbackIds[currProfile.role] || null;
+
+          if (canonicalId && USERS_DATA[canonicalId]) {
+            setDoc(
+              doc(db, "users", canonicalId),
+              {
+                name: currProfile.displayName || USERS_DATA[canonicalId]?.name || "Utilizator",
+                role: currProfile.role,
+                pass: USERS_DATA[canonicalId]?.pass || "123",
+              },
+              { merge: true }
+            ).catch((e) => console.error("Error auto-creating missing user document:", e));
+          }
+        }
+      },
+      (error) => {
+        handleFirestoreError(
+          error,
+          OperationType.GET,
+          `users/${activeUid}`,
+        );
+      },
+    );
+
+    return () => {
+      unsubCurrentProfile();
     };
   }, [profile?.uid, profile?.role]);
 
@@ -8659,98 +8809,12 @@ export default function App() {
     setSearchFilter("all");
     setIsSearchModalOpen(true);
 
-    // Căutare la cerere în arhivă pentru programări și fișe medicale mai vechi (inclusiv potriviri parțiale / fără diacritice / lowercase)
+    // Căutare țintită prin prefix în arhivă (fără a descărca întreaga bază de date la fiecare interogare)
     const trimmedQuery = queryStr.trim();
-    if (trimmedQuery.length >= 2 && !hasLoadedAllHistory) {
+    if ((trimmedQuery.length >= 3 || cleanDigits.length >= 4) && !hasLoadedAllHistory) {
       (async () => {
         try {
-          if (uniqueResults.length === 0) {
-            const loaded = await ensureFullArchiveLoaded(true);
-            if (loaded) {
-              const { allApps, allMeds } = loaded;
-              const archiveAppResults = allApps.filter((app) => {
-                if (type === "name") {
-                  return (
-                    matchPatientName(app.patientName, queryStr) ||
-                    (cleanDigits.length >= 3 && (app.patientPhone || "").replace(/\D/g, "").includes(cleanDigits)) ||
-                    (app.patientCnp && app.patientCnp.includes(trimmedQuery))
-                  );
-                } else {
-                  const cleanPhone = (app.patientPhone || "").replace(/\D/g, "");
-                  return cleanPhone.includes(cleanDigits) || (app.patientPhone || "").includes(queryStr);
-                }
-              });
-
-              const appKeys = new Set(allApps.map((a) => `${a.patientName || ""}_${a.patientPhone || ""}`));
-              const archiveMedResults = allMeds
-                .filter((med) => {
-                  const name = med.patientName || "";
-                  const phone = med.patientPhone || "";
-                  if (type === "name") {
-                    return (
-                      matchPatientName(name, queryStr) ||
-                      (cleanDigits.length >= 3 && phone.replace(/\D/g, "").includes(cleanDigits)) ||
-                      (med.patientCnp && med.patientCnp.includes(trimmedQuery))
-                    );
-                  } else {
-                    const cleanPhone = phone.replace(/\D/g, "");
-                    return cleanPhone.includes(cleanDigits) || phone.includes(queryStr);
-                  }
-                })
-                .filter((med) => !appKeys.has(`${med.patientName || ""}_${med.patientPhone || ""}`))
-                .map((med) => ({
-                  id: `med_${med.id}`,
-                  patientName: med.patientName || "",
-                  patientPhone: med.patientPhone || "",
-                  patientAge: med.patientAge?.toString() || "",
-                  patientBirthDate: med.patientBirthDate || "",
-                  patientSex: med.patientSex || "",
-                  startTime: med.updatedAt || med.createdAt || new Date(0).toISOString(),
-                  endTime: med.updatedAt || med.createdAt || new Date(0).toISOString(),
-                  doctorId: "all",
-                  status: "completed" as const,
-                  isFromHistoryOnly: true,
-                } as unknown as Appointment));
-
-              const archiveCombined = Array.from(
-                new Map<string, any>([...archiveAppResults, ...archiveMedResults].map((item) => [item.id, item])).values()
-              ).sort(
-                (a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime()
-              );
-
-              if (archiveCombined.length > 0) {
-                setSearchResults(archiveCombined);
-              }
-              return;
-            }
-          }
-
-          const extraApps: Appointment[] = [];
-          const extraMeds: MedicalRecord[] = [];
-
-          if (type === "phone" && cleanDigits.length >= 3) {
-            const [snapApp, snapMed] = await Promise.all([
-              getDocs(query(collection(db, "appointments"), where("patientPhone", "==", trimmedQuery))).catch(() => null),
-              getDocs(query(collection(db, "medicalRecords"), where("patientPhone", "==", trimmedQuery))).catch(() => null),
-            ]);
-            snapApp?.forEach((d) => extraApps.push({ id: d.id, ...d.data() } as Appointment));
-            snapMed?.forEach((d) => extraMeds.push({ id: d.id, ...d.data() } as MedicalRecord));
-          } else if (type === "name") {
-            const [snapApp, snapMed] = await Promise.all([
-              getDocs(query(collection(db, "appointments"), where("patientName", "==", trimmedQuery))).catch(() => null),
-              getDocs(query(collection(db, "medicalRecords"), where("patientName", "==", trimmedQuery))).catch(() => null),
-            ]);
-            snapApp?.forEach((d) => extraApps.push({ id: d.id, ...d.data() } as Appointment));
-            snapMed?.forEach((d) => extraMeds.push({ id: d.id, ...d.data() } as MedicalRecord));
-          }
-
-          if (extraMeds.length > 0) {
-            setMedicalRecords((prev) => {
-              const existingIds = new Set(prev.map((m) => m.id));
-              const toAdd = extraMeds.filter((m) => !existingIds.has(m.id));
-              return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
-            });
-          }
+          const { apps: extraApps, meds: extraMeds } = await searchArchiveByPrefix(queryStr, "all");
 
           const extraMedResults: Appointment[] = extraMeds.map((med) => ({
             id: `med_${med.id}`,
@@ -8767,15 +8831,6 @@ export default function App() {
           } as unknown as Appointment));
 
           const allExtra: Appointment[] = [...extraApps, ...extraMedResults];
-
-          if (extraApps.length > 0) {
-            setAppointments((prev) => {
-              const existingIds = new Set(prev.map((a) => a.id));
-              const toAdd = extraApps.filter((a) => !existingIds.has(a.id));
-              return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
-            });
-          }
-
           if (allExtra.length > 0) {
             setSearchResults((prev) => {
               const existingIds = new Set(prev.map((a) => a.id));
@@ -13078,7 +13133,7 @@ export default function App() {
       const appNormTokens = normalizePatientName(app.patientName).split(" ").filter((t) => t.length >= 2);
       appNormTokens.forEach((tok) => {
         const bucket = recByTokenMap.get(tok);
-        if (bucket && bucket.length <= 40) {
+        if (bucket && bucket.length <= 200) {
           bucket.forEach((r) => candidateSet.add(r));
         }
       });
@@ -24393,18 +24448,73 @@ export default function App() {
                         </p>
                         {(searchFilter === "all" ||
                           searchFilter === "future") && (
-                          <button
-                            onClick={() => openNewPatientModal(searchName, searchPhone)}
-                            className={cn(
-                              "mt-5 flex items-center gap-2 px-6 py-3 rounded-xl font-bold mx-auto transition-all text-sm shadow-md",
-                              darkMode
-                                ? "bg-emerald-600 hover:bg-emerald-500 text-white"
-                                : "bg-emerald-600 hover:bg-emerald-700 text-white",
+                          <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+                            <button
+                              onClick={() => openNewPatientModal(searchName, searchPhone)}
+                              className={cn(
+                                "flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all text-sm shadow-md cursor-pointer",
+                                darkMode
+                                  ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                                  : "bg-emerald-600 hover:bg-emerald-700 text-white",
+                              )}
+                            >
+                              <UserPlus className="w-4 h-4" />
+                              {searchName.trim() ? `Adaugă Pacient Nou: „${searchName.trim()}”` : "Adaugă Pacient Nou"}
+                            </button>
+                            {!hasLoadedAllHistory && (searchName.trim() || searchPhone.trim()) && (
+                              <button
+                                type="button"
+                                disabled={isLoadingAllHistory}
+                                onClick={async () => {
+                                  const loaded = await ensureFullArchiveLoaded(false);
+                                  if (loaded) {
+                                    const q = (searchName.trim() || searchPhone.trim());
+                                    const cleanD = q.replace(/\D/g, "");
+                                    const isPh = !searchName.trim() && !!searchPhone.trim();
+                                    const appsMatch = loaded.allApps.filter((a) =>
+                                      isPh
+                                        ? ((a.patientPhone || "").replace(/\D/g, "").includes(cleanD) || (a.patientPhone || "").includes(q))
+                                        : (matchPatientName(a.patientName, q) || (cleanD.length >= 3 && (a.patientPhone || "").replace(/\D/g, "").includes(cleanD)) || (a.patientCnp && a.patientCnp.includes(q)))
+                                    );
+                                    const appKeys = new Set(loaded.allApps.map((a) => `${a.patientName || ""}_${a.patientPhone || ""}`));
+                                    const medsMatch = loaded.allMeds
+                                      .filter((m) =>
+                                        isPh
+                                          ? ((m.patientPhone || "").replace(/\D/g, "").includes(cleanD) || (m.patientPhone || "").includes(q))
+                                          : (matchPatientName(m.patientName || "", q) || (cleanD.length >= 3 && (m.patientPhone || "").replace(/\D/g, "").includes(cleanD)) || (m.patientCnp && m.patientCnp.includes(q)))
+                                      )
+                                      .filter((m) => !appKeys.has(`${m.patientName || ""}_${m.patientPhone || ""}`))
+                                      .map((med) => ({
+                                        id: `med_${med.id}`,
+                                        patientName: med.patientName || "",
+                                        patientPhone: med.patientPhone || "",
+                                        patientAge: med.patientAge?.toString() || "",
+                                        patientBirthDate: med.patientBirthDate || "",
+                                        patientSex: med.patientSex || "",
+                                        startTime: med.updatedAt || med.createdAt || new Date(0).toISOString(),
+                                        endTime: med.updatedAt || med.createdAt || new Date(0).toISOString(),
+                                        doctorId: "all",
+                                        status: "completed" as const,
+                                        isFromHistoryOnly: true,
+                                      } as unknown as Appointment));
+                                    const combined = Array.from(
+                                      new Map<string, any>([...appsMatch, ...medsMatch].map((item) => [item.id, item])).values()
+                                    ).sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+                                    if (combined.length > 0) setSearchResults(combined);
+                                  }
+                                }}
+                                className={cn(
+                                  "flex items-center gap-2 px-5 py-3 rounded-xl font-bold transition-all text-sm border cursor-pointer disabled:opacity-50",
+                                  darkMode
+                                    ? "bg-slate-800 hover:bg-slate-700 border-slate-700 text-blue-400"
+                                    : "bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700",
+                                )}
+                              >
+                                <Database className={cn("w-4 h-4", isLoadingAllHistory && "animate-spin")} />
+                                {isLoadingAllHistory ? "Se încarcă arhiva..." : "Caută în toată arhiva"}
+                              </button>
                             )}
-                          >
-                            <UserPlus className="w-4 h-4" />
-                            {searchName.trim() ? `Adaugă Pacient Nou: „${searchName.trim()}”` : "Adaugă Pacient Nou"}
-                          </button>
+                          </div>
                         )}
                       </div>
                     );
@@ -29081,6 +29191,9 @@ export default function App() {
                     availableYears={availableYears}
                     activeDoctorRoles={activeDoctorRoles}
                     getRoleLabel={getRoleLabel}
+                    hasLoadedAllHistory={hasLoadedAllHistory}
+                    isLoadingAllHistory={isLoadingAllHistory}
+                    onLoadFullArchive={handleLoadFullArchive}
                     statsData={statsData}
                   />
 

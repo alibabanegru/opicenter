@@ -17,6 +17,9 @@ export interface AdminStatsPanelProps {
   availableYears: string[];
   activeDoctorRoles: string[];
   getRoleLabel: (role: any) => string;
+  hasLoadedAllHistory?: boolean;
+  isLoadingAllHistory?: boolean;
+  onLoadFullArchive?: () => void;
   statsData: {
     totalPatients: number;
     reveniriCount: number;
@@ -41,6 +44,9 @@ export const AdminStatsPanel: React.FC<AdminStatsPanelProps> = ({
   availableYears,
   activeDoctorRoles,
   getRoleLabel,
+  hasLoadedAllHistory,
+  isLoadingAllHistory,
+  onLoadFullArchive,
   statsData,
 }) => {
   return (
@@ -56,19 +62,33 @@ export const AdminStatsPanel: React.FC<AdminStatsPanelProps> = ({
                         </p>
                       </div>
 
-                      {/* Reset Filters button */}
-                      <button
-                        onClick={() => {
-                          setAdminStatsDoctor("all");
-                          setAdminStatsYear("all");
-                          setAdminStatsMonth("all");
-                          setAdminStatsDay("all");
-                        }}
-                        className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 font-bold text-xs rounded-xl transition-all flex items-center gap-1 cursor-pointer"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        Resetează Filtre
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {onLoadFullArchive && hasLoadedAllHistory === false && (
+                          <button
+                            type="button"
+                            disabled={isLoadingAllHistory}
+                            onClick={onLoadFullArchive}
+                            className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-900/50 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800/60 font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                            title="Descarcă toată arhiva pentru statistici complete pe tot anul"
+                          >
+                            <RefreshCw className={cn("w-3.5 h-3.5", isLoadingAllHistory && "animate-spin")} />
+                            {isLoadingAllHistory ? "Se încarcă arhiva..." : "Încarcă Arhiva Totală (30 Zile Activ)"}
+                          </button>
+                        )}
+                        {/* Reset Filters button */}
+                        <button
+                          onClick={() => {
+                            setAdminStatsDoctor("all");
+                            setAdminStatsYear("all");
+                            setAdminStatsMonth("all");
+                            setAdminStatsDay("all");
+                          }}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 font-bold text-xs rounded-xl transition-all flex items-center gap-1 cursor-pointer"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          Resetează Filtre
+                        </button>
+                      </div>
                     </div>
 
                     {/* Filter Controls Grid */}
