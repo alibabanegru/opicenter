@@ -59,6 +59,7 @@ import {
 } from "../utils/whatsappUtils";
 import { SmsSendModal } from "./SmsSendModal";
 import { checkSmsGateStatus, type SmsGateDevice } from "../services/smsService";
+import { hasLegacyGlassesOrders } from "../utils/legacyOrdersFlag";
 
 export interface OrdersModalProps {
   isOpen: boolean;
@@ -104,6 +105,8 @@ export interface OrdersModalProps {
   bulkDeleteMode?: "selected" | "all" | null;
   setBulkDeleteMode?: React.Dispatch<React.SetStateAction<"selected" | "all" | null>>;
   onPrintOrderDirect?: (order: any, patient: any) => void;
+  hasLoadedFullMedicalRecords?: boolean;
+  onLoadFullMedicalRecords?: () => Promise<any>;
 }
 
 export const OrdersModal: React.FC<OrdersModalProps> = ({
@@ -147,6 +150,8 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   setSelectedCompletedOrders: propSetSelectedCompletedOrders,
   setBulkSoftDeleteMode: propSetBulkSoftDeleteMode,
   setBulkDeleteMode: propSetBulkDeleteMode,
+  hasLoadedFullMedicalRecords,
+  onLoadFullMedicalRecords,
 }) => {
   const usersList = availableUsers && availableUsers.length > 0
     ? availableUsers
@@ -221,7 +226,8 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   const setBulkDeleteMode = propSetBulkDeleteMode || setInternalBulkDeleteMode;
   const [loading, setLoading] = useState(false);
   const [isLoadingArchive, setIsLoadingArchive] = useState(false);
-  const [hasLoadedFullArchive, setHasLoadedFullArchive] = useState(false);
+  const [internalHasLoadedFullArchive, setInternalHasLoadedFullArchive] = useState(false);
+  const hasLoadedFullArchive = Boolean(hasLoadedFullMedicalRecords) || internalHasLoadedFullArchive;
   const [feedbackBanner, setFeedbackBanner] = useState<{
     text: string;
     type: "success" | "error";
@@ -229,20 +235,39 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
 
   const [selectedSmsOrder, setSelectedSmsOrder] = useState<any | null>(null);
   const [gatewayDevice, setGatewayDevice] = useState<SmsGateDevice | null>(null);
+  const [gatewayStatus, setGatewayStatus] = useState<"checking" | "connected" | "offline">("checking");
+  const [gatewayError, setGatewayError] = useState<string | null>(null);
   const [whatsAppPhonePromptOrder, setWhatsAppPhonePromptOrder] = useState<any | null>(null);
   const [whatsAppPhoneInput, setWhatsAppPhoneInput] = useState("");
   const [whatsAppPhoneError, setWhatsAppPhoneError] = useState<string | null>(null);
 
   React.useEffect(() => {
-    if (isOpen) {
-      checkSmsGateStatus()
-        .then((res) => {
-          if (res.success && res.device) {
-            setGatewayDevice(res.device);
-          }
-        })
-        .catch(() => {});
-    }
+    if (!isOpen) return;
+    let cancelled = false;
+    setGatewayStatus("checking");
+    setGatewayError(null);
+    checkSmsGateStatus()
+      .then((res) => {
+        if (cancelled) return;
+        if (res.success && res.connected && res.device) {
+          setGatewayDevice(res.device);
+          setGatewayStatus("connected");
+          setGatewayError(null);
+        } else {
+          setGatewayDevice(null);
+          setGatewayStatus("offline");
+          setGatewayError(res.error || "Telefonul Android nu este conectat la gateway.");
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setGatewayDevice(null);
+        setGatewayStatus("offline");
+        setGatewayError(err?.message || "Nu s-a putut verifica starea SMS Gateway.");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen]);
 
   const openSmsModalForOrder = (order: any) => {
@@ -327,6 +352,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
             removeUndefined({
               orderHistory: history,
               ...(isMainOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
+              updatedAt: nowIso,
             }),
           );
 
@@ -337,29 +363,33 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                     ...r,
                     orderHistory: history,
                     ...(isMainOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
+                    updatedAt: nowIso,
                   }
                 : r,
             ),
           );
 
           try {
-            const qStandalone = query(
-              collection(db, "glasses_orders"),
-              where("orderNumber", "==", order.orderNumber),
-            );
-            const snapStandalone = await getDocs(qStandalone);
-            if (!snapStandalone.empty) {
-              const batch = writeBatch(db);
-              snapStandalone.docs.forEach((d) => {
-                const cur = d.data();
-                const newStatus = cur.status === "completed" ? "completed" : "ready_for_pickup";
-                batch.update(d.ref, {
-                  status: newStatus,
-                  whatsappNotifiedAt: nowIso,
-                  whatsappNotifiedBy: notifierName,
+            if (await hasLegacyGlassesOrders(db)) {
+              const qStandalone = query(
+                collection(db, "glasses_orders"),
+                where("orderNumber", "==", order.orderNumber),
+              );
+              const snapStandalone = await getDocs(qStandalone);
+              if (!snapStandalone.empty) {
+                const batch = writeBatch(db);
+                snapStandalone.docs.forEach((d) => {
+                  const cur = d.data();
+                  const newStatus = cur.status === "completed" ? "completed" : "ready_for_pickup";
+                  batch.update(d.ref, {
+                    status: newStatus,
+                    whatsappNotifiedAt: nowIso,
+                    whatsappNotifiedBy: notifierName,
+                    updatedAt: nowIso,
+                  });
                 });
-              });
-              await batch.commit();
+                await batch.commit();
+              }
             }
           } catch (e) {
             console.warn("Could not update standalone glasses_orders:", e);
@@ -491,34 +521,38 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                     ...r,
                     orderHistory: history,
                     ...(isMainOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
+                    updatedAt: nowIso,
                   }
                 : r,
             ),
           );
 
           try {
-            const qStandalone = query(
-              collection(db, "glasses_orders"),
-              where("orderNumber", "==", info.orderNumber),
-            );
-            const snapStandalone = await getDocs(qStandalone);
-            if (!snapStandalone.empty) {
-              const batch = writeBatch(db);
-              snapStandalone.docs.forEach((d) => {
-                const cur = d.data();
-                const newStatus =
-                  cur.status === "completed"
-                    ? "completed"
-                    : shouldMarkReady
-                      ? "ready_for_pickup"
-                      : (cur.status || "in-progress");
-                batch.update(d.ref, {
-                  status: newStatus,
-                  smsNotifiedAt: nowIso,
-                  smsNotifiedBy: notifierName,
+            if (await hasLegacyGlassesOrders(db)) {
+              const qStandalone = query(
+                collection(db, "glasses_orders"),
+                where("orderNumber", "==", info.orderNumber),
+              );
+              const snapStandalone = await getDocs(qStandalone);
+              if (!snapStandalone.empty) {
+                const batch = writeBatch(db);
+                snapStandalone.docs.forEach((d) => {
+                  const cur = d.data();
+                  const newStatus =
+                    cur.status === "completed"
+                      ? "completed"
+                      : shouldMarkReady
+                        ? "ready_for_pickup"
+                        : (cur.status || "in-progress");
+                  batch.update(d.ref, {
+                    status: newStatus,
+                    smsNotifiedAt: nowIso,
+                    smsNotifiedBy: notifierName,
+                    updatedAt: nowIso,
+                  });
                 });
-              });
-              await batch.commit();
+                await batch.commit();
+              }
             }
           } catch (e) {
             console.warn("Could not update standalone glasses_orders:", e);
@@ -604,27 +638,31 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
           removeUndefined({
             orderHistory: history,
             ...(isMainGlassesOrder ? { glassesOrder: updatedOrder } : {}),
+            updatedAt: nowIso,
           }),
         );
 
         try {
-          const qStandalone = query(
-            collection(db, "glasses_orders"),
-            where("orderNumber", "==", order.orderNumber),
-          );
-          const snapStandalone = await getDocs(qStandalone);
-          if (!snapStandalone.empty) {
-            const batch = writeBatch(db);
-            snapStandalone.docs.forEach((d) => {
-              batch.update(d.ref, {
-                status: "completed",
-                advance: currentTotal,
-                balance: 0,
-                deliveredAt: nowIso,
-                deliveredBy: handlerName,
+          if (await hasLegacyGlassesOrders(db)) {
+            const qStandalone = query(
+              collection(db, "glasses_orders"),
+              where("orderNumber", "==", order.orderNumber),
+            );
+            const snapStandalone = await getDocs(qStandalone);
+            if (!snapStandalone.empty) {
+              const batch = writeBatch(db);
+              snapStandalone.docs.forEach((d) => {
+                batch.update(d.ref, {
+                  status: "completed",
+                  advance: currentTotal,
+                  balance: 0,
+                  deliveredAt: nowIso,
+                  deliveredBy: handlerName,
+                  updatedAt: nowIso,
+                });
               });
-            });
-            await batch.commit();
+              await batch.commit();
+            }
           }
         } catch (e) {
           console.warn("Could not update standalone glasses_orders:", e);
@@ -637,6 +675,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                   ...r,
                   orderHistory: history,
                   ...(isMainGlassesOrder ? { glassesOrder: updatedOrder } : {}),
+                  updatedAt: nowIso,
                 }
               : r,
           ),
@@ -722,32 +761,34 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
           );
 
           try {
-            const qStandalone = query(
-              collection(db, "glasses_orders"),
-              where("orderNumber", "==", order.orderNumber),
-            );
-            const snapStandalone = await getDocs(qStandalone);
-            if (!snapStandalone.empty) {
-              const batch = writeBatch(db);
-              snapStandalone.docs.forEach((d) => {
-                const cur = d.data();
-                batch.update(
-                  d.ref,
-                  removeUndefined({
-                    status: newStatus,
-                    ...(newStatus === "completed"
-                      ? {
-                          advance: cur.total ?? updatedOrder?.total ?? 0,
-                          balance: 0,
-                          deliveredAt: cur.deliveredAt || nowIso,
-                          deliveredBy: cur.deliveredBy || handlerName,
-                        }
-                      : {}),
-                    updatedAt: nowIso,
-                  }),
-                );
-              });
-              await batch.commit();
+            if (await hasLegacyGlassesOrders(db)) {
+              const qStandalone = query(
+                collection(db, "glasses_orders"),
+                where("orderNumber", "==", order.orderNumber),
+              );
+              const snapStandalone = await getDocs(qStandalone);
+              if (!snapStandalone.empty) {
+                const batch = writeBatch(db);
+                snapStandalone.docs.forEach((d) => {
+                  const cur = d.data();
+                  batch.update(
+                    d.ref,
+                    removeUndefined({
+                      status: newStatus,
+                      ...(newStatus === "completed"
+                        ? {
+                            advance: cur.total ?? updatedOrder?.total ?? 0,
+                            balance: 0,
+                            deliveredAt: cur.deliveredAt || nowIso,
+                            deliveredBy: cur.deliveredBy || handlerName,
+                          }
+                        : {}),
+                      updatedAt: nowIso,
+                    }),
+                  );
+                });
+                await batch.commit();
+              }
             }
           } catch (e) {
             console.warn("Could not update standalone glasses_orders:", e);
@@ -879,26 +920,30 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
           removeUndefined({
             ...(history.length > 0 ? { orderHistory: history } : {}),
             ...(isMainGlassesOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
+            updatedAt: nowIso,
           }),
         );
 
         try {
-          const qStandalone = query(
-            collection(db, "glasses_orders"),
-            where("orderNumber", "==", order.orderNumber),
-          );
-          const snapStandalone = await getDocs(qStandalone);
-          if (!snapStandalone.empty) {
-            const batch = writeBatch(db);
-            snapStandalone.docs.forEach((d) => {
-              batch.update(d.ref, {
-                advance: currentTotal,
-                balance: 0,
-                balanceCollectedAt: nowIso,
-                balanceCollectedBy: handlerName,
+          if (await hasLegacyGlassesOrders(db)) {
+            const qStandalone = query(
+              collection(db, "glasses_orders"),
+              where("orderNumber", "==", order.orderNumber),
+            );
+            const snapStandalone = await getDocs(qStandalone);
+            if (!snapStandalone.empty) {
+              const batch = writeBatch(db);
+              snapStandalone.docs.forEach((d) => {
+                batch.update(d.ref, {
+                  advance: currentTotal,
+                  balance: 0,
+                  balanceCollectedAt: nowIso,
+                  balanceCollectedBy: handlerName,
+                  updatedAt: nowIso,
+                });
               });
-            });
-            await batch.commit();
+              await batch.commit();
+            }
           }
         } catch (e) {
           console.warn("Could not update standalone glasses_orders:", e);
@@ -911,6 +956,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                   ...r,
                   ...(history.length > 0 ? { orderHistory: history } : {}),
                   ...(isMainGlassesOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
+                  updatedAt: nowIso,
                 }
               : r,
           ),
@@ -938,10 +984,15 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
     if (isLoadingArchive || hasLoadedFullArchive) return;
     setIsLoadingArchive(true);
     try {
-      const snap = await getDocs(collection(db, "medicalRecords"));
-      const allMeds = snap.docs.map((d) => ({ id: d.id, ...d.data() } as MedicalRecord));
-      setMedicalRecords(allMeds);
-      setHasLoadedFullArchive(true);
+      if (onLoadFullMedicalRecords) {
+        await onLoadFullMedicalRecords();
+        setInternalHasLoadedFullArchive(true);
+      } else {
+        const snap = await getDocs(collection(db, "medicalRecords"));
+        const allMeds = snap.docs.map((d) => ({ id: d.id, ...d.data() } as MedicalRecord));
+        setMedicalRecords(allMeds);
+        setInternalHasLoadedFullArchive(true);
+      }
     } catch (e) {
       console.error("Error loading full archive for orders:", e);
     } finally {
@@ -1088,15 +1139,45 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                 </h2>
                 <div className="flex items-center gap-2">
                   <div
-                    className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-black/25 text-white border border-white/20 rounded-xl text-xs font-bold"
-                    title={gatewayDevice ? `Telefon conectat prin sms-gate.app: ${gatewayDevice.name}` : "SMS Gateway cloud server conectat (api.sms-gate.app)"}
+                    className={cn(
+                      "hidden sm:flex items-center gap-1.5 px-3 py-1.5 border rounded-xl text-xs font-bold",
+                      gatewayStatus === "connected"
+                        ? "bg-black/25 text-white border-white/20"
+                        : gatewayStatus === "checking"
+                          ? "bg-black/25 text-amber-100 border-amber-300/30"
+                          : "bg-rose-950/60 text-rose-100 border-rose-300/40"
+                    )}
+                    title={
+                      gatewayStatus === "connected" && gatewayDevice
+                        ? `Telefon conectat prin sms-gate.app: ${gatewayDevice.name}`
+                        : gatewayStatus === "checking"
+                          ? "Se verifică conexiunea cu SMS Gateway..."
+                          : gatewayError || "SMS Gateway deconectat"
+                    }
                   >
                     <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-300 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+                      {gatewayStatus === "connected" && (
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-300 opacity-75"></span>
+                      )}
+                      <span
+                        className={cn(
+                          "relative inline-flex rounded-full h-2 w-2",
+                          gatewayStatus === "connected"
+                            ? "bg-emerald-400"
+                            : gatewayStatus === "checking"
+                              ? "bg-amber-300 animate-pulse"
+                              : "bg-rose-400"
+                        )}
+                      ></span>
                     </span>
                     <Smartphone className="w-3.5 h-3.5 text-blue-200" />
-                    <span className="text-[11px] opacity-90">SMS Gate: {gatewayDevice?.name || "Xiaomi conectat"}</span>
+                    <span className="text-[11px] opacity-90">
+                      {gatewayStatus === "checking"
+                        ? "Se verifică SMS..."
+                        : gatewayStatus === "connected"
+                          ? `SMS Gate: ${gatewayDevice?.name || "Conectat"}`
+                          : "SMS Gate: Deconectat"}
+                    </span>
                   </div>
                   {!hasLoadedFullArchive && (
                     <button
@@ -2646,6 +2727,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                         }
 
                                         if (modified) {
+                                          updatePayload.updatedAt = new Date().toISOString();
                                           await updateDoc(docRef, updatePayload);
                                           setMedicalRecords((prev) =>
                                             prev.map((r) =>
@@ -2654,31 +2736,36 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                                     ...r,
                                                     ...(updatePayload.glassesOrder ? { glassesOrder: updatedGlassesOrder } : {}),
                                                     ...(updatePayload.orderHistory ? { orderHistory: updatedHistory } : {}),
+                                                    updatedAt: updatePayload.updatedAt,
                                                   }
                                                 : r
                                             )
                                           );
                                         }
 
-                                        const qStandalone = query(
-                                          collection(db, "glasses_orders"),
-                                          where(
-                                            "orderNumber",
-                                            "==",
-                                            order.orderNumber,
-                                          ),
-                                        );
-                                        const snapStandalone =
-                                          await getDocs(qStandalone);
-                                        const batch = writeBatch(db);
-                                        snapStandalone.docs.forEach((d) => {
-                                          batch.update(d.ref, {
-                                            isDeleted: deleteField(),
-                                            deletedAt: deleteField(),
-                                            deletedBy: deleteField(),
-                                          });
-                                        });
-                                        await batch.commit();
+                                        if (await hasLegacyGlassesOrders(db)) {
+                                          const qStandalone = query(
+                                            collection(db, "glasses_orders"),
+                                            where(
+                                              "orderNumber",
+                                              "==",
+                                              order.orderNumber,
+                                            ),
+                                          );
+                                          const snapStandalone =
+                                            await getDocs(qStandalone);
+                                          if (!snapStandalone.empty) {
+                                            const batch = writeBatch(db);
+                                            snapStandalone.docs.forEach((d) => {
+                                              batch.update(d.ref, {
+                                                isDeleted: deleteField(),
+                                                deletedAt: deleteField(),
+                                                deletedBy: deleteField(),
+                                              });
+                                            });
+                                            await batch.commit();
+                                          }
+                                        }
                                         alert("Comandă restaurată.");
                                       }
                                     } catch (err) {

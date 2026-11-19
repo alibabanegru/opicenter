@@ -584,6 +584,10 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
 
   const [isSavingAndPrinting, setIsSavingAndPrinting] = useState(false);
   const symptomsInputRef = useRef<HTMLInputElement | null>(null);
+  const lastSyncedBirthDateRef = useRef<string>(currentMedicalRecord?.patientBirthDate || "");
+  useEffect(() => {
+    lastSyncedBirthDateRef.current = currentMedicalRecord?.patientBirthDate || "";
+  }, [currentMedicalRecord?.id, currentMedicalRecord?.patientBirthDate]);
   const [confirmDiscardDraft, setConfirmDiscardDraft] = useState(false);
   const [isDraftRecoveryOpen, setIsDraftRecoveryOpen] = useState(false);
   const [availableDrafts, setAvailableDrafts] = useState<Array<{
@@ -1204,7 +1208,8 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 }
                               : prev,
                           );
-                          if (dbDate.length === 10) {
+                          if (dbDate.length === 10 && dbDate !== lastSyncedBirthDateRef.current) {
+                            lastSyncedBirthDateRef.current = dbDate;
                             syncPatientDetailsInDB("birthDate", dbDate);
                           }
                         }}
@@ -1223,7 +1228,10 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                   }
                                 : prev,
                             );
-                            syncPatientDetailsInDB("birthDate", dbDate);
+                            if (dbDate !== lastSyncedBirthDateRef.current) {
+                              lastSyncedBirthDateRef.current = dbDate;
+                              syncPatientDetailsInDB("birthDate", dbDate);
+                            }
                           }
                         }}
                         className={cn(

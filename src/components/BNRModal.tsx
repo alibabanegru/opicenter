@@ -357,20 +357,30 @@ export const BNRModal: React.FC<BNRModalProps> = ({
       const secondaryUrl = `https://api.frankfurter.app/v1/${startStr}..${endStr}?from=${selectedHistoryCurrency}&to=RON`;
       const tertiaryUrl = `https://api.frankfurter.app/${startStr}..${endStr}?from=${selectedHistoryCurrency}&to=RON`;
 
-      let response: Response | null = null;
-      const tryFetch = async (url: string) => {
+      const fetchWithTimeout = async (url: string): Promise<Response> => {
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 6000);
         try {
-          const res = await fetch(url);
-          if (res.ok) return res;
-        } catch (e) {
-          console.warn(`Fetch failed for ${url}:`, e);
+          const res = await fetch(url, { signal: controller.signal });
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+          }
+          return res;
+        } finally {
+          window.clearTimeout(timeoutId);
         }
-        return null;
       };
 
-      response = await tryFetch(primaryUrl);
-      if (!response) response = await tryFetch(secondaryUrl);
-      if (!response) response = await tryFetch(tertiaryUrl);
+      let response: Response | null = null;
+      try {
+        response = await Promise.any([
+          fetchWithTimeout(primaryUrl),
+          fetchWithTimeout(secondaryUrl),
+          fetchWithTimeout(tertiaryUrl),
+        ]);
+      } catch {
+        response = null;
+      }
 
       if (!response) {
         throw new Error(

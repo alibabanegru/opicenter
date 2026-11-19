@@ -248,6 +248,7 @@ import {
   safeParseDate,
   safeFormatDate,
 } from "./appConstants";
+import { hasLegacyGlassesOrders, markLegacyGlassesOrdersStatus } from "./utils/legacyOrdersFlag";
 import {
   buildWhatsAppUrl,
   openWhatsAppUrl,
@@ -2195,8 +2196,95 @@ export default function App() {
   const [isLoadingAllHistory, setIsLoadingAllHistory] = useState(false);
   const [isLoading30Days, setIsLoading30Days] = useState(false);
   const [hasLoadedAllHistory, setHasLoadedAllHistory] = useState(false);
+  const [hasLoadedMedicalRecordsArchive, setHasLoadedMedicalRecordsArchive] = useState(false);
+  const [hasLoadedAppointmentsArchive, setHasLoadedAppointmentsArchive] = useState(false);
   const fullArchivePromiseRef = useRef<Promise<{ allApps: Appointment[]; allMeds: MedicalRecord[] } | null> | null>(null);
+  const medsArchivePromiseRef = useRef<Promise<MedicalRecord[] | null> | null>(null);
+  const appsArchivePromiseRef = useRef<Promise<Appointment[] | null> | null>(null);
   const hasLoadedAllMedicalDocumentsRef = useRef<boolean>(false);
+
+  const ensureMedicalRecordsArchiveLoaded = useCallback(
+    async (silent = true): Promise<MedicalRecord[] | null> => {
+      if (hasLoadedMedicalRecordsArchive || hasLoadedAllHistory) {
+        return medicalRecords;
+      }
+      if (medsArchivePromiseRef.current) {
+        return medsArchivePromiseRef.current;
+      }
+      if (!silent) {
+        setIsLoadingAllHistory(true);
+      }
+      const p = (async () => {
+        try {
+          const medSnap = await getDocs(collection(db, "medicalRecords"));
+          const allMeds = medSnap.docs.map((d) => ({ id: d.id, ...d.data() } as MedicalRecord));
+          setMedicalRecords(allMeds);
+          setHasLoadedMedicalRecordsArchive(true);
+          if (hasLoadedAppointmentsArchive) {
+            setHasLoadedAllHistory(true);
+          }
+          if (!silent) {
+            setSuccessMessage(`Arhiva fișelor și comenzilor a fost încărcată cu succes! (${allMeds.length} fișe)`);
+          }
+          return allMeds;
+        } catch (e) {
+          console.error("Error loading medicalRecords archive:", e);
+          if (!silent) {
+            setErrorMessage("Eroare la descărcarea arhivei din baza de date. Verificați conexiunea la internet.");
+          }
+          return null;
+        } finally {
+          medsArchivePromiseRef.current = null;
+          if (!silent) {
+            setIsLoadingAllHistory(false);
+          }
+        }
+      })();
+      medsArchivePromiseRef.current = p;
+      return p;
+    },
+    [hasLoadedMedicalRecordsArchive, hasLoadedAllHistory, hasLoadedAppointmentsArchive, medicalRecords]
+  );
+
+  const ensureAppointmentsArchiveLoaded = useCallback(
+    async (silent = true): Promise<Appointment[] | null> => {
+      if (hasLoadedAppointmentsArchive || hasLoadedAllHistory) {
+        return appointments;
+      }
+      if (appsArchivePromiseRef.current) {
+        return appsArchivePromiseRef.current;
+      }
+      if (!silent) {
+        setIsLoadingAllHistory(true);
+      }
+      const p = (async () => {
+        try {
+          const appSnap = await getDocs(collection(db, "appointments"));
+          const allApps = appSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Appointment));
+          setAppointments(allApps);
+          setHasLoadedAppointmentsArchive(true);
+          if (hasLoadedMedicalRecordsArchive) {
+            setHasLoadedAllHistory(true);
+          }
+          return allApps;
+        } catch (e) {
+          console.error("Error loading appointments archive:", e);
+          if (!silent) {
+            setErrorMessage("Eroare la descărcarea arhivei din baza de date. Verificați conexiunea la internet.");
+          }
+          return null;
+        } finally {
+          appsArchivePromiseRef.current = null;
+          if (!silent) {
+            setIsLoadingAllHistory(false);
+          }
+        }
+      })();
+      appsArchivePromiseRef.current = p;
+      return p;
+    },
+    [hasLoadedAppointmentsArchive, hasLoadedAllHistory, hasLoadedMedicalRecordsArchive, appointments]
+  );
 
   const ensureFullArchiveLoaded = useCallback(
     async (silent = true): Promise<{ allApps: Appointment[]; allMeds: MedicalRecord[] } | null> => {
@@ -2211,19 +2299,21 @@ export default function App() {
       }
       const p = (async () => {
         try {
-          const [appSnap, medSnap] = await Promise.all([
-            getDocs(collection(db, "appointments")),
-            getDocs(collection(db, "medicalRecords")),
+          const [loadedApps, loadedMeds] = await Promise.all([
+            ensureAppointmentsArchiveLoaded(true),
+            ensureMedicalRecordsArchiveLoaded(true),
           ]);
-          const allApps = appSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Appointment));
-          const allMeds = medSnap.docs.map((d) => ({ id: d.id, ...d.data() } as MedicalRecord));
-          setAppointments(allApps);
-          setMedicalRecords(allMeds);
+          if (!loadedApps || !loadedMeds) {
+            if (!silent) {
+              setErrorMessage("Eroare la descărcarea arhivei din baza de date. Verificați conexiunea la internet.");
+            }
+            return null;
+          }
           setHasLoadedAllHistory(true);
           if (!silent) {
-            setSuccessMessage(`Toată arhiva a fost încărcată cu succes! (${allApps.length} programări, ${allMeds.length} fișe medicale)`);
+            setSuccessMessage(`Toată arhiva a fost încărcată cu succes! (${loadedApps.length} programări, ${loadedMeds.length} fișe medicale)`);
           }
-          return { allApps, allMeds };
+          return { allApps: loadedApps, allMeds: loadedMeds };
         } catch (e) {
           console.error("Error loading full archive:", e);
           if (!silent) {
@@ -2240,7 +2330,7 @@ export default function App() {
       fullArchivePromiseRef.current = p;
       return p;
     },
-    [hasLoadedAllHistory, appointments, medicalRecords]
+    [hasLoadedAllHistory, appointments, medicalRecords, ensureAppointmentsArchiveLoaded, ensureMedicalRecordsArchiveLoaded]
   );
 
   const searchArchiveByPrefix = useCallback(
@@ -4936,10 +5026,23 @@ export default function App() {
         return;
       }
 
-      const settingsSnap = await getDocs(collection(db, "settings")).catch(() => null);
-      if (!settingsSnap || settingsSnap.empty) return;
+      const SETTING_DOC_IDS = [
+        "symptomOptions",
+        "diagnosticOptions",
+        "recommendationOptions",
+        "anteriorSegmentOptions",
+        "posteriorSegmentOptions",
+        "treatmentCategories",
+        "treatmentProtocols",
+        "whatsappTemplates",
+        "roleLabels",
+      ];
+      const settingDocSnaps = await Promise.all(
+        SETTING_DOC_IDS.map((id) => getDoc(doc(db, "settings", id)).catch(() => null))
+      );
 
-      settingsSnap.forEach((docSnap) => {
+      settingDocSnaps.forEach((docSnap) => {
+        if (!docSnap || !docSnap.exists()) return;
         const docId = docSnap.id;
         const data = docSnap.data();
         if (!data) return;
@@ -5047,10 +5150,10 @@ export default function App() {
     syncClinicSettingsFromFirebase();
   }, [syncClinicSettingsFromFirebase]);
 
-  // La deschiderea configurărilor sau gestiunii, ne asigurăm că avem datele proaspete
+  // La deschiderea configurărilor sau gestiunii, folosim cache-ul de 30 minute dacă datele sunt deja proaspete
   useEffect(() => {
     if (isConfigModalOpen) {
-      syncClinicSettingsFromFirebase(true);
+      syncClinicSettingsFromFirebase(false);
     }
   }, [isConfigModalOpen, syncClinicSettingsFromFirebase]);
 
@@ -6053,26 +6156,30 @@ export default function App() {
           removeUndefined({
             ...(history.length > 0 ? { orderHistory: history } : {}),
             ...(isMainGlassesOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
+            updatedAt: nowIso,
           }),
         );
 
         try {
-          const qStandalone = query(
-            collection(db, "glasses_orders"),
-            where("orderNumber", "==", order.orderNumber),
-          );
-          const snapStandalone = await getDocs(qStandalone);
-          if (!snapStandalone.empty) {
-            const batch = writeBatch(db);
-            snapStandalone.docs.forEach((d) => {
-              batch.update(d.ref, {
-                advance: currentTotal,
-                balance: 0,
-                balanceCollectedAt: nowIso,
-                balanceCollectedBy: handlerName,
+          if (await hasLegacyGlassesOrders(db)) {
+            const qStandalone = query(
+              collection(db, "glasses_orders"),
+              where("orderNumber", "==", order.orderNumber),
+            );
+            const snapStandalone = await getDocs(qStandalone);
+            if (!snapStandalone.empty) {
+              const batch = writeBatch(db);
+              snapStandalone.docs.forEach((d) => {
+                batch.update(d.ref, {
+                  advance: currentTotal,
+                  balance: 0,
+                  balanceCollectedAt: nowIso,
+                  balanceCollectedBy: handlerName,
+                  updatedAt: nowIso,
+                });
               });
-            });
-            await batch.commit();
+              await batch.commit();
+            }
           }
         } catch (e) {
           console.warn("Could not update standalone glasses_orders:", e);
@@ -6085,6 +6192,7 @@ export default function App() {
                   ...r,
                   ...(history.length > 0 ? { orderHistory: history } : {}),
                   ...(isMainGlassesOrder && updatedMainGlasses ? { glassesOrder: updatedMainGlasses } : {}),
+                  updatedAt: nowIso,
                 }
               : r,
           ),
@@ -7213,31 +7321,33 @@ export default function App() {
           );
         }
 
-        // C) Update glasses_orders in Firestore
-        const orderQueries = [
-          query(collection(db, "glasses_orders"), where("patientName", "==", cleanOld)),
-        ];
-        if (cleanOld.toUpperCase() !== cleanOld) {
-          orderQueries.push(query(collection(db, "glasses_orders"), where("patientName", "==", cleanOld.toUpperCase())));
-        }
-        if (cleanPhone) {
-          orderQueries.push(query(collection(db, "glasses_orders"), where("patientPhone", "==", cleanPhone)));
-        }
-        if (effectiveOldId) {
-          orderQueries.push(query(collection(db, "glasses_orders"), where("patientId", "==", effectiveOldId)));
-        }
-        const orderSnaps = await Promise.allSettled(orderQueries.map((q) => getDocs(q)));
-        const orderDocIds = new Set<string>();
-        orderSnaps.forEach((res) => {
-          if (res.status === "fulfilled") {
-            res.value.docs.forEach((d) => orderDocIds.add(d.id));
+        // C) Update glasses_orders in Firestore (legacy only)
+        if (await hasLegacyGlassesOrders(db)) {
+          const orderQueries = [
+            query(collection(db, "glasses_orders"), where("patientName", "==", cleanOld)),
+          ];
+          if (cleanOld.toUpperCase() !== cleanOld) {
+            orderQueries.push(query(collection(db, "glasses_orders"), where("patientName", "==", cleanOld.toUpperCase())));
           }
-        });
-        for (const orderId of orderDocIds) {
-          updateDoc(doc(db, "glasses_orders", orderId), {
-            patientName: cleanNew,
-            patientId: newRecordId,
-          }).catch((err) => console.warn("Error updating glasses_order doc:", orderId, err));
+          if (cleanPhone) {
+            orderQueries.push(query(collection(db, "glasses_orders"), where("patientPhone", "==", cleanPhone)));
+          }
+          if (effectiveOldId) {
+            orderQueries.push(query(collection(db, "glasses_orders"), where("patientId", "==", effectiveOldId)));
+          }
+          const orderSnaps = await Promise.allSettled(orderQueries.map((q) => getDocs(q)));
+          const orderDocIds = new Set<string>();
+          orderSnaps.forEach((res) => {
+            if (res.status === "fulfilled") {
+              res.value.docs.forEach((d) => orderDocIds.add(d.id));
+            }
+          });
+          for (const orderId of orderDocIds) {
+            updateDoc(doc(db, "glasses_orders", orderId), {
+              patientName: cleanNew,
+              patientId: newRecordId,
+            }).catch((err) => console.warn("Error updating glasses_order doc:", orderId, err));
+          }
         }
 
         // D) Update medicalDocuments in Firestore
@@ -7486,8 +7596,8 @@ export default function App() {
           }
         }
 
-        // C) Update glasses_orders in Firestore
-        if (newPhone !== undefined || newName !== undefined) {
+        // C) Update glasses_orders in Firestore (legacy only)
+        if ((newPhone !== undefined || newName !== undefined) && await hasLegacyGlassesOrders(db)) {
           const ordersQuery = query(
             collection(db, "glasses_orders"),
             where("patientName", "==", rawTargetName || (newName || ""))
@@ -8026,20 +8136,23 @@ export default function App() {
       }
     );
 
-    // 6. Frame Stock
-    const unsubFrameStock = onSnapshot(
-      collection(db, "frame_stock"),
-      (snapshot) => {
-        setFrameStockList(
-          snapshot.docs.map(
-            (doc) => ({ id: doc.id, ...doc.data() }) as FrameStockItem
+    // 6. Frame Stock (skip listener on TV / patient screens)
+    const unsubFrameStock =
+      profile?.role && profile.role !== "tv" && profile.role !== "patient"
+        ? onSnapshot(
+            collection(db, "frame_stock"),
+            (snapshot) => {
+              setFrameStockList(
+                snapshot.docs.map(
+                  (doc) => ({ id: doc.id, ...doc.data() }) as FrameStockItem
+                )
+              );
+            },
+            (error) => {
+              handleFirestoreError(error, OperationType.GET, "frame_stock");
+            }
           )
-        );
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.GET, "frame_stock");
-      }
-    );
+        : () => {};
 
     return () => {
       unsubAppointments();
@@ -8300,13 +8413,23 @@ export default function App() {
     document.documentElement.classList.toggle("dark", darkMode);
   }, [darkMode]);
 
-  // Auto-cleanup past activated custom/fixed dates once the date has ended
+  // Auto-cleanup past activated custom/fixed dates once per day by admin/frontdesk
   const lastPrunedConfigDayRef = useRef<string>("");
   useEffect(() => {
     if (!configs || configs.length === 0) return;
+    if (!profile || (profile.role !== "admin" && profile.role !== "frontdesk")) return;
     const todayStr = format(new Date(), "yyyy-MM-dd");
     if (lastPrunedConfigDayRef.current === todayStr) return;
+    try {
+      if (localStorage.getItem("clinic_configs_pruned_day") === todayStr) {
+        lastPrunedConfigDayRef.current = todayStr;
+        return;
+      }
+    } catch {}
     lastPrunedConfigDayRef.current = todayStr;
+    try {
+      localStorage.setItem("clinic_configs_pruned_day", todayStr);
+    } catch {}
 
     configs.forEach(async (cfg) => {
       let customChanged = false;
@@ -8349,7 +8472,7 @@ export default function App() {
         }
       }
     });
-  }, [configs]);
+  }, [configs, profile?.role]);
 
   // One-time automatic consolidation of any legacy random-ID configs to canonical doctorId IDs
   const configsConsolidatedRef = useRef(false);
@@ -11285,8 +11408,21 @@ export default function App() {
           setIsServerSaving(false);
         }
 
-        // SINCRONIZARE GARANTATĂ ÎN TIMP REAL CU APPOINTMENTS ÎN FIRESTORE
+        // SINCRONIZARE GARANTATĂ ÎN TIMP REAL CU APPOINTMENTS ÎN FIRESTORE (fără suprascrierea tipului de consult pe vizitele vechi)
         try {
+          const isConsultCompletVal = !!activeRecord.isConsultComplet;
+          const isControlVal = !!activeRecord.isControl;
+          const isGratisVal = !!activeRecord.isGratis;
+
+          const identityChanged = !!(
+            (oldPatientName && newPatientName && oldPatientName !== newPatientName) ||
+            (existingRec && (existingRec.patientPhone || "").trim() !== phone) ||
+            (existingRec && (existingRec.patientCnp || "").trim() !== (updatedRecord.patientCnp || "").trim()) ||
+            (existingRec && (existingRec.patientBirthDate || "") !== (updatedRecord.patientBirthDate || "")) ||
+            (existingRec && (existingRec.patientSex || "") !== (updatedRecord.patientSex || "")) ||
+            (existingRec && existingRec.patientAge !== finalAge)
+          );
+
           const appointmentsRef = collection(db, "appointments");
           const uniqueAppDocs = new Map<string, any>();
 
@@ -11294,76 +11430,95 @@ export default function App() {
             uniqueAppDocs.set(effectiveAppointment.id, effectiveAppointment);
           }
 
-          const appQueries = [];
-          if (oldPatientName && oldPatientName.trim() !== "") {
-            appQueries.push(query(appointmentsRef, where("patientName", "==", oldPatientName)));
-          }
-          if (newPatientName && newPatientName !== oldPatientName) {
-            appQueries.push(query(appointmentsRef, where("patientName", "==", newPatientName)));
-          }
-          if (phone && phone.trim() !== "") {
-            appQueries.push(query(appointmentsRef, where("patientPhone", "==", phone.trim())));
+          if (identityChanged) {
+            const appQueries = [];
+            if (oldPatientName && oldPatientName.trim() !== "") {
+              appQueries.push(query(appointmentsRef, where("patientName", "==", oldPatientName)));
+            }
+            if (newPatientName && newPatientName !== oldPatientName) {
+              appQueries.push(query(appointmentsRef, where("patientName", "==", newPatientName)));
+            }
+            if (phone && phone.trim() !== "") {
+              appQueries.push(query(appointmentsRef, where("patientPhone", "==", phone.trim())));
+            }
+
+            if (appQueries.length > 0) {
+              const appSnaps = await Promise.all(appQueries.map((q) => getDocs(q)));
+              appSnaps.forEach((snap) => {
+                snap.docs.forEach((d) => uniqueAppDocs.set(d.id, d.data()));
+              });
+            }
           }
 
-          if (appQueries.length > 0) {
-            const appSnaps = await Promise.all(appQueries.map((q) => getDocs(q)));
-            appSnaps.forEach((snap) => {
-              snap.docs.forEach((d) => uniqueAppDocs.set(d.id, d.data()));
-            });
+          const updatePromises: Promise<void>[] = [];
+          Array.from(uniqueAppDocs.keys()).forEach((docId) => {
+            const isCurrentActive = effectiveAppointment?.id === docId;
+            if (!identityChanged && !isCurrentActive) return;
+
+            const payload: Record<string, any> = {};
+            if (identityChanged) {
+              payload.patientName = newPatientName;
+              payload.patientPhone = phone || undefined;
+              payload.patientCnp = activeRecord.patientCnp || undefined;
+              payload.patientAge = finalAge !== undefined ? finalAge : uniqueAppDocs.get(docId)?.patientAge;
+              payload.patientBirthDate = activeRecord.patientBirthDate || "";
+              payload.patientSex = activeRecord.patientSex || "";
+              payload.medicalRecordId = newRecordId;
+            }
+            if (isCurrentActive) {
+              payload.medicalRecordId = newRecordId;
+              payload.isConsultComplet = isConsultCompletVal;
+              payload.isControl = isControlVal;
+              payload.isGratis = isGratisVal;
+            }
+
+            const cleanedPayload = removeUndefined(payload);
+            if (Object.keys(cleanedPayload).length > 0) {
+              updatePromises.push(updateDoc(doc(db, "appointments", docId), cleanedPayload));
+            }
+          });
+          if (updatePromises.length > 0) {
+            await Promise.all(updatePromises);
           }
-
-          const isConsultCompletVal = !!activeRecord.isConsultComplet;
-          const isControlVal = !!activeRecord.isControl;
-          const isGratisVal = !!activeRecord.isGratis;
-
-          const updatePromises = Array.from(uniqueAppDocs.keys()).map((docId) =>
-            updateDoc(
-              doc(db, "appointments", docId),
-              removeUndefined({
-                patientName: newPatientName,
-                patientPhone: phone || undefined,
-                patientCnp: activeRecord.patientCnp || undefined,
-                patientAge: finalAge !== undefined ? finalAge : uniqueAppDocs.get(docId)?.patientAge,
-                patientBirthDate: activeRecord.patientBirthDate || "",
-                patientSex: activeRecord.patientSex || "",
-                medicalRecordId: newRecordId,
-                isConsultComplet: isConsultCompletVal,
-                isControl: isControlVal,
-                isGratis: isGratisVal,
-              }),
-            ),
-          );
-          await Promise.all(updatePromises);
 
           setAppointments((prev) =>
             prev.map((app) => {
+              const isCurrentActive = !!(effectiveAppointment && app.id === effectiveAppointment.id);
               const isOldNameMatch =
-                oldPatientName && app.patientName?.toLowerCase().trim() === oldPatientName.toLowerCase().trim();
+                identityChanged &&
+                oldPatientName &&
+                app.patientName?.toLowerCase().trim() === oldPatientName.toLowerCase().trim();
               const isNewNameMatch =
-                newPatientName && app.patientName?.toLowerCase().trim() === newPatientName.toLowerCase().trim();
+                identityChanged &&
+                newPatientName &&
+                app.patientName?.toLowerCase().trim() === newPatientName.toLowerCase().trim();
               const isPhoneMatch =
-                phone && (app.patientPhone || "").replace(/\D/g, "") === phone.replace(/\D/g, "");
-              const isActiveMatch =
-                effectiveAppointment && app.id === effectiveAppointment.id;
+                identityChanged &&
+                phone &&
+                (app.patientPhone || "").replace(/\D/g, "") === phone.replace(/\D/g, "");
 
-              if (
-                isOldNameMatch ||
-                isNewNameMatch ||
-                isPhoneMatch ||
-                isActiveMatch
-              ) {
+              if (isCurrentActive || isOldNameMatch || isNewNameMatch || isPhoneMatch) {
                 return {
                   ...app,
-                  patientName: newPatientName,
-                  patientPhone: phone || app.patientPhone,
-                  patientCnp: activeRecord.patientCnp || app.patientCnp,
-                  patientAge: finalAge !== undefined ? finalAge : app.patientAge,
-                  patientBirthDate: activeRecord.patientBirthDate || app.patientBirthDate,
-                  patientSex: (activeRecord.patientSex as any) || app.patientSex,
-                  medicalRecordId: newRecordId,
-                  isConsultComplet: isConsultCompletVal,
-                  isControl: isControlVal,
-                  isGratis: isGratisVal,
+                  ...(identityChanged
+                    ? {
+                        patientName: newPatientName,
+                        patientPhone: phone || app.patientPhone,
+                        patientCnp: activeRecord.patientCnp || app.patientCnp,
+                        patientAge: finalAge !== undefined ? finalAge : app.patientAge,
+                        patientBirthDate: activeRecord.patientBirthDate || app.patientBirthDate,
+                        patientSex: (activeRecord.patientSex as any) || app.patientSex,
+                        medicalRecordId: newRecordId,
+                      }
+                    : {}),
+                  ...(isCurrentActive
+                    ? {
+                        medicalRecordId: newRecordId,
+                        isConsultComplet: isConsultCompletVal,
+                        isControl: isControlVal,
+                        isGratis: isGratisVal,
+                      }
+                    : {}),
                 };
               }
               return app;
@@ -11536,61 +11691,36 @@ export default function App() {
           `Fișa medicală a pacientului ${newPatientName} (Tel: ${phone}) a fost salvată/modificată.`
         ).catch(() => {});
 
-        try {
-          await syncPatientUniversal(
-            {
-              patientName: newPatientName,
-              patientPhone: phone,
-              patientCnp: updatedRecord.patientCnp,
-              recordId: updatedRecord.id,
-            },
-            {
-              patientName: newPatientName,
-              patientPhone: phone,
-              patientCnp: updatedRecord.patientCnp,
-              patientBirthDate: updatedRecord.patientBirthDate,
-              patientSex: updatedRecord.patientSex,
-              patientAge: finalAge,
-            },
-          );
-        } catch (err) {
-          console.warn("Could not sync with universal patient data:", err);
-        }
-
-        try {
-          const ordersRef = collection(db, "glasses_orders");
-          const orderQueries = [];
-          if (oldPatientName) orderQueries.push(query(ordersRef, where("patientName", "==", oldPatientName)));
-          const orderSnaps = await Promise.all(orderQueries.map((q) => getDocs(q)));
-          const uniqueOrders = new Map<string, any>();
-          orderSnaps.forEach((s) => s.docs.forEach((d) => uniqueOrders.set(d.id, d.data())));
-          if (oldPatientName !== newPatientName) {
-            await Promise.all(
-              Array.from(uniqueOrders.keys()).map((docId) =>
-                updateDoc(doc(db, "glasses_orders", docId), removeUndefined({ patientName: newPatientName })),
-              ),
-            );
+        if (oldPatientName && oldPatientName !== newPatientName) {
+          try {
+            if (await hasLegacyGlassesOrders(db)) {
+              const ordersRef = collection(db, "glasses_orders");
+              const orderSnaps = await getDocs(query(ordersRef, where("patientName", "==", oldPatientName)));
+              if (!orderSnaps.empty) {
+                await Promise.all(
+                  orderSnaps.docs.map((d) =>
+                    updateDoc(doc(db, "glasses_orders", d.id), removeUndefined({ patientName: newPatientName })),
+                  ),
+                );
+              }
+            }
+          } catch (e) {
+            console.warn("Could not sync glasses_orders:", e);
           }
-        } catch (e) {
-          console.warn("Could not sync glasses_orders:", e);
-        }
 
-        try {
-          const docsRef = collection(db, "medicalDocuments");
-          const docQueries = [];
-          if (oldPatientName) docQueries.push(query(docsRef, where("patientName", "==", oldPatientName)));
-          const docSnaps = await Promise.all(docQueries.map((q) => getDocs(q)));
-          const uniqueDocs = new Map<string, any>();
-          docSnaps.forEach((s) => s.docs.forEach((d) => uniqueDocs.set(d.id, d.data())));
-          if (oldPatientName !== newPatientName) {
-            await Promise.all(
-              Array.from(uniqueDocs.keys()).map((docId) =>
-                updateDoc(doc(db, "medicalDocuments", docId), removeUndefined({ patientName: newPatientName })),
-              ),
-            );
+          try {
+            const docsRef = collection(db, "medicalDocuments");
+            const docSnaps = await getDocs(query(docsRef, where("patientName", "==", oldPatientName)));
+            if (!docSnaps.empty) {
+              await Promise.all(
+                docSnaps.docs.map((d) =>
+                  updateDoc(doc(db, "medicalDocuments", d.id), removeUndefined({ patientName: newPatientName })),
+                ),
+              );
+            }
+          } catch (e) {
+            console.warn("Could not sync medicalDocuments:", e);
           }
-        } catch (e) {
-          console.warn("Could not sync medicalDocuments:", e);
         }
       })();
 
@@ -12609,21 +12739,23 @@ export default function App() {
       }
 
       try {
-        const qStandalone = query(
-          collection(db, "glasses_orders"),
-          where("orderNumber", "==", currentOrder.orderNumber),
-        );
-        const snapStandalone = await getDocs(qStandalone);
-        if (!snapStandalone.empty) {
-          const batch = writeBatch(db);
-          snapStandalone.docs.forEach((d) => {
-            batch.update(d.ref, removeUndefined({
-              createdAt: currentOrder.createdAt,
-              orderDate: (currentOrder as any).orderDate || currentOrder.createdAt,
-              updatedAt: new Date().toISOString(),
-            }));
-          });
-          await batch.commit();
+        if (await hasLegacyGlassesOrders(db)) {
+          const qStandalone = query(
+            collection(db, "glasses_orders"),
+            where("orderNumber", "==", currentOrder.orderNumber),
+          );
+          const snapStandalone = await getDocs(qStandalone);
+          if (!snapStandalone.empty) {
+            const batch = writeBatch(db);
+            snapStandalone.docs.forEach((d) => {
+              batch.update(d.ref, removeUndefined({
+                createdAt: currentOrder.createdAt,
+                orderDate: (currentOrder as any).orderDate || currentOrder.createdAt,
+                updatedAt: new Date().toISOString(),
+              }));
+            });
+            await batch.commit();
+          }
         }
       } catch (e) {
         // standalone sync is safe to ignore
@@ -13538,14 +13670,27 @@ export default function App() {
     if (!orderToDelete) return;
     setLoading(true);
     try {
+      const nowIso = new Date().toISOString();
       const docRef = doc(db, "medicalRecords", orderToDelete.patientId);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const data = docSnap.data() as MedicalRecord;
+        const matchedMain = data.glassesOrder?.orderNumber === orderToDelete.orderNumber ? data.glassesOrder : null;
+        const matchedHist = (data.orderHistory || []).find((o) => o.orderNumber === orderToDelete.orderNumber);
+        const alreadyReturned = Boolean(matchedMain?.stockReturnedOnDelete || matchedHist?.stockReturnedOnDelete);
+        const orderDeductedIds =
+          !alreadyReturned
+            ? ((orderToDelete as any).stockDeductedFrames ||
+                matchedMain?.stockDeductedFrames ||
+                matchedHist?.stockDeductedFrames ||
+                [])
+            : [];
+
         const deletionMeta = {
           isDeleted: true,
-          deletedAt: new Date().toISOString(),
+          deletedAt: nowIso,
           deletedBy: profile?.displayName || "Nespecificat",
+          ...(orderDeductedIds.length > 0 ? { stockReturnedOnDelete: true } : {}),
         };
 
         const updatePayload: any = {};
@@ -13577,14 +13722,11 @@ export default function App() {
         }
 
         if (modified) {
-          // Revenire stoc ramă dacă comanda ștearsă avea ramă scăzută
-          const orderDeductedIds = (orderToDelete as any).stockDeductedFrames || 
-            (data.glassesOrder?.orderNumber === orderToDelete.orderNumber ? data.glassesOrder.stockDeductedFrames : undefined) ||
-            updatedHistory.find((o) => o.orderNumber === orderToDelete.orderNumber)?.stockDeductedFrames || [];
           if (orderDeductedIds.length > 0) {
             await returnFrameStockHelper(orderDeductedIds, `anularea/ștergerea comenzii #${orderToDelete.orderNumber}`);
           }
 
+          updatePayload.updatedAt = nowIso;
           await updateDoc(docRef, updatePayload);
           setMedicalRecords((prev) =>
             prev.map((r) =>
@@ -13593,22 +13735,27 @@ export default function App() {
                     ...r,
                     ...(updatePayload.glassesOrder ? { glassesOrder: updatedGlassesOrder } : {}),
                     ...(updatePayload.orderHistory ? { orderHistory: updatedHistory } : {}),
+                    updatedAt: nowIso,
                   }
                 : r
             )
           );
         }
 
-        const qStandalone = query(
-          collection(db, "glasses_orders"),
-          where("orderNumber", "==", orderToDelete.orderNumber),
-        );
-        const snapStandalone = await getDocs(qStandalone);
-        const batch = writeBatch(db);
-        snapStandalone.docs.forEach((d) => {
-          batch.update(d.ref, deletionMeta);
-        });
-        await batch.commit();
+        if (await hasLegacyGlassesOrders(db)) {
+          const qStandalone = query(
+            collection(db, "glasses_orders"),
+            where("orderNumber", "==", orderToDelete.orderNumber),
+          );
+          const snapStandalone = await getDocs(qStandalone);
+          if (!snapStandalone.empty) {
+            const batch = writeBatch(db);
+            snapStandalone.docs.forEach((d) => {
+              batch.update(d.ref, deletionMeta);
+            });
+            await batch.commit();
+          }
+        }
 
         await logActivity(
           "Ștergere Comandă (Coș de gunoi)",
@@ -13630,10 +13777,20 @@ export default function App() {
     if (!orderToDelete) return;
     setLoading(true);
     try {
+      const nowIso = new Date().toISOString();
       const docRef = doc(db, "medicalRecords", orderToDelete.patientId);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const data = docSnap.data() as MedicalRecord;
+
+        const matchedMain = data.glassesOrder?.orderNumber === orderToDelete.orderNumber ? data.glassesOrder : null;
+        const matchedHist = (data.orderHistory || []).find((o) => o.orderNumber === orderToDelete.orderNumber);
+        const alreadyReturned = Boolean(
+          (matchedMain?.isDeleted && matchedMain?.stockReturnedOnDelete) ||
+          (matchedHist?.isDeleted && matchedHist?.stockReturnedOnDelete) ||
+          matchedMain?.stockReturnedOnDelete ||
+          matchedHist?.stockReturnedOnDelete
+        );
 
         const updatePayload: any = {};
         let updatedHistory = data.orderHistory || [];
@@ -13656,14 +13813,18 @@ export default function App() {
         }
 
         if (modified) {
-          // Revenire stoc ramă la ștergerea definitivă a comenzii
-          const orderDeductedIds = (orderToDelete as any).stockDeductedFrames || 
-            (data.glassesOrder?.orderNumber === orderToDelete.orderNumber ? data.glassesOrder.stockDeductedFrames : undefined) ||
-            data.orderHistory?.find((o) => o.orderNumber === orderToDelete.orderNumber)?.stockDeductedFrames || [];
+          // Revenire stoc ramă doar dacă nu a fost deja returnat la mutarea în coș
+          const orderDeductedIds = !alreadyReturned
+            ? ((orderToDelete as any).stockDeductedFrames ||
+                matchedMain?.stockDeductedFrames ||
+                matchedHist?.stockDeductedFrames ||
+                [])
+            : [];
           if (orderDeductedIds.length > 0) {
             await returnFrameStockHelper(orderDeductedIds, `ștergerea definitivă a comenzii #${orderToDelete.orderNumber}`);
           }
 
+          updatePayload.updatedAt = nowIso;
           await updateDoc(docRef, updatePayload);
           setMedicalRecords((prev) =>
             prev.map((r) =>
@@ -13672,20 +13833,25 @@ export default function App() {
                     ...r,
                     ...(updatePayload.glassesOrder ? { glassesOrder: undefined } : {}),
                     ...(updatePayload.orderHistory ? { orderHistory: updatedHistory } : {}),
+                    updatedAt: nowIso,
                   }
                 : r
             )
           );
         }
 
-        const qStandalone = query(
-          collection(db, "glasses_orders"),
-          where("orderNumber", "==", orderToDelete.orderNumber),
-        );
-        const snapStandalone = await getDocs(qStandalone);
-        const batch = writeBatch(db);
-        snapStandalone.docs.forEach((d) => batch.delete(d.ref));
-        await batch.commit();
+        if (await hasLegacyGlassesOrders(db)) {
+          const qStandalone = query(
+            collection(db, "glasses_orders"),
+            where("orderNumber", "==", orderToDelete.orderNumber),
+          );
+          const snapStandalone = await getDocs(qStandalone);
+          if (!snapStandalone.empty) {
+            const batch = writeBatch(db);
+            snapStandalone.docs.forEach((d) => batch.delete(d.ref));
+            await batch.commit();
+          }
+        }
 
         await logActivity(
           "Ștergere Definitivă Comandă",
@@ -13710,8 +13876,10 @@ export default function App() {
     setLoading(true);
     setBulkDeleteMode(null);
     try {
+      const nowIso = new Date().toISOString();
       const patientOrderMap: Record<string, string[]> = {};
       const standaloneOrderNumbers: string[] = [];
+      const stockToReturnFrameIds: string[] = [];
 
       targetOrders.forEach((o) => {
         if (o.orderNumber) {
@@ -13745,6 +13913,9 @@ export default function App() {
               data.glassesOrder &&
               orderNumbers.includes(data.glassesOrder.orderNumber)
             ) {
+              if (!data.glassesOrder.stockReturnedOnDelete && data.glassesOrder.stockDeductedFrames?.length) {
+                stockToReturnFrameIds.push(...data.glassesOrder.stockDeductedFrames);
+              }
               updatePayload.glassesOrder = deleteField();
               modified = true;
             }
@@ -13753,6 +13924,16 @@ export default function App() {
               orderNumbers.includes(o.orderNumber)
             );
             if (hasMatchingInHistory) {
+              updatedHistory.forEach((o) => {
+                if (
+                  orderNumbers.includes(o.orderNumber) &&
+                  !o.stockReturnedOnDelete &&
+                  o.stockDeductedFrames?.length &&
+                  !(data.glassesOrder?.orderNumber === o.orderNumber)
+                ) {
+                  stockToReturnFrameIds.push(...o.stockDeductedFrames);
+                }
+              });
               updatedHistory = updatedHistory.filter(
                 (o) => !orderNumbers.includes(o.orderNumber)
               );
@@ -13761,6 +13942,7 @@ export default function App() {
             }
 
             if (modified) {
+              updatePayload.updatedAt = nowIso;
               await updateDoc(docRef, updatePayload);
               updatedRecordsList = updatedRecordsList.map((r) =>
                 r.id === patientId
@@ -13772,6 +13954,7 @@ export default function App() {
                       ...(updatePayload.orderHistory
                         ? { orderHistory: updatedHistory }
                         : {}),
+                      updatedAt: nowIso,
                     }
                   : r
               );
@@ -13794,11 +13977,24 @@ export default function App() {
           record.glassesOrder &&
           targetNumbersSet.has(record.glassesOrder.orderNumber)
         ) {
+          if (!record.glassesOrder.stockReturnedOnDelete && record.glassesOrder.stockDeductedFrames?.length) {
+            stockToReturnFrameIds.push(...record.glassesOrder.stockDeductedFrames);
+          }
           updatePayload.glassesOrder = deleteField();
           recordModified = true;
         }
 
         if (updatedHistory.some((o) => targetNumbersSet.has(o.orderNumber))) {
+          updatedHistory.forEach((o) => {
+            if (
+              targetNumbersSet.has(o.orderNumber) &&
+              !o.stockReturnedOnDelete &&
+              o.stockDeductedFrames?.length &&
+              !(record.glassesOrder?.orderNumber === o.orderNumber)
+            ) {
+              stockToReturnFrameIds.push(...o.stockDeductedFrames);
+            }
+          });
           updatedHistory = updatedHistory.filter(
             (o) => !targetNumbersSet.has(o.orderNumber)
           );
@@ -13808,12 +14004,14 @@ export default function App() {
 
         if (recordModified) {
           try {
+            updatePayload.updatedAt = nowIso;
             const docRef = doc(db, "medicalRecords", record.id);
             await updateDoc(docRef, updatePayload);
             updatedRecordsList[i] = {
               ...record,
               ...(updatePayload.glassesOrder ? { glassesOrder: undefined } : {}),
               ...(updatePayload.orderHistory ? { orderHistory: updatedHistory } : {}),
+              updatedAt: nowIso,
             };
           } catch (e) {
             console.error(`Error in fallback update for patient ${record.id}:`, e);
@@ -13821,21 +14019,27 @@ export default function App() {
         }
       }
 
-      // 3. Delete standalone docs from glasses_orders collection
-      for (const orderNum of standaloneOrderNumbers) {
-        try {
-          const qStandalone = query(
-            collection(db, "glasses_orders"),
-            where("orderNumber", "==", orderNum)
-          );
-          const snapStandalone = await getDocs(qStandalone);
-          if (!snapStandalone.empty) {
-            const batch = writeBatch(db);
-            snapStandalone.docs.forEach((d) => batch.delete(d.ref));
-            await batch.commit();
+      if (stockToReturnFrameIds.length > 0) {
+        await returnFrameStockHelper(stockToReturnFrameIds, `ștergerea definitivă multiplă (${targetOrders.length} comenzi)`);
+      }
+
+      // 3. Delete standalone docs from glasses_orders collection (legacy only)
+      if (standaloneOrderNumbers.length > 0 && await hasLegacyGlassesOrders(db)) {
+        for (const orderNum of standaloneOrderNumbers) {
+          try {
+            const qStandalone = query(
+              collection(db, "glasses_orders"),
+              where("orderNumber", "==", orderNum)
+            );
+            const snapStandalone = await getDocs(qStandalone);
+            if (!snapStandalone.empty) {
+              const batch = writeBatch(db);
+              snapStandalone.docs.forEach((d) => batch.delete(d.ref));
+              await batch.commit();
+            }
+          } catch (e) {
+            console.warn("Could not delete from glasses_orders:", e);
           }
-        } catch (e) {
-          console.warn("Could not delete from glasses_orders:", e);
         }
       }
 
@@ -13862,14 +14066,16 @@ export default function App() {
     if (!targetOrders || targetOrders.length === 0) return;
     setLoading(true);
     try {
-      const deletionMeta = {
+      const nowIso = new Date().toISOString();
+      const deletionMetaBase = {
         isDeleted: true,
-        deletedAt: new Date().toISOString(),
+        deletedAt: nowIso,
         deletedBy: profile?.displayName || "Nespecificat",
       };
 
       const patientOrderMap: Record<string, string[]> = {};
       const standaloneOrderNumbers: string[] = [];
+      const stockToReturnFrameIds: string[] = [];
 
       targetOrders.forEach((o) => {
         if (o.orderNumber) {
@@ -13902,23 +14108,37 @@ export default function App() {
 
             if (
               data.glassesOrder &&
-              orderNumbers.includes(data.glassesOrder.orderNumber)
+              orderNumbers.includes(data.glassesOrder.orderNumber) &&
+              !data.glassesOrder.isDeleted
             ) {
+              const hasFrames = !data.glassesOrder.stockReturnedOnDelete && (data.glassesOrder.stockDeductedFrames?.length || 0) > 0;
+              if (hasFrames && data.glassesOrder.stockDeductedFrames) {
+                stockToReturnFrameIds.push(...data.glassesOrder.stockDeductedFrames);
+              }
               updatedGlassesOrder = {
                 ...data.glassesOrder,
-                ...deletionMeta,
+                ...deletionMetaBase,
+                ...(hasFrames ? { stockReturnedOnDelete: true } : {}),
               };
               updatePayload.glassesOrder = updatedGlassesOrder;
               modified = true;
             }
 
             const hasMatchingInHistory = updatedHistory.some((o) =>
-              orderNumbers.includes(o.orderNumber)
+              orderNumbers.includes(o.orderNumber) && !o.isDeleted
             );
             if (hasMatchingInHistory) {
               updatedHistory = updatedHistory.map((o) => {
-                if (orderNumbers.includes(o.orderNumber)) {
-                  return { ...o, ...deletionMeta };
+                if (orderNumbers.includes(o.orderNumber) && !o.isDeleted) {
+                  const hasFrames = !o.stockReturnedOnDelete && (o.stockDeductedFrames?.length || 0) > 0;
+                  if (hasFrames && o.stockDeductedFrames && !(data.glassesOrder?.orderNumber === o.orderNumber)) {
+                    stockToReturnFrameIds.push(...o.stockDeductedFrames);
+                  }
+                  return {
+                    ...o,
+                    ...deletionMetaBase,
+                    ...(hasFrames ? { stockReturnedOnDelete: true } : {}),
+                  };
                 }
                 return o;
               });
@@ -13927,6 +14147,7 @@ export default function App() {
             }
 
             if (modified) {
+              updatePayload.updatedAt = nowIso;
               await updateDoc(docRef, updatePayload);
               updatedRecordsList = updatedRecordsList.map((r) =>
                 r.id === patientId
@@ -13938,6 +14159,7 @@ export default function App() {
                       ...(updatePayload.orderHistory
                         ? { orderHistory: updatedHistory }
                         : {}),
+                      updatedAt: nowIso,
                     }
                   : r
               );
@@ -13962,9 +14184,14 @@ export default function App() {
           targetNumbersSet.has(record.glassesOrder.orderNumber) &&
           !record.glassesOrder.isDeleted
         ) {
+          const hasFrames = !record.glassesOrder.stockReturnedOnDelete && (record.glassesOrder.stockDeductedFrames?.length || 0) > 0;
+          if (hasFrames && record.glassesOrder.stockDeductedFrames) {
+            stockToReturnFrameIds.push(...record.glassesOrder.stockDeductedFrames);
+          }
           updatedGlassesOrder = {
             ...record.glassesOrder,
-            ...deletionMeta,
+            ...deletionMetaBase,
+            ...(hasFrames ? { stockReturnedOnDelete: true } : {}),
           };
           updatePayload.glassesOrder = updatedGlassesOrder;
           recordModified = true;
@@ -13972,8 +14199,16 @@ export default function App() {
 
         if (updatedHistory.some((o) => targetNumbersSet.has(o.orderNumber) && !o.isDeleted)) {
           updatedHistory = updatedHistory.map((o) => {
-            if (targetNumbersSet.has(o.orderNumber)) {
-              return { ...o, ...deletionMeta };
+            if (targetNumbersSet.has(o.orderNumber) && !o.isDeleted) {
+              const hasFrames = !o.stockReturnedOnDelete && (o.stockDeductedFrames?.length || 0) > 0;
+              if (hasFrames && o.stockDeductedFrames && !(record.glassesOrder?.orderNumber === o.orderNumber)) {
+                stockToReturnFrameIds.push(...o.stockDeductedFrames);
+              }
+              return {
+                ...o,
+                ...deletionMetaBase,
+                ...(hasFrames ? { stockReturnedOnDelete: true } : {}),
+              };
             }
             return o;
           });
@@ -13983,6 +14218,7 @@ export default function App() {
 
         if (recordModified) {
           try {
+            updatePayload.updatedAt = nowIso;
             const docRef = doc(db, "medicalRecords", record.id);
             await updateDoc(docRef, updatePayload);
             updatedRecordsList[i] = {
@@ -13993,6 +14229,7 @@ export default function App() {
               ...(updatePayload.orderHistory
                 ? { orderHistory: updatedHistory }
                 : {}),
+              updatedAt: nowIso,
             };
           } catch (e) {
             console.error(`Error in fallback update for patient ${record.id}:`, e);
@@ -14000,21 +14237,27 @@ export default function App() {
         }
       }
 
-      // 3. Update standalone docs from glasses_orders collection
-      for (const orderNum of standaloneOrderNumbers) {
-        try {
-          const qStandalone = query(
-            collection(db, "glasses_orders"),
-            where("orderNumber", "==", orderNum)
-          );
-          const snapStandalone = await getDocs(qStandalone);
-          if (!snapStandalone.empty) {
-            const batch = writeBatch(db);
-            snapStandalone.docs.forEach((d) => batch.update(d.ref, deletionMeta));
-            await batch.commit();
+      if (stockToReturnFrameIds.length > 0) {
+        await returnFrameStockHelper(stockToReturnFrameIds, `mutarea în coș a ${targetOrders.length} comenzi`);
+      }
+
+      // 3. Update standalone docs from glasses_orders collection (legacy only)
+      if (standaloneOrderNumbers.length > 0 && await hasLegacyGlassesOrders(db)) {
+        for (const orderNum of standaloneOrderNumbers) {
+          try {
+            const qStandalone = query(
+              collection(db, "glasses_orders"),
+              where("orderNumber", "==", orderNum)
+            );
+            const snapStandalone = await getDocs(qStandalone);
+            if (!snapStandalone.empty) {
+              const batch = writeBatch(db);
+              snapStandalone.docs.forEach((d) => batch.update(d.ref, deletionMetaBase));
+              await batch.commit();
+            }
+          } catch (e) {
+            console.warn("Could not update glasses_orders:", e);
           }
-        } catch (e) {
-          console.warn("Could not update glasses_orders:", e);
         }
       }
 
@@ -14045,9 +14288,6 @@ export default function App() {
 
     setLoading(true);
     try {
-      const qStandalone = query(collection(db, "glasses_orders"));
-      const snapshotStandalone = await getDocs(qStandalone);
-
       let batch = writeBatch(db);
       let count = 0;
 
@@ -14058,48 +14298,53 @@ export default function App() {
         orderHistory: any[];
       }[] = [];
 
-      for (const orderDoc of snapshotStandalone.docs) {
-        const data = orderDoc.data();
-        const createdAt = data.createdAt;
-        const deliveryDateStr = data.deliveryDate;
-        let shouldDelete = false;
+      if (await hasLegacyGlassesOrders(db)) {
+        const qStandalone = query(collection(db, "glasses_orders"));
+        const snapshotStandalone = await getDocs(qStandalone);
 
-        if (deleteOption === "all") {
-          shouldDelete = true;
-        } else if (deleteOption === "today") {
-          const todayStr = format(new Date(), "yyyy-MM-dd");
-          const targetDate = createdAt || deliveryDateStr;
-          if (targetDate) {
-            const dateStr = normalizeDateForDeleter(targetDate);
-            shouldDelete = dateStr === todayStr;
+        for (const orderDoc of snapshotStandalone.docs) {
+          const data = orderDoc.data();
+          const createdAt = data.createdAt;
+          const deliveryDateStr = data.deliveryDate;
+          let shouldDelete = false;
+
+          if (deleteOption === "all") {
+            shouldDelete = true;
+          } else if (deleteOption === "today") {
+            const todayStr = format(new Date(), "yyyy-MM-dd");
+            const targetDate = createdAt || deliveryDateStr;
+            if (targetDate) {
+              const dateStr = normalizeDateForDeleter(targetDate);
+              shouldDelete = dateStr === todayStr;
+            }
+          } else {
+            const targetDate = createdAt || deliveryDateStr;
+            if (targetDate) {
+              const dateStr = normalizeDateForDeleter(targetDate);
+              if (deleteOption === "day") shouldDelete = dateStr === deleteDate;
+              else if (deleteOption === "month")
+                shouldDelete = dateStr.startsWith(deleteDate.substring(0, 7));
+              else if (deleteOption === "year")
+                shouldDelete = dateStr.startsWith(deleteDate.substring(0, 4));
+            }
           }
-        } else {
-          const targetDate = createdAt || deliveryDateStr;
-          if (targetDate) {
-            const dateStr = normalizeDateForDeleter(targetDate);
-            if (deleteOption === "day") shouldDelete = dateStr === deleteDate;
-            else if (deleteOption === "month")
-              shouldDelete = dateStr.startsWith(deleteDate.substring(0, 7));
-            else if (deleteOption === "year")
-              shouldDelete = dateStr.startsWith(deleteDate.substring(0, 4));
+
+          if (shouldDelete) {
+            backupStandalone.push({ id: orderDoc.id, data });
+            batch.delete(orderDoc.ref);
+            count++;
+            if (count >= 400) {
+              await batch.commit();
+              batch = writeBatch(db);
+              count = 0;
+            }
           }
         }
-
-        if (shouldDelete) {
-          backupStandalone.push({ id: orderDoc.id, data });
-          batch.delete(orderDoc.ref);
-          count++;
-          if (count >= 400) {
-            await batch.commit();
-            batch = writeBatch(db);
-            count = 0;
-          }
+        if (count > 0) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
         }
-      }
-      if (count > 0) {
-        await batch.commit();
-        batch = writeBatch(db);
-        count = 0;
       }
 
       const qRecords = query(collection(db, "medicalRecords"));
@@ -14225,6 +14470,10 @@ export default function App() {
     try {
       let batch = writeBatch(db);
       let count = 0;
+
+      if (deletedOrdersBackup.standaloneDocs.length > 0) {
+        markLegacyGlassesOrdersStatus(true);
+      }
 
       for (const item of deletedOrdersBackup.standaloneDocs) {
         batch.set(doc(db, "glasses_orders", item.id), item.data);
@@ -15135,74 +15384,226 @@ export default function App() {
         return true;
       };
 
-      // 1. Fetch ALL medicalRecords from Firestore to ensure complete deletion
-      const snapMedicalRecords = await getDocs(collection(db, "medicalRecords"));
-      for (const d of snapMedicalRecords.docs) {
-        const data = d.data();
-        if (isPatientMatch({ id: d.id, ...data })) {
-          recordIdsToDelete.add(d.id);
-          batch.delete(d.ref);
-          count++;
-          await commitBatchIfNeeded();
-        }
-      }
+      const nameVariants = Array.from(
+        new Set(
+          [
+            targetName,
+            targetName.toUpperCase(),
+            targetName.toLowerCase(),
+            capitalizeWords(targetName),
+          ].filter((v) => v && v.trim().length > 0),
+        ),
+      );
+      const phoneVariants = Array.from(
+        new Set(
+          [targetPhone, normalizePhone(targetPhone)].filter(
+            (v) => v && v.trim().length > 0,
+          ),
+        ),
+      );
 
-      // Also explicitly delete formula document ID keys if target phone exists
+      // 1. Targeted medicalRecords lookup (queries + known formula keys + in-memory matches)
+      const medMap = new Map<string, any>();
+      const medQueries: Promise<any>[] = [];
+      nameVariants.forEach((n) =>
+        medQueries.push(
+          getDocs(query(collection(db, "medicalRecords"), where("patientName", "==", n))).catch(() => null),
+        ),
+      );
+      phoneVariants.forEach((p) =>
+        medQueries.push(
+          getDocs(query(collection(db, "medicalRecords"), where("patientPhone", "==", p))).catch(() => null),
+        ),
+      );
       if (targetPhoneClean) {
         const formulaId1 = `${targetName.toLowerCase().trim()}_${targetPhone.trim()}`;
         const formulaId2 = `${targetName}_${targetPhone}`.replace(/\s+/g, "_").toLowerCase();
-        recordIdsToDelete.add(formulaId1);
-        recordIdsToDelete.add(formulaId2);
-        batch.delete(doc(db, "medicalRecords", formulaId1));
-        count++;
-        await commitBatchIfNeeded();
-        batch.delete(doc(db, "medicalRecords", formulaId2));
-        count++;
-        await commitBatchIfNeeded();
+        medQueries.push(getDoc(doc(db, "medicalRecords", formulaId1)).catch(() => null));
+        if (formulaId2 !== formulaId1) {
+          medQueries.push(getDoc(doc(db, "medicalRecords", formulaId2)).catch(() => null));
+        }
       }
+      const medSnaps = await Promise.all(medQueries);
+      medSnaps.forEach((res) => {
+        if (!res) return;
+        if ("docs" in res && Array.isArray(res.docs)) {
+          res.docs.forEach((d: any) => medMap.set(d.id, d.data()));
+        } else if (typeof res.exists === "function" && res.exists()) {
+          medMap.set(res.id, res.data());
+        }
+      });
+      medicalRecords.forEach((r) => {
+        if (r.id && !medMap.has(r.id) && isPatientMatch(r)) {
+          medMap.set(r.id, r);
+        }
+      });
 
-      // 2. Fetch ALL appointments from Firestore
-      const snapAppointments = await getDocs(collection(db, "appointments"));
-      for (const d of snapAppointments.docs) {
-        const data = d.data();
-        if (isPatientMatch({ id: d.id, ...data })) {
-          batch.delete(d.ref);
+      for (const [id, data] of medMap.entries()) {
+        if (isPatientMatch({ id, ...data })) {
+          recordIdsToDelete.add(id);
+          batch.delete(doc(db, "medicalRecords", id));
           count++;
           await commitBatchIfNeeded();
         }
       }
 
-      // 3. Fetch ALL glasses_orders from Firestore
-      const snapOrders = await getDocs(collection(db, "glasses_orders"));
-      for (const d of snapOrders.docs) {
-        const data = d.data();
-        if (isPatientMatch({ id: d.id, ...data })) {
-          batch.delete(d.ref);
+      if (targetPhoneClean) {
+        const formulaId1 = `${targetName.toLowerCase().trim()}_${targetPhone.trim()}`;
+        const formulaId2 = `${targetName}_${targetPhone}`.replace(/\s+/g, "_").toLowerCase();
+        if (!recordIdsToDelete.has(formulaId1)) {
+          recordIdsToDelete.add(formulaId1);
+          batch.delete(doc(db, "medicalRecords", formulaId1));
+          count++;
+          await commitBatchIfNeeded();
+        }
+        if (!recordIdsToDelete.has(formulaId2)) {
+          recordIdsToDelete.add(formulaId2);
+          batch.delete(doc(db, "medicalRecords", formulaId2));
           count++;
           await commitBatchIfNeeded();
         }
       }
 
-      // 4. Fetch ALL medicalDocuments from Firestore
-      const snapDocs = await getDocs(collection(db, "medicalDocuments"));
-      for (const d of snapDocs.docs) {
-        const data = d.data();
-        if (isPatientMatch({ id: d.id, ...data })) {
-          batch.delete(d.ref);
+      const recordIdArr = Array.from(recordIdsToDelete);
+
+      // 2. Targeted appointments lookup
+      const appMap = new Map<string, any>();
+      const appQueries: Promise<any>[] = [];
+      nameVariants.forEach((n) =>
+        appQueries.push(
+          getDocs(query(collection(db, "appointments"), where("patientName", "==", n))).catch(() => null),
+        ),
+      );
+      phoneVariants.forEach((p) =>
+        appQueries.push(
+          getDocs(query(collection(db, "appointments"), where("patientPhone", "==", p))).catch(() => null),
+        ),
+      );
+      recordIdArr.slice(0, 10).forEach((recId) =>
+        appQueries.push(
+          getDocs(query(collection(db, "appointments"), where("medicalRecordId", "==", recId))).catch(() => null),
+        ),
+      );
+      const appSnaps = await Promise.all(appQueries);
+      appSnaps.forEach((snap) => {
+        if (snap && Array.isArray(snap.docs)) {
+          snap.docs.forEach((d: any) => appMap.set(d.id, d.data()));
+        }
+      });
+      appointments.forEach((a) => {
+        if (a.id && !appMap.has(a.id) && isPatientMatch(a)) {
+          appMap.set(a.id, a);
+        }
+      });
+      if (app.id && !appMap.has(app.id)) {
+        appMap.set(app.id, app);
+      }
+
+      for (const [id, data] of appMap.entries()) {
+        if (isPatientMatch({ id, ...data })) {
+          batch.delete(doc(db, "appointments", id));
           count++;
           await commitBatchIfNeeded();
         }
       }
 
-      // 5. Fetch ALL reception_alerts from Firestore
-      const snapAlerts = await getDocs(collection(db, "reception_alerts"));
-      for (const d of snapAlerts.docs) {
-        const data = d.data();
+      // 3. Targeted glasses_orders lookup (legacy only)
+      if (await hasLegacyGlassesOrders(db)) {
+        const orderMap = new Map<string, any>();
+        const orderQueries: Promise<any>[] = [];
+        nameVariants.forEach((n) =>
+          orderQueries.push(
+            getDocs(query(collection(db, "glasses_orders"), where("patientName", "==", n))).catch(() => null),
+          ),
+        );
+        phoneVariants.forEach((p) =>
+          orderQueries.push(
+            getDocs(query(collection(db, "glasses_orders"), where("patientPhone", "==", p))).catch(() => null),
+          ),
+        );
+        recordIdArr.slice(0, 10).forEach((recId) =>
+          orderQueries.push(
+            getDocs(query(collection(db, "glasses_orders"), where("patientId", "==", recId))).catch(() => null),
+          ),
+        );
+        const orderSnaps = await Promise.all(orderQueries);
+        orderSnaps.forEach((snap) => {
+          if (snap && Array.isArray(snap.docs)) {
+            snap.docs.forEach((d: any) => orderMap.set(d.id, d.data()));
+          }
+        });
+        for (const [id, data] of orderMap.entries()) {
+          if (isPatientMatch({ id, ...data })) {
+            batch.delete(doc(db, "glasses_orders", id));
+            count++;
+            await commitBatchIfNeeded();
+          }
+        }
+      }
+
+      // 4. Targeted medicalDocuments lookup
+      const docMap = new Map<string, any>();
+      const docQueries: Promise<any>[] = [];
+      nameVariants.forEach((n) =>
+        docQueries.push(
+          getDocs(query(collection(db, "medicalDocuments"), where("patientName", "==", n))).catch(() => null),
+        ),
+      );
+      phoneVariants.forEach((p) =>
+        docQueries.push(
+          getDocs(query(collection(db, "medicalDocuments"), where("patientPhone", "==", p))).catch(() => null),
+        ),
+      );
+      recordIdArr.slice(0, 10).forEach((recId) =>
+        docQueries.push(
+          getDocs(query(collection(db, "medicalDocuments"), where("patientId", "==", recId))).catch(() => null),
+        ),
+      );
+      const docSnaps = await Promise.all(docQueries);
+      docSnaps.forEach((snap) => {
+        if (snap && Array.isArray(snap.docs)) {
+          snap.docs.forEach((d: any) => docMap.set(d.id, d.data()));
+        }
+      });
+      medicalDocuments.forEach((md: any) => {
+        if (md?.id && !docMap.has(md.id) && isPatientMatch(md)) {
+          docMap.set(md.id, md);
+        }
+      });
+      for (const [id, data] of docMap.entries()) {
+        if (isPatientMatch({ id, ...data })) {
+          batch.delete(doc(db, "medicalDocuments", id));
+          count++;
+          await commitBatchIfNeeded();
+        }
+      }
+
+      // 5. Targeted reception_alerts lookup
+      const alertMap = new Map<string, any>();
+      const alertQueries: Promise<any>[] = [];
+      nameVariants.forEach((n) =>
+        alertQueries.push(
+          getDocs(query(collection(db, "reception_alerts"), where("patientName", "==", n))).catch(() => null),
+        ),
+      );
+      recordIdArr.slice(0, 10).forEach((recId) => {
+        alertQueries.push(
+          getDocs(query(collection(db, "reception_alerts"), where("patientId", "==", recId))).catch(() => null),
+        );
+        alertMap.set(`alert_${recId}`, { id: `alert_${recId}`, patientId: recId });
+      });
+      const alertSnaps = await Promise.all(alertQueries);
+      alertSnaps.forEach((snap) => {
+        if (snap && Array.isArray(snap.docs)) {
+          snap.docs.forEach((d: any) => alertMap.set(d.id, d.data()));
+        }
+      });
+      for (const [id, data] of alertMap.entries()) {
         if (
-          isPatientMatch({ id: d.id, ...data }) ||
-          Array.from(recordIdsToDelete).some((id) => d.id.startsWith(`${id}_`))
+          isPatientMatch({ id, ...data }) ||
+          recordIdArr.some((recId) => id === `alert_${recId}` || id.startsWith(`${recId}_`))
         ) {
-          batch.delete(d.ref);
+          batch.delete(doc(db, "reception_alerts", id));
           count++;
           await commitBatchIfNeeded();
         }
@@ -19214,9 +19615,10 @@ export default function App() {
       }
     })();
 
-    // 3. Sync all clinical observations & details from documentForm into activeRec
+    // 3. Sync clinical CNP changes only if actually modified compared to activeRec
     const formCnpTrimmed = (finalFormValues.patientCnp || "").trim();
-    if (formCnpTrimmed) {
+    const existingRecCnp = (activeRec?.patientCnp || "").trim();
+    if (formCnpTrimmed && formCnpTrimmed !== existingRecCnp) {
       const detectedSex = getSexFromCNP(formCnpTrimmed);
       const detectedBirth = getBirthDateFromCNP(formCnpTrimmed);
       syncPatientUniversal(
@@ -19413,60 +19815,40 @@ export default function App() {
         { merge: true }
       ).catch((err) => console.warn("Firestore medicalRecords sync notice:", err));
 
-      // Sincronizare garantată cu programările din calendar (Appointments)
-      (async () => {
-        try {
-          const appointmentsRef = collection(db, "appointments");
-          const appQueries = [];
-          if (resolvedPatientName) {
-            appQueries.push(query(appointmentsRef, where("patientName", "==", resolvedPatientName)));
-          }
-          if (resolvedPatientPhone) {
-            appQueries.push(query(appointmentsRef, where("patientPhone", "==", resolvedPatientPhone)));
-          }
-          if (activeAppointment?.id) {
-            appQueries.push(query(appointmentsRef, where("__name__", "==", activeAppointment.id)));
-          }
+      // Sincronizare cu programarea curentă activă (fără a suprascrie programările vechi)
+      if (activeAppointment?.id) {
+        const activeAppId = activeAppointment.id;
+        updateDoc(doc(db, "appointments", activeAppId), {
+          isConsultComplet: docIsConsultComplet,
+          isControl: docIsControl,
+          isGratis: docIsGratis,
+        }).catch((appSyncErr) =>
+          console.warn("Could not sync active appointment from documentForm:", appSyncErr)
+        );
 
-          const matchedDocs = new Map<string, any>();
-          if (activeAppointment?.id) {
-            matchedDocs.set(activeAppointment.id, activeAppointment);
-          }
-          if (appQueries.length > 0) {
-            const snaps = await Promise.all(appQueries.map((q) => getDocs(q)));
-            snaps.forEach((s) => s.docs.forEach((d) => matchedDocs.set(d.id, d.data())));
-          }
-
-          if (matchedDocs.size > 0) {
-            await Promise.all(
-              Array.from(matchedDocs.keys()).map((docId) =>
-                updateDoc(doc(db, "appointments", docId), {
+        setAppointments((prev) =>
+          prev.map((app) =>
+            app.id === activeAppId
+              ? {
+                  ...app,
                   isConsultComplet: docIsConsultComplet,
                   isControl: docIsControl,
                   isGratis: docIsGratis,
-                })
-              )
-            );
-
-            // Update local state appointments
-            setAppointments((prev) =>
-              prev.map((app) => {
-                if (matchedDocs.has(app.id)) {
-                  return {
-                    ...app,
-                    isConsultComplet: docIsConsultComplet,
-                    isControl: docIsControl,
-                    isGratis: docIsGratis,
-                  };
                 }
-                return app;
-              })
-            );
-          }
-        } catch (appSyncErr) {
-          console.warn("Could not sync appointment from documentForm:", appSyncErr);
-        }
-      })();
+              : app
+          )
+        );
+        setActiveAppointment((prev) =>
+          prev && prev.id === activeAppId
+            ? {
+                ...prev,
+                isConsultComplet: docIsConsultComplet,
+                isControl: docIsControl,
+                isGratis: docIsGratis,
+              }
+            : prev
+        );
+      }
     }
 
     setDocumentForm(finalFormValues);
@@ -20237,8 +20619,8 @@ export default function App() {
 
   // Export Pacienți & Fișe Medicale în format CSV (Excel compatibil UTF-8 BOM)
   const handleExportPatientsCSV = async () => {
-    const loaded = await ensureFullArchiveLoaded(true);
-    const exportRecords = loaded?.allMeds ?? medicalRecords;
+    const loadedMeds = await ensureMedicalRecordsArchiveLoaded(true);
+    const exportRecords = loadedMeds ?? medicalRecords;
 
     const headers = [
       "ID Fișă",
@@ -20304,8 +20686,8 @@ export default function App() {
 
   // Export Comenzi Ochelari în format CSV (Excel compatibil UTF-8 BOM)
   const handleExportOrdersCSV = async () => {
-    const loaded = await ensureFullArchiveLoaded(true);
-    const exportRecords = loaded?.allMeds ?? medicalRecords;
+    const loadedMeds = await ensureMedicalRecordsArchiveLoaded(true);
+    const exportRecords = loadedMeds ?? medicalRecords;
 
     const headers = [
       "Număr Comandă",
@@ -25950,6 +26332,8 @@ export default function App() {
         bulkDeleteMode={bulkDeleteMode}
         setBulkDeleteMode={setBulkDeleteMode}
         onPrintOrderDirect={(order, patient) => printGlassesOrder(order, patient)}
+        hasLoadedFullMedicalRecords={hasLoadedMedicalRecordsArchive || hasLoadedAllHistory}
+        onLoadFullMedicalRecords={() => ensureMedicalRecordsArchiveLoaded(false)}
       />
 
       {/* Booking Modal */}

@@ -59,44 +59,22 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
       ...(detectedBirth ? { birthDate: detectedBirth, patientBirthDate: detectedBirth } : {}),
     };
     setDocumentForm(updatedForm);
-
-    if (newCnp.length === 13 && syncPatientUniversal) {
-      const pName = documentForm.patientName || `${documentForm.lastName || ""} ${documentForm.firstName || ""}`.trim();
-      syncPatientUniversal(
-        {
-          patientName: pName,
-          patientPhone: documentForm.patientPhone,
-          patientCnp: documentForm.patientCnp || newCnp,
-        },
-        {
-          patientCnp: newCnp,
-          ...(detectedSex ? { patientSex: detectedSex } : {}),
-          ...(detectedBirth ? { patientBirthDate: detectedBirth } : {}),
-        }
-      ).catch((e) => console.warn("Universal CNP sync from doc error:", e));
-    }
-  }, [documentForm, setDocumentForm, syncPatientUniversal]);
+  }, [documentForm, setDocumentForm]);
 
   const handleCnpFieldBlur = React.useCallback((cnpValRaw: string) => {
     const cnpVal = cnpValRaw.replace(/\D/g, "").slice(0, 13);
-    if (cnpVal && syncPatientUniversal) {
-      const detectedSex = getSexFromCNP(cnpVal);
-      const detectedBirth = getBirthDateFromCNP(cnpVal);
-      const pName = documentForm.patientName || `${documentForm.lastName || ""} ${documentForm.firstName || ""}`.trim();
-      syncPatientUniversal(
-        {
-          patientName: pName,
-          patientPhone: documentForm.patientPhone,
-          patientCnp: documentForm.patientCnp || cnpVal,
-        },
-        {
-          patientCnp: cnpVal,
-          ...(detectedSex ? { patientSex: detectedSex } : {}),
-          ...(detectedBirth ? { patientBirthDate: detectedBirth } : {}),
-        }
-      ).catch((e) => console.warn("Universal CNP blur sync error:", e));
+    if (!cnpVal) return;
+    const detectedSex = getSexFromCNP(cnpVal);
+    const detectedBirth = getBirthDateFromCNP(cnpVal);
+    if (detectedSex || detectedBirth) {
+      setDocumentForm((prev: any) => ({
+        ...prev,
+        patientCnp: cnpVal,
+        ...(detectedSex ? { patientSex: detectedSex } : {}),
+        ...(detectedBirth ? { birthDate: detectedBirth, patientBirthDate: detectedBirth } : {}),
+      }));
     }
-  }, [documentForm, syncPatientUniversal]);
+  }, [setDocumentForm]);
   const currentDoc = (documentForm?.doctorName || "").trim();
   const sortedDoctorOptions = React.useMemo(() => {
     const defaultList = [...BASE_DOCTOR_OPTIONS];

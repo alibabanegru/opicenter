@@ -445,6 +445,7 @@ export interface GlassesOrder {
   status?: "pending" | "completed" | "in-progress" | "ready_for_pickup";
   stockDeducted?: boolean;
   stockDeductedFrames?: string[];
+  stockReturnedOnDelete?: boolean;
   isDeleted?: boolean;
   deletedAt?: string;
   deletedBy?: string;

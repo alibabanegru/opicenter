@@ -267,8 +267,11 @@ export const ContactLensModal: React.FC<ContactLensModalProps> = ({
     return (
       Boolean(lens.sph?.trim()) ||
       Boolean(lens.cyl?.trim()) ||
+      Boolean(lens.axis?.trim()) ||
       Boolean(lens.brand?.trim()) ||
-      Boolean(lens.base?.trim() && lens.base !== "8.6")
+      Boolean(lens.base?.trim() && lens.base.trim() !== "8.6") ||
+      Boolean(lens.radius?.trim() && lens.radius.trim() !== "14.2") ||
+      Boolean(lens.wearingType?.trim() && lens.wearingType.trim() !== "Lunară")
     );
   };
 

@@ -2322,6 +2322,23 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                         </div>
                       )}
 
+                      {/* Documents / Reports (A4 Modal) */}
+                      {entry.documents && entry.documents.length > 0 && (
+                        <div className="p-2 border border-indigo-200 rounded bg-indigo-50/40 text-xs space-y-1 mt-1">
+                          {entry.documents.map((doc, docIdx) => (
+                            <div key={docIdx} className="space-y-0.5">
+                              <span className="font-bold text-slate-900 uppercase tracking-wide text-[11px] block border-b border-indigo-200 pb-0.5">
+                                {doc.docType} (Nr. {doc.docNumber})
+                              </span>
+                              {doc.diagnostic && <div><strong>Diagnostic:</strong> {doc.diagnostic}</div>}
+                              {doc.treatment && <div><strong>Tratament:</strong> {doc.treatment}</div>}
+                              {doc.recomandari && <div><strong>Recomandări:</strong> {doc.recomandari}</div>}
+                              {doc.concluzii && <div><strong>Concluzii / Detalii:</strong> {doc.concluzii}</div>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
                       {/* General Diagnostic */}
                       {generalDiag && (
                         <div className="pt-0.5">

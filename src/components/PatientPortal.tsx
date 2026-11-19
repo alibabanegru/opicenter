@@ -199,6 +199,20 @@ export function PatientPortal({
     };
   };
 
+  const slotIntervalMinutes = useMemo(() => {
+    const config = getDoctorConfig(selectedDoctorId);
+    const dayOfWeek = getDay(selectedDate);
+    const dateStr = format(selectedDate, "yyyy-MM-dd");
+    const customDate = config.customActiveDates?.find((c) => c.date === dateStr);
+    if (customDate && customDate.intervalMinutes > 0) {
+      return customDate.intervalMinutes;
+    }
+    const dayConfig = config.dayConfigs[dayOfWeek];
+    return dayConfig?.intervalMinutes && dayConfig.intervalMinutes > 0
+      ? dayConfig.intervalMinutes
+      : 20;
+  }, [selectedDoctorId, selectedDate, configs]);
+
   // Generate slots for selected date & doctor
   const slots = useMemo(() => {
     const config = getDoctorConfig(selectedDoctorId);
@@ -261,15 +275,23 @@ export function PatientPortal({
     return tempSlots.filter(s => isAfter(s, new Date())); // Filter out past slots today
   }, [selectedDoctorId, selectedDate, configs]);
 
-  // Check if a slot is booked
+  // Check if a slot overlaps an active appointment (zero extra Firestore reads)
   const isSlotBooked = (time: Date) => {
-    return appointments.some(
-      (app) =>
-        app.doctorId === selectedDoctorId &&
-        isSameDay(parseISO(app.startTime), time) &&
-        format(parseISO(app.startTime), "HH:mm") === format(time, "HH:mm") &&
-        (app.status === "scheduled" || app.status === "pending_validation")
-    );
+    const slotStartMs = time.getTime();
+    const slotEndMs = slotStartMs + (slotIntervalMinutes || 20) * 60_000;
+    return appointments.some((app) => {
+      if (app.doctorId !== selectedDoctorId) return false;
+      if (app.status !== "scheduled" && app.status !== "pending_validation") return false;
+      const appStartDate = parseISO(app.startTime);
+      const appStartMs = appStartDate.getTime();
+      if (isNaN(appStartMs)) return false;
+      const rawEndMs = app.endTime ? parseISO(app.endTime).getTime() : NaN;
+      const appEndMs =
+        !isNaN(rawEndMs) && rawEndMs > appStartMs
+          ? rawEndMs
+          : appStartMs + 30 * 60_000;
+      return slotStartMs < appEndMs && slotEndMs > appStartMs;
+    });
   };
 
   const getDoctorName = (doctorId: string) => {
@@ -358,7 +380,7 @@ export function PatientPortal({
 
       // 2. Normal Booking logic
       const calculatedAge = calculateAge(patientBirthDate);
-      const appDuration = 30; // standard duration in minutes
+      const appDuration = slotIntervalMinutes || 30;
       const endTime = addMinutes(selectedSlotTime, appDuration);
 
       // Save/Merge GDPR data to medicalRecords without creating incomplete docs or overwriting existing prescriptions

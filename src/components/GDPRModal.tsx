@@ -166,12 +166,17 @@ export const GDPRModal = React.memo(function GDPRModal({ isOpen, onClose, patien
     const left = window.screen.width / 2 - width / 2;
     const top = window.screen.height / 2 - height / 2;
     const popupUrl = `${window.location.origin}${window.location.pathname}?wacom=true`;
-    
-    window.open(
+
+    const popup = window.open(
       popupUrl,
       "WacomSignatureTablet",
       `width=${width},height=${height},top=${top},left=${left},resizable=yes,scrollbars=yes`
     );
+    if (!popup || popup.closed || typeof popup.closed === "undefined") {
+      setErrorMsg(
+        "Fereastra pentru tableta Wacom a fost blocată de browser (pop-up blocker). Permiteți pop-up-urile pentru acest site și încercați din nou."
+      );
+    }
   };
 
   useEffect(() => {
