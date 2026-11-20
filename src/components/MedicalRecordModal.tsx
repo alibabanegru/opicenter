@@ -1,7 +1,9 @@
 import * as React from "react";
 import { useState, useEffect, useRef } from "react";
 import {
+  Activity,
   AlertCircle,
+  AlertTriangle,
   Cake,
   Calendar,
   CalendarClock,
@@ -31,6 +33,7 @@ import {
   Cloud,
   RefreshCw,
 } from "lucide-react";
+import IopChartModal from "./IopChartModal";
 import { format, isSameDay, parseISO } from "date-fns";
 import { ro } from "date-fns/locale";
 import { doc, setDoc, updateDoc } from "firebase/firestore";
@@ -470,6 +473,7 @@ export interface MedicalRecordModalProps {
   activeOrderIndex: number;
   saveAndSwitchOrder: (idx: number | null, type?: string) => void;
   setIsMedicalRecordModalOpen?: (val: boolean) => void;
+  hasOpenSubModal?: boolean;
 }
 
 export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => {
@@ -580,14 +584,179 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
     activeOrderIndex,
     saveAndSwitchOrder,
     setIsMedicalRecordModalOpen = onClose,
+    hasOpenSubModal = false,
   } = props;
 
   const [isSavingAndPrinting, setIsSavingAndPrinting] = useState(false);
+  const [isIopChartOpen, setIsIopChartOpen] = useState(false);
+  const [isUnsavedCloseConfirmOpen, setIsUnsavedCloseConfirmOpen] = useState(false);
   const symptomsInputRef = useRef<HTMLInputElement | null>(null);
   const lastSyncedBirthDateRef = useRef<string>(currentMedicalRecord?.patientBirthDate || "");
   useEffect(() => {
     lastSyncedBirthDateRef.current = currentMedicalRecord?.patientBirthDate || "";
   }, [currentMedicalRecord?.id, currentMedicalRecord?.patientBirthDate]);
+
+  const serializeClinicalSnapshot = (rec: MedicalRecord | null) => {
+    if (!rec) return "";
+    return JSON.stringify({
+      patientName: rec.patientName || "",
+      patientPhone: rec.patientPhone || "",
+      patientBirthDate: rec.patientBirthDate || "",
+      patientSex: rec.patientSex || "",
+      patientCnp: rec.patientCnp || "",
+      od: rec.od || {},
+      os: rec.os || {},
+      cl_od: rec.cl_od || {},
+      cl_os: rec.cl_os || {},
+      dp: rec.dp || "",
+      dp_od: rec.dp_od || "",
+      dp_os: rec.dp_os || "",
+      dp_aproape: rec.dp_aproape || "",
+      dp_aproape_od: rec.dp_aproape_od || "",
+      dp_aproape_os: rec.dp_aproape_os || "",
+      intermediate_enabled: Boolean(rec.intermediate_enabled),
+      intermediate_distance: rec.intermediate_distance || "",
+      intermediate_dp: rec.intermediate_dp || "",
+      intermediate_dp_od: rec.intermediate_dp_od || "",
+      intermediate_dp_os: rec.intermediate_dp_os || "",
+      iop: rec.iop || {},
+      pachymetry: rec.pachymetry || {},
+      correctedIop: rec.correctedIop || {},
+      axialLength: rec.axialLength || {},
+      keratometry: rec.keratometry || {},
+      anteriorSegment: rec.anteriorSegment || {},
+      posteriorSegment: rec.posteriorSegment || {},
+      diagnostic: rec.diagnostic || "",
+      treatment: rec.treatment || "",
+      recomandari: rec.recomandari || "",
+      specialMentions: rec.specialMentions || "",
+      examinations: rec.examinations || {},
+      examinationInterpretation: rec.examinationInterpretation || "",
+      otherEyeDiseases: rec.otherEyeDiseases || "",
+      symptoms: rec.symptoms || "",
+      history: rec.history || "",
+      isConsultComplet: Boolean(rec.isConsultComplet),
+      isControl: Boolean(rec.isControl),
+      isGratis: Boolean(rec.isGratis),
+    });
+  };
+
+  const initialClinicalBaselineRef = useRef<string>("");
+  const lastOpenedRecordKeyRef = useRef<string>("");
+
+  useEffect(() => {
+    if (!isOpen || !currentMedicalRecord) {
+      lastOpenedRecordKeyRef.current = "";
+      initialClinicalBaselineRef.current = "";
+      setIsUnsavedCloseConfirmOpen(false);
+      return;
+    }
+    const openKey = `${currentMedicalRecord.id || "new"}_${activePrescriptionIndex}`;
+    if (lastOpenedRecordKeyRef.current !== openKey) {
+      lastOpenedRecordKeyRef.current = openKey;
+      initialClinicalBaselineRef.current = serializeClinicalSnapshot(currentMedicalRecord);
+      setIsUnsavedCloseConfirmOpen(false);
+    }
+  }, [isOpen, currentMedicalRecord, activePrescriptionIndex]);
+
+  useEffect(() => {
+    if (lastServerSavedAt && currentMedicalRecord) {
+      initialClinicalBaselineRef.current = serializeClinicalSnapshot(currentMedicalRecord);
+      setIsUnsavedCloseConfirmOpen(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastServerSavedAt]);
+
+  const isMedicalRecordDirty = React.useMemo(() => {
+    if (!isOpen || !currentMedicalRecord || !initialClinicalBaselineRef.current) return false;
+    return serializeClinicalSnapshot(currentMedicalRecord) !== initialClinicalBaselineRef.current;
+  }, [isOpen, currentMedicalRecord]);
+
+  const diopterComparisonAlerts = React.useMemo(() => {
+    if (!isOpen || !currentMedicalRecord) return { dateLabel: "", items: [] as string[] };
+
+    const parseD = (v?: string): number | null => {
+      if (!v) return null;
+      const n = parseFloat(String(v).trim().replace(",", "."));
+      return isNaN(n) || !isFinite(n) ? null : n;
+    };
+
+    // Prefer previous prescription from the patient's loaded records or prescriptionHistory
+    let prevOd: EyePrescription | undefined;
+    let prevOs: EyePrescription | undefined;
+    let prevDateLabel = "";
+
+    const histList = Array.isArray(currentMedicalRecord.prescriptionHistory)
+      ? currentMedicalRecord.prescriptionHistory
+      : [];
+    const olderHist = histList.find(
+      (h, idx) =>
+        idx !== activePrescriptionIndex &&
+        (h?.od?.sph || h?.od?.cyl || h?.os?.sph || h?.os?.cyl)
+    );
+    if (olderHist) {
+      prevOd = olderHist.od;
+      prevOs = olderHist.os;
+      prevDateLabel = olderHist.date ? safeFormatDate(olderHist.date, "dd.MM.yyyy") : "vizita anterioară";
+    } else {
+      const targetCnp = (currentMedicalRecord.patientCnp || "").trim();
+      const targetPhone = (currentMedicalRecord.patientPhone || "").replace(/\D/g, "");
+      const targetName = cleanString(currentMedicalRecord.patientName || "");
+      const prevRec = (medicalRecords || [])
+        .filter((r) => {
+          if (!r || r.id === currentMedicalRecord.id) return false;
+          const hasRx = Boolean(r.od?.sph || r.od?.cyl || r.os?.sph || r.os?.cyl);
+          if (!hasRx) return false;
+          const rCnp = (r.patientCnp || "").trim();
+          if (targetCnp && rCnp && targetCnp === rCnp) return true;
+          const rPhone = (r.patientPhone || "").replace(/\D/g, "");
+          if (targetPhone.length >= 6 && rPhone && targetPhone === rPhone) return true;
+          return Boolean(targetName && cleanString(r.patientName || "") === targetName);
+        })
+        .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime())[0];
+
+      if (prevRec) {
+        prevOd = prevRec.od;
+        prevOs = prevRec.os;
+        prevDateLabel = safeFormatDate(prevRec.updatedAt || prevRec.createdAt || "", "dd.MM.yyyy");
+      }
+    }
+
+    if (!prevOd && !prevOs) return { dateLabel: "", items: [] as string[] };
+
+    const items: string[] = [];
+    const checkEye = (label: "OD" | "OS", curr?: EyePrescription, prev?: EyePrescription) => {
+      if (!curr || !prev) return;
+      const cSph = parseD(curr.sph);
+      const pSph = parseD(prev.sph);
+      if (cSph !== null && pSph !== null && Math.abs(cSph - pSph) >= 0.75) {
+        items.push(`${label} Sferă: ${prev.sph} → ${curr.sph}`);
+      }
+      const cCyl = parseD(curr.cyl);
+      const pCyl = parseD(prev.cyl);
+      if (cCyl !== null && pCyl !== null && Math.abs(cCyl - pCyl) >= 0.75) {
+        items.push(`${label} Cilindru: ${prev.cyl} → ${curr.cyl}`);
+      }
+      const cAx = parseD(curr.axis);
+      const pAx = parseD(prev.axis);
+      if (
+        cAx !== null &&
+        pAx !== null &&
+        ((cCyl !== null && Math.abs(cCyl) >= 0.5) || (pCyl !== null && Math.abs(pCyl) >= 0.5))
+      ) {
+        const rawDiff = Math.abs(cAx - pAx);
+        const circDiff = Math.min(rawDiff, 180 - rawDiff);
+        if (circDiff > 15) {
+          items.push(`${label} Ax: ${prev.axis}° → ${curr.axis}°`);
+        }
+      }
+    };
+
+    checkEye("OD", currentMedicalRecord.od, prevOd);
+    checkEye("OS", currentMedicalRecord.os, prevOs);
+    return { dateLabel: prevDateLabel, items };
+  }, [isOpen, currentMedicalRecord, activePrescriptionIndex, medicalRecords]);
+
   const [confirmDiscardDraft, setConfirmDiscardDraft] = useState(false);
   const [isDraftRecoveryOpen, setIsDraftRecoveryOpen] = useState(false);
   const [availableDrafts, setAvailableDrafts] = useState<Array<{
@@ -637,14 +806,63 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
     }
   };
 
-  const handleCloseModalSafely = () => {
+  const forceCloseModal = () => {
     flushAllBufferedInputs();
+    setIsUnsavedCloseConfirmOpen(false);
     if (setIsMedicalRecordModalOpen) {
       setIsMedicalRecordModalOpen(false);
     } else if (onClose) {
       onClose();
     }
   };
+
+  const handleCloseModalSafely = () => {
+    flushAllBufferedInputs();
+    if (isMedicalRecordDirty && !loading) {
+      setIsUnsavedCloseConfirmOpen(true);
+      return;
+    }
+    forceCloseModal();
+  };
+
+  useEffect(() => {
+    if (!isOpen || !currentMedicalRecord) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (hasOpenSubModal || isIopChartOpen || isDraftRecoveryOpen) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!loading) {
+          flushAllBufferedInputs();
+          setBookingError?.(null);
+          saveMedicalRecord(true);
+        }
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (isUnsavedCloseConfirmOpen) {
+          setIsUnsavedCloseConfirmOpen(false);
+        } else if (showDocDropdown) {
+          setShowDocDropdown(false);
+        } else {
+          handleCloseModalSafely();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    isOpen,
+    currentMedicalRecord,
+    hasOpenSubModal,
+    isIopChartOpen,
+    isDraftRecoveryOpen,
+    isUnsavedCloseConfirmOpen,
+    showDocDropdown,
+    isMedicalRecordDirty,
+    loading,
+  ]);
 
   if (!isOpen || !currentMedicalRecord) return null;
 
@@ -1365,11 +1583,15 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                     </span>
                     <span className={cn(
                       "text-[10px] font-black uppercase tracking-tight truncate",
-                      lastLocalSavedAt && (!lastServerSavedAt || lastLocalSavedAt > lastServerSavedAt) && !(isServerSaving || loading)
+                      isMedicalRecordDirty
+                        ? "text-amber-600 dark:text-amber-400"
+                        : lastLocalSavedAt && (!lastServerSavedAt || lastLocalSavedAt > lastServerSavedAt) && !(isServerSaving || loading)
                         ? "text-amber-600 dark:text-amber-400"
                         : "text-emerald-600 dark:text-emerald-400"
                     )}>
-                      {lastLocalSavedAt && (!lastServerSavedAt || lastLocalSavedAt > lastServerSavedAt)
+                      {isMedicalRecordDirty
+                        ? "Modificări nesalvate (Ctrl+S)"
+                        : lastLocalSavedAt && (!lastServerSavedAt || lastLocalSavedAt > lastServerSavedAt)
                         ? `Local: ${lastLocalSavedAt.toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
                         : lastServerSavedAt
                         ? `${lastServerSavedAt.toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
@@ -2006,6 +2228,26 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                     </div>
 
                     <div className="flex flex-col gap-3">
+                      {diopterComparisonAlerts.items.length > 0 && (
+                        <div className="px-3.5 py-2.5 rounded-2xl bg-amber-500/12 border border-amber-500/35 text-amber-800 dark:text-amber-200 text-xs flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 font-bold">
+                            <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                            <span>
+                              Diferență semnificativă față de {diopterComparisonAlerts.dateLabel || "vizita anterioară"}:
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {diopterComparisonAlerts.items.map((alertText, i) => (
+                              <span
+                                key={i}
+                                className="px-2 py-0.5 rounded-lg bg-amber-500/20 border border-amber-500/30 font-black text-[11px]"
+                              >
+                                {alertText}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-2 items-start">
                         {/* Right Eye (OD) */}
                         <div
@@ -3302,14 +3544,25 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                             )}
                           >
                             <div>
-                              <label
-                                className={cn(
-                                  "block text-[10px] font-black uppercase mb-1 tracking-wider",
-                                  darkMode ? "text-white" : "text-black",
-                                )}
-                              >
-                                Tensiune Oculară (OD)
-                              </label>
+                              <div className="flex items-center justify-between gap-2 mb-1">
+                                <label
+                                  className={cn(
+                                    "block text-[10px] font-black uppercase tracking-wider",
+                                    darkMode ? "text-white" : "text-black",
+                                  )}
+                                >
+                                  Tensiune Oculară (OD)
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => setIsIopChartOpen(true)}
+                                  className="px-2 py-0.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border border-indigo-500/25 text-[10px] font-black uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-colors"
+                                  title="Grafic evoluție Tensiune Oculară (PIO) & Pachimetrie"
+                                >
+                                  <Activity className="w-3 h-3" />
+                                  <span>Evoluție PIO</span>
+                                </button>
+                              </div>
                               <div className="flex gap-2">
                                 <div className="flex-1">
                                   <input
@@ -6363,14 +6616,25 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                             )}
                           >
                             <div>
-                              <label
-                                className={cn(
-                                  "block text-[10px] font-black uppercase mb-1 tracking-wider",
-                                  darkMode ? "text-white" : "text-black",
-                                )}
-                              >
-                                Tensiune Oculară (OS)
-                              </label>
+                              <div className="flex items-center justify-between gap-2 mb-1">
+                                <label
+                                  className={cn(
+                                    "block text-[10px] font-black uppercase tracking-wider",
+                                    darkMode ? "text-white" : "text-black",
+                                  )}
+                                >
+                                  Tensiune Oculară (OS)
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => setIsIopChartOpen(true)}
+                                  className="px-2 py-0.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border border-indigo-500/25 text-[10px] font-black uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-colors"
+                                  title="Grafic evoluție Tensiune Oculară (PIO) & Pachimetrie"
+                                >
+                                  <Activity className="w-3 h-3" />
+                                  <span>Evoluție PIO</span>
+                                </button>
+                              </div>
                               <div className="flex gap-2">
                                 <div className="flex-1">
                                   <input
@@ -9312,6 +9576,70 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                   </div>
                 </div>
               )}
+
+              {/* Unsaved Changes Confirmation Dialog */}
+              {isUnsavedCloseConfirmOpen && (
+                <div className="fixed inset-0 z-[260] flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm">
+                  <div
+                    className={cn(
+                      "w-full max-w-md rounded-3xl p-6 border shadow-2xl space-y-4",
+                      darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-2xl bg-amber-500/15 text-amber-500 border border-amber-500/30">
+                        <AlertTriangle className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-black">Modificări nesalvate pe server</h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          Ați modificat date în fișă după ultima salvare pe server. Ce doriți să faceți?
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2 pt-2">
+                      <button
+                        type="button"
+                        disabled={loading}
+                        onClick={async () => {
+                          flushAllBufferedInputs();
+                          setBookingError?.(null);
+                          const ok = await saveMedicalRecord(true);
+                          if (ok) {
+                            setIsUnsavedCloseConfirmOpen(false);
+                          }
+                        }}
+                        className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-xs uppercase tracking-wider cursor-pointer disabled:opacity-60"
+                      >
+                        {loading ? "Se salvează..." : "Salvează pe Server & Închide"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={forceCloseModal}
+                        className="w-full py-2.5 px-4 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 font-bold text-xs cursor-pointer"
+                      >
+                        Închide fără salvare pe server
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsUnsavedCloseConfirmOpen(false)}
+                        className="w-full py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs cursor-pointer"
+                      >
+                        Continuă editarea
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* IOP & Pachymetry Evolution Chart Modal (0 extra Firestore reads) */}
+              <IopChartModal
+                isOpen={isIopChartOpen}
+                onClose={() => setIsIopChartOpen(false)}
+                darkMode={darkMode}
+                currentMedicalRecord={currentMedicalRecord}
+                medicalRecords={medicalRecords}
+              />
             </div>
           </div>
   );

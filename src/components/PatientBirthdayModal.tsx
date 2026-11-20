@@ -22,6 +22,9 @@ export interface PatientBirthdayModalProps {
   sendBirthdayWhatsAppMessage: (phone: string, message: string) => void;
   generatePatientBirthdayMessage: (name: string, birthDate?: string) => string;
   getBirthdayStatus: (birthDateStr: string | undefined | null) => BirthdayStatus | null;
+  hasLoadedFullMedicalRecords?: boolean;
+  isLoadingFullMedicalRecords?: boolean;
+  onLoadFullMedicalRecords?: () => Promise<any>;
 }
 
 export const PatientBirthdayModal: React.FC<PatientBirthdayModalProps> = ({
@@ -34,6 +37,9 @@ export const PatientBirthdayModal: React.FC<PatientBirthdayModalProps> = ({
   sendBirthdayWhatsAppMessage,
   generatePatientBirthdayMessage,
   getBirthdayStatus,
+  hasLoadedFullMedicalRecords,
+  isLoadingFullMedicalRecords,
+  onLoadFullMedicalRecords,
 }) => {
   const [birthdaySearchQuery, setBirthdaySearchQuery] = useState("");
   const [birthdaySelectedPatientID, setBirthdaySelectedPatientID] = useState<string | null>(null);
@@ -114,18 +120,31 @@ export const PatientBirthdayModal: React.FC<PatientBirthdayModalProps> = ({
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={onClose}
-                className={cn(
-                  "p-2 rounded-full transition-colors",
-                  darkMode
-                    ? "hover:bg-slate-800 text-slate-400 hover:text-white"
-                    : "hover:bg-slate-100 text-slate-500 hover:text-black",
+              <div className="flex items-center gap-2 shrink-0">
+                {onLoadFullMedicalRecords && !hasLoadedFullMedicalRecords && (
+                  <button
+                    type="button"
+                    disabled={Boolean(isLoadingFullMedicalRecords)}
+                    onClick={() => onLoadFullMedicalRecords()}
+                    className="px-3 py-1.5 rounded-xl bg-pink-600 hover:bg-pink-700 text-white font-black text-[10px] sm:text-xs uppercase tracking-wider shadow-sm transition-all cursor-pointer disabled:opacity-60"
+                    title="Implicit sunt scanate doar fișele recente. Apăsați aici pentru a încărca întreaga arhivă de pacienți."
+                  >
+                    {isLoadingFullMedicalRecords ? "Se încarcă..." : "Încarcă toată arhiva"}
+                  </button>
                 )}
-              >
-                <X className="w-6 h-6" />
-              </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className={cn(
+                    "p-2 rounded-full transition-colors",
+                    darkMode
+                      ? "hover:bg-slate-800 text-slate-400 hover:text-white"
+                      : "hover:bg-slate-100 text-slate-500 hover:text-black",
+                  )}
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
             </div>
 
             {/* Modal Body */}

@@ -64,6 +64,9 @@ export interface PatientRecallPanelProps {
   logActivity: (action: string, details: string) => void;
   getDoctorDisplayName: (doctorId: string) => string;
   onClose: () => void;
+  hasLoadedFullMedicalRecords?: boolean;
+  isLoadingFullMedicalRecords?: boolean;
+  onLoadFullMedicalRecords?: () => Promise<any>;
 }
 
 export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
@@ -77,6 +80,9 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
   logActivity,
   getDoctorDisplayName,
   onClose,
+  hasLoadedFullMedicalRecords,
+  isLoadingFullMedicalRecords,
+  onLoadFullMedicalRecords,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<RecallType>("all");
@@ -749,7 +755,18 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {onLoadFullMedicalRecords && !hasLoadedFullMedicalRecords && (
+            <button
+              type="button"
+              disabled={Boolean(isLoadingFullMedicalRecords)}
+              onClick={() => onLoadFullMedicalRecords()}
+              className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black text-[11px] uppercase tracking-wider shadow-md transition-all cursor-pointer disabled:opacity-60"
+              title="Implicit sunt încărcate doar ultimele 50 fișe recente pentru a economisi citirile Firebase. Apăsați aici pentru a scana toată arhiva pacienților."
+            >
+              {isLoadingFullMedicalRecords ? "Se încarcă arhiva..." : "Încarcă arhiva completă (50 Recente Activ)"}
+            </button>
+          )}
           <div className="px-4 py-2 rounded-2xl bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 shadow-xs text-right">
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
               Total Rechemări Active

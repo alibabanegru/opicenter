@@ -95,13 +95,17 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           </div>
         </div>
 
-        <div
+        <button
+          type="button"
+          onClick={() => setFrameFilterStatus(frameFilterStatus === "low_stock" ? "all" : "low_stock")}
+          title="Click pentru a filtra rapid ramele cu stoc redus (1-2 buc)"
           className={cn(
-            "p-4 rounded-2xl border transition-all flex flex-col justify-between",
-            darkMode ? "bg-amber-950/30 border-amber-800/50" : "bg-amber-50/80 border-amber-200"
+            "p-4 rounded-2xl border transition-all flex flex-col justify-between text-left cursor-pointer",
+            darkMode ? "bg-amber-950/30 border-amber-800/50 hover:border-amber-600" : "bg-amber-50/80 border-amber-200 hover:border-amber-400",
+            frameFilterStatus === "low_stock" && "ring-2 ring-amber-500"
           )}
         >
-          <div className="flex items-center justify-between text-amber-600 dark:text-amber-400">
+          <div className="flex items-center justify-between text-amber-600 dark:text-amber-400 w-full">
             <span className="text-[10px] font-black uppercase tracking-wider">Stoc Redus (1-2)</span>
             <AlertTriangle className="w-5 h-5 text-amber-500" />
           </div>
@@ -111,15 +115,19 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             </span>
             <span className="text-xs text-amber-600/70 dark:text-amber-400/70 font-medium">modele</span>
           </div>
-        </div>
+        </button>
 
-        <div
+        <button
+          type="button"
+          onClick={() => setFrameFilterStatus(frameFilterStatus === "out_of_stock" ? "all" : "out_of_stock")}
+          title="Click pentru a filtra rapid ramele cu stoc epuizat (0 buc)"
           className={cn(
-            "p-4 rounded-2xl border transition-all flex flex-col justify-between",
-            darkMode ? "bg-red-950/30 border-red-800/50" : "bg-red-50/80 border-red-200"
+            "p-4 rounded-2xl border transition-all flex flex-col justify-between text-left cursor-pointer",
+            darkMode ? "bg-red-950/30 border-red-800/50 hover:border-red-600" : "bg-red-50/80 border-red-200 hover:border-red-400",
+            frameFilterStatus === "out_of_stock" && "ring-2 ring-red-500"
           )}
         >
-          <div className="flex items-center justify-between text-red-600 dark:text-red-400">
+          <div className="flex items-center justify-between text-red-600 dark:text-red-400 w-full">
             <span className="text-[10px] font-black uppercase tracking-wider">Stoc Epuizat (0)</span>
             <EyeOff className="w-5 h-5 text-red-500" />
           </div>
@@ -129,7 +137,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             </span>
             <span className="text-xs text-red-600/70 dark:text-amber-400/70 font-medium">modele</span>
           </div>
-        </div>
+        </button>
       </div>
 
       {/* Controls bar */}

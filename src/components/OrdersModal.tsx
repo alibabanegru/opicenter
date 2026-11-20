@@ -105,6 +105,7 @@ export interface OrdersModalProps {
   bulkDeleteMode?: "selected" | "all" | null;
   setBulkDeleteMode?: React.Dispatch<React.SetStateAction<"selected" | "all" | null>>;
   onPrintOrderDirect?: (order: any, patient: any) => void;
+  onPrintWorkshopTicket?: (order: any, patient: any) => void;
   hasLoadedFullMedicalRecords?: boolean;
   onLoadFullMedicalRecords?: () => Promise<any>;
 }
@@ -133,6 +134,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   setIsOrderDeleteConfirmOpen,
   setIsPermanentDelete,
   onPrintOrderDirect,
+  onPrintWorkshopTicket,
   availableUsers = [],
   handleExportData: propHandleExportData,
   handleImportData: propHandleImportData,
@@ -2180,6 +2182,20 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                               <span className="hidden sm:inline">Print</span>
                                             </button>
                                           )}
+                                          {onPrintWorkshopTicket && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                onPrintWorkshopTicket(order, patient);
+                                              }}
+                                              className="px-2 py-1.5 bg-slate-700 hover:bg-slate-800 active:scale-95 text-white text-[10px] font-black uppercase tracking-wider rounded-lg transition-all shadow-xs flex items-center gap-1 cursor-pointer shrink-0"
+                                              title="Printează bon compact A6 pentru atelierul de optică"
+                                            >
+                                              <Printer className="w-3 h-3 text-white" />
+                                              <span className="hidden xl:inline">Atelier</span>
+                                            </button>
+                                          )}
                                           {(profile?.role === "admin" ||
                                             profile?.role === "frontdesk" ||
                                             profile?.role === "seller") && (
@@ -2924,6 +2940,20 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                   title="Printează fișa comenzii direct"
                                 >
                                   <Printer className="w-5 h-5 text-indigo-500 group-hover/print:text-indigo-600 transition-colors" />
+                                </button>
+                              )}
+                              {onPrintWorkshopTicket && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onPrintWorkshopTicket(order, { id: order.patientId, patientName: order.patientName, patientPhone: order.patientPhone });
+                                  }}
+                                  className="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-[10px] font-black uppercase tracking-wider rounded-lg transition-all flex items-center gap-1 cursor-pointer"
+                                  title="Printează bon compact A6 pentru atelierul de optică"
+                                >
+                                  <Printer className="w-3.5 h-3.5" />
+                                  <span>Bon Atelier</span>
                                 </button>
                               )}
                               {(profile?.role === "admin" ||

@@ -167,7 +167,7 @@ const GDPRModal = React.lazy(() => import("./components/GDPRModal").then(m => ({
 const WeatherModal = React.lazy(() => import("./components/WeatherModal").then(m => ({ default: m.WeatherModal })));
 const OrdersModal = React.lazy(() => import("./components/OrdersModal").then(m => ({ default: m.OrdersModal })));
 
-import { generateGlassesOrderPdf } from "./services/glassesOrderPdfService";
+import { generateGlassesOrderPdf, generateWorkshopTicketPdf } from "./services/glassesOrderPdfService";
 import {
   generateAdeverintaMedicalaPdf,
   generateReferatPdf,
@@ -4086,22 +4086,8 @@ export default function App() {
     return all.filter((p) => getBirthdayStatus(p.birthDate)?.isToday).length;
   }, [getAllPatients, getBirthdayStatus]);
 
-  useEffect(() => {
-    if (!profile || hasLoadedAllHistory) return;
-    const needsFullArchive =
-      isBirthdayModalOpen ||
-      (isConfigModalOpen && configActiveTab === "recall");
-    if (needsFullArchive) {
-      ensureFullArchiveLoaded(true);
-    }
-  }, [
-    profile,
-    hasLoadedAllHistory,
-    isBirthdayModalOpen,
-    isConfigModalOpen,
-    configActiveTab,
-    ensureFullArchiveLoaded,
-  ]);
+  // Arhiva completă pentru Rechemări și Aniversări se încarcă exclusiv la cerere din butoanele dedicate
+  // (0 citiri automate la deschiderea tab-ului/ferestrei).
 
   const [showSavedAnimation, setShowSavedAnimation] = useState(false);
   const [isPrismModalOpen, setIsPrismModalOpen] = useState(false);
@@ -7859,7 +7845,7 @@ export default function App() {
   }, [releaseSlotLock, reschedulingAppointment]);
 
   useEffect(() => {
-    if (!profile) {
+    if (!profile || profile.role === "tv" || profile.role === "patient") {
       setActiveSlotLocks({});
       return;
     }
@@ -8000,13 +7986,16 @@ export default function App() {
     }
 
     // 2. Appointments (Smart / Lazy Loading)
-    // Se încarcă doar ultimele 30 de zile și programările viitoare la pornire.
-    // Programările vechi din arhivă sunt descărcate automat la navigarea în calendar sau la căutare.
+    // Ecranul TV încarcă exclusiv programările începând de astăzi; celelalte roluri încarcă ultimele 30 de zile + viitor.
     const thirtyDaysAgoISO = subDays(startOfDay(new Date()), 30).toISOString();
+    const appointmentsStartISO =
+      profile?.role === "tv"
+        ? startOfDay(new Date()).toISOString()
+        : thirtyDaysAgoISO;
     const unsubAppointments = onSnapshot(
       query(
         collection(db, "appointments"),
-        where("startTime", ">=", thirtyDaysAgoISO),
+        where("startTime", ">=", appointmentsStartISO),
       ),
       (snapshot) => {
         setAppointments((prev) => {
@@ -8015,7 +8004,7 @@ export default function App() {
           );
           const freshIds = new Set(fresh.map((a) => a.id));
           const preservedOlder = prev.filter(
-            (a) => !freshIds.has(a.id) && a.startTime < thirtyDaysAgoISO,
+            (a) => !freshIds.has(a.id) && a.startTime < appointmentsStartISO,
           );
           return [...fresh, ...preservedOlder];
         });
@@ -8067,74 +8056,79 @@ export default function App() {
       };
     }
 
-    // 4. Medical Records (Smart / Lazy Loading - ultimele 50 de fișe recente)
-    // Încarcă în timp real doar cele mai recente 50 de fișe ordonate după data actualizării (updatedAt).
-    // Fișele mai vechi din arhivă sunt descărcate automat la cerere la căutare sau la deschiderea fișei pacientului.
-    const medicalRecordsQuery = query(
-      collection(db, "medicalRecords"),
-      orderBy("updatedAt", "desc"),
-      limit(50)
-    );
-    const unsubMedicalRecords = onSnapshot(
-      medicalRecordsQuery,
-      (snapshot) => {
-        setMedicalRecords((prev) => {
-          const fresh = snapshot.docs.map(
-            (doc) => ({ id: doc.id, ...doc.data() }) as MedicalRecord,
-          );
-          const freshIds = new Set(fresh.map((r) => r.id));
-          // Păstrăm fișele mai vechi care au fost deja descărcate la cerere în sesiunea curentă
-          const preservedOlder = prev.filter((r) => !freshIds.has(r.id));
-          const merged = [...fresh, ...preservedOlder];
+    // 4 & 5. Medical Records + Medical Documents: nu se încarcă pe ecranul TV (0 citiri extra pe TV)
+    let unsubMedicalRecords: () => void = () => {};
+    let unsubMedicalDocuments: () => void = () => {};
 
-          // If medical record modal is open, sync real-time changes to currentMedicalRecord
-          setCurrentMedicalRecord((curr) => {
-            if (!curr) return null;
-            const updatedCurr = fresh.find((r) => r.id === curr.id);
-            if (updatedCurr) {
-              return {
-                ...curr,
-                gdprSigned: updatedCurr.gdprSigned ?? curr.gdprSigned,
-                gdprSignature: updatedCurr.gdprSignature ?? curr.gdprSignature,
-                gdprSignedAt: updatedCurr.gdprSignedAt ?? curr.gdprSignedAt,
-                orderHistory: updatedCurr.orderHistory ?? curr.orderHistory,
-                glassesOrder: updatedCurr.glassesOrder ?? curr.glassesOrder,
-              };
-            }
-            return curr;
+    if (profile.role === "tv") {
+      setMedicalRecords([]);
+      setMedicalDocuments([]);
+    } else {
+      // 4. Medical Records (Smart / Lazy Loading - ultimele 50 de fișe recente)
+      const medicalRecordsQuery = query(
+        collection(db, "medicalRecords"),
+        orderBy("updatedAt", "desc"),
+        limit(50)
+      );
+      unsubMedicalRecords = onSnapshot(
+        medicalRecordsQuery,
+        (snapshot) => {
+          setMedicalRecords((prev) => {
+            const fresh = snapshot.docs.map(
+              (doc) => ({ id: doc.id, ...doc.data() }) as MedicalRecord,
+            );
+            const freshIds = new Set(fresh.map((r) => r.id));
+            const preservedOlder = prev.filter((r) => !freshIds.has(r.id));
+            const merged = [...fresh, ...preservedOlder];
+
+            setCurrentMedicalRecord((curr) => {
+              if (!curr) return null;
+              const updatedCurr = fresh.find((r) => r.id === curr.id);
+              if (updatedCurr) {
+                return {
+                  ...curr,
+                  gdprSigned: updatedCurr.gdprSigned ?? curr.gdprSigned,
+                  gdprSignature: updatedCurr.gdprSignature ?? curr.gdprSignature,
+                  gdprSignedAt: updatedCurr.gdprSignedAt ?? curr.gdprSignedAt,
+                  orderHistory: updatedCurr.orderHistory ?? curr.orderHistory,
+                  glassesOrder: updatedCurr.glassesOrder ?? curr.glassesOrder,
+                };
+              }
+              return curr;
+            });
+
+            return merged;
           });
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, "medicalRecords");
+        }
+      );
 
-          return merged;
-        });
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.GET, "medicalRecords");
-      }
-    );
-
-    // 5. Medical Documents (Smart / Lazy Loading - ultimele 30 de zile în loc de întreaga arhivă istorică)
-    const thirtyDaysAgoDocsISO = subDays(startOfDay(new Date()), 30).toISOString();
-    const unsubMedicalDocuments = onSnapshot(
-      query(
-        collection(db, "medicalDocuments"),
-        where("date", ">=", thirtyDaysAgoDocsISO),
-      ),
-      (snapshot) => {
-        setMedicalDocuments((prev) => {
-          const fresh = snapshot.docs
-            .map((doc) => ({ id: doc.id, ...doc.data() }))
-            .filter((d: any) => !d.isDeleted);
-          const freshIds = new Set(fresh.map((d: any) => d.id));
-          const preservedOlder = prev.filter(
-            (d: any) => !freshIds.has(d.id)
-          );
-          return [...fresh, ...preservedOlder];
-        });
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.GET, "medicalDocuments");
-      }
-    );
+      // 5. Medical Documents (Smart / Lazy Loading - ultimele 30 de zile în loc de întreaga arhivă istorică)
+      const thirtyDaysAgoDocsISO = subDays(startOfDay(new Date()), 30).toISOString();
+      unsubMedicalDocuments = onSnapshot(
+        query(
+          collection(db, "medicalDocuments"),
+          where("date", ">=", thirtyDaysAgoDocsISO),
+        ),
+        (snapshot) => {
+          setMedicalDocuments((prev) => {
+            const fresh = snapshot.docs
+              .map((doc) => ({ id: doc.id, ...doc.data() }))
+              .filter((d: any) => !d.isDeleted);
+            const freshIds = new Set(fresh.map((d: any) => d.id));
+            const preservedOlder = prev.filter(
+              (d: any) => !freshIds.has(d.id)
+            );
+            return [...fresh, ...preservedOlder];
+          });
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, "medicalDocuments");
+        }
+      );
+    }
 
     // 6. Frame Stock (skip listener on TV / patient screens)
     const unsubFrameStock =
@@ -8378,7 +8372,7 @@ export default function App() {
   }, [isConfigModalOpen, configActiveTab]);
 
   useEffect(() => {
-    if (profile?.role !== "admin" || !isConfigModalOpen) return;
+    if (profile?.role !== "admin" || !isConfigModalOpen || configActiveTab !== "settings") return;
 
     const q = query(
       collection(db, "connection_logs"),
@@ -8403,7 +8397,7 @@ export default function App() {
     );
 
     return () => unsub();
-  }, [profile?.role, isConfigModalOpen]);
+  }, [profile?.role, isConfigModalOpen, configActiveTab]);
 
   useEffect(() => {
     localStorage.setItem("clinic_dark_mode_preference", darkMode.toString());
@@ -8561,6 +8555,14 @@ export default function App() {
           setIsSearchModalOpen(false);
           return;
         }
+        if (
+          activeDocumentModal ||
+          isPrismModalOpen ||
+          isContactLensModalOpen ||
+          isPatientSummaryModalOpen
+        ) {
+          return;
+        }
         if (isMedicalRecordModalOpen) {
           setIsMedicalRecordModalOpen(false);
           return;
@@ -8586,6 +8588,10 @@ export default function App() {
     isOrdersModalOpen,
     isAppointmentHistoryModalOpen,
     isNewOrderPatientModalOpen,
+    activeDocumentModal,
+    isPrismModalOpen,
+    isContactLensModalOpen,
+    isPatientSummaryModalOpen,
     currentMedicalRecord,
   ]);
 
@@ -12874,6 +12880,19 @@ export default function App() {
     }
 
     generateGlassesOrderPdf({
+      record,
+      order,
+      clinicConfig,
+      triggerPdfPrint,
+    });
+  };
+
+  const printWorkshopTicket = (orderOverride?: any, recordOverride?: any) => {
+    const record = recordOverride || currentMedicalRecord;
+    const order = orderOverride || record?.glassesOrder;
+    if (!record || !order) return;
+
+    generateWorkshopTicketPdf({
       record,
       order,
       clinicConfig,
@@ -20614,7 +20633,6 @@ export default function App() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    logActivity("Export Copie Siguranță (JSON)", "Generat și descărcat backup complet JSON.").catch(() => {});
   };
 
   // Export Pacienți & Fișe Medicale în format CSV (Excel compatibil UTF-8 BOM)
@@ -20681,7 +20699,6 @@ export default function App() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    logActivity("Export Tabel Pacienți (Excel/CSV)", `Descărcat tabel CSV cu ${exportRecords.length} pacienți.`).catch(() => {});
   };
 
   // Export Comenzi Ochelari în format CSV (Excel compatibil UTF-8 BOM)
@@ -20817,7 +20834,6 @@ export default function App() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    logActivity("Export Tabel Comenzi (Excel/CSV)", `Descărcat tabel CSV cu ${allOrdersList.length} comenzi de ochelari.`).catch(() => {});
   };
 
   const handleImportData = (e: ChangeEvent<HTMLInputElement>) => {
@@ -26332,6 +26348,7 @@ export default function App() {
         bulkDeleteMode={bulkDeleteMode}
         setBulkDeleteMode={setBulkDeleteMode}
         onPrintOrderDirect={(order, patient) => printGlassesOrder(order, patient)}
+        onPrintWorkshopTicket={(order, patient) => printWorkshopTicket(order, patient)}
         hasLoadedFullMedicalRecords={hasLoadedMedicalRecordsArchive || hasLoadedAllHistory}
         onLoadFullMedicalRecords={() => ensureMedicalRecordsArchiveLoaded(false)}
       />
@@ -27023,6 +27040,18 @@ export default function App() {
         activeOrderIndex={activeOrderIndex}
         saveAndSwitchOrder={saveAndSwitchOrder}
         setIsMedicalRecordModalOpen={setIsMedicalRecordModalOpen}
+        hasOpenSubModal={Boolean(
+          activeDocumentModal ||
+            isGlassesOrderModalOpen ||
+            isMyopiaChartOpen ||
+            isGdprModalOpen ||
+            isPrismModalOpen ||
+            isContactLensModalOpen ||
+            isPatientSummaryModalOpen ||
+            isDeletePrescriptionConfirmModalOpen ||
+            isPhoneEditModalOpen ||
+            isOrderTypeSelectionModalOpen
+        )}
       />
 
         <WeatherModal
@@ -27091,6 +27120,7 @@ export default function App() {
         updateOrder={updateOrder}
         validateOrderAxisHelper={validateOrderAxisHelper}
         saveAndPrintGlassesOrder={saveAndPrintGlassesOrder}
+        printWorkshopTicket={() => printWorkshopTicket()}
         isDistanceFrameConfigOpen={isDistanceFrameConfigOpen}
         setIsDistanceFrameConfigOpen={setIsDistanceFrameConfigOpen}
         isNearFrameConfigOpen={isNearFrameConfigOpen}
@@ -32564,6 +32594,9 @@ export default function App() {
                 logActivity={logActivity}
                 getDoctorDisplayName={getDoctorDisplayName}
                 onClose={() => setIsConfigModalOpen(false)}
+                hasLoadedFullMedicalRecords={hasLoadedMedicalRecordsArchive || hasLoadedAllHistory}
+                isLoadingFullMedicalRecords={isLoadingAllHistory}
+                onLoadFullMedicalRecords={() => ensureMedicalRecordsArchiveLoaded(false)}
               />
             </Suspense>
           ) : (
@@ -33850,6 +33883,9 @@ export default function App() {
         sendBirthdayWhatsAppMessage={sendBirthdayWhatsAppMessage}
         generatePatientBirthdayMessage={generatePatientBirthdayMessage}
         getBirthdayStatus={getBirthdayStatus}
+        hasLoadedFullMedicalRecords={hasLoadedMedicalRecordsArchive || hasLoadedAllHistory}
+        isLoadingFullMedicalRecords={isLoadingAllHistory}
+        onLoadFullMedicalRecords={() => ensureMedicalRecordsArchiveLoaded(false)}
       />
 
       {/* Document Configurator Modal */}

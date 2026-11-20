@@ -47,6 +47,71 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
   syncPatientUniversal,
 }: DocumentConfiguratorModalProps) {
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [confirmUnsavedClose, setConfirmUnsavedClose] = React.useState(false);
+  const initialDocBaselineRef = React.useRef<string>("");
+
+  React.useEffect(() => {
+    if (activeDocumentModal) {
+      initialDocBaselineRef.current = JSON.stringify(documentForm || {});
+      setConfirmUnsavedClose(false);
+    } else {
+      initialDocBaselineRef.current = "";
+      setConfirmUnsavedClose(false);
+    }
+    // Capture initial form state only when modal type changes/opens
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDocumentModal]);
+
+  const isDocDirty = React.useMemo(() => {
+    if (!activeDocumentModal || !initialDocBaselineRef.current) return false;
+    try {
+      return JSON.stringify(documentForm || {}) !== initialDocBaselineRef.current;
+    } catch {
+      return false;
+    }
+  }, [activeDocumentModal, documentForm]);
+
+  const requestCloseDocModal = React.useCallback(() => {
+    if (isSubmitting) return;
+    if (isDocDirty) {
+      setConfirmUnsavedClose(true);
+    } else {
+      setActiveDocumentModal(null);
+    }
+  }, [isDocDirty, isSubmitting, setActiveDocumentModal]);
+
+  const submitDocModal = React.useCallback(async () => {
+    if (isSubmitting) return;
+    try {
+      setIsSubmitting(true);
+      await handleSaveAndPrintDocument();
+      initialDocBaselineRef.current = JSON.stringify(documentForm || {});
+      setConfirmUnsavedClose(false);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [isSubmitting, handleSaveAndPrintDocument, documentForm]);
+
+  React.useEffect(() => {
+    if (!activeDocumentModal) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        e.stopPropagation();
+        submitDocModal();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (confirmUnsavedClose) {
+          setConfirmUnsavedClose(false);
+        } else {
+          requestCloseDocModal();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [activeDocumentModal, confirmUnsavedClose, requestCloseDocModal, submitDocModal]);
 
   const handleCnpFieldChange = React.useCallback((newCnpRaw: string) => {
     const newCnp = newCnpRaw.replace(/\D/g, "").slice(0, 13);
@@ -141,22 +206,55 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                   ? "Examen Expertiză Medicală (Capacitate Muncă)"
                                   : "Certificat medical A5"}
                         </h2>
-                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                          Introduceți detaliile necesare pentru generare și printare
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2 flex-wrap">
+                          <span>Introduceți detaliile necesare pentru generare și printare (Ctrl+S salvează &amp; printează)</span>
+                          {isDocDirty && (
+                            <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 font-black">
+                              Modificări nesalvate
+                            </span>
+                          )}
                         </p>
                       </div>
                     </div>
                     <button
                       type="button"
-                      onClick={() => setActiveDocumentModal(null)}
+                      onClick={requestCloseDocModal}
                       className={cn(
-                        "p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
+                        "p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer",
                         darkMode ? "text-slate-400" : "text-slate-500",
                       )}
+                      title="Închide (Esc)"
                     >
                       <X className="w-5 h-5" />
                     </button>
                   </div>
+
+                  {confirmUnsavedClose && (
+                    <div className="mx-6 mt-4 p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/40 flex flex-wrap items-center justify-between gap-3 text-xs">
+                      <span className="font-bold text-amber-800 dark:text-amber-200">
+                        Aveți modificări nesalvate în acest document. Sigur doriți să închideți fără salvare?
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmUnsavedClose(false)}
+                          className="px-3 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold cursor-pointer"
+                        >
+                          Continuă editarea
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setConfirmUnsavedClose(false);
+                            setActiveDocumentModal(null);
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black cursor-pointer"
+                        >
+                          Închide fără salvare
+                        </button>
+                      </div>
+                    </div>
+                  )}
     
                   {/* Scrollable Form Content */}
                   <div className="flex-1 p-6 overflow-y-auto space-y-6">
@@ -3542,7 +3640,7 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                   <div className="p-6 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-3 bg-slate-50 dark:bg-slate-900/50">
                     <button
                       type="button"
-                      onClick={() => setActiveDocumentModal(null)}
+                      onClick={requestCloseDocModal}
                       className="px-6 py-2.5 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer"
                     >
                       Anulează
@@ -3551,14 +3649,7 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                       type="button"
                       id="save-and-print-doc-modal-btn"
                       disabled={isSubmitting}
-                      onClick={async () => {
-                        try {
-                          setIsSubmitting(true);
-                          await handleSaveAndPrintDocument();
-                        } finally {
-                          setIsSubmitting(false);
-                        }
-                      }}
+                      onClick={submitDocModal}
                       className="px-6 py-2.5 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white transition-all flex items-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shadow-md shadow-blue-500/10"
                     >
                       <Printer className="w-4 h-4" />

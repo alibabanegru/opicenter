@@ -81,6 +81,7 @@ export interface GlassesOrderModalProps {
   updateOrder: (fieldOrUpdates: keyof GlassesOrder | string | Record<string, any>, value?: any) => void;
   validateOrderAxisHelper: (order: any) => boolean;
   saveAndPrintGlassesOrder: () => void;
+  printWorkshopTicket?: () => void;
   isDistanceFrameConfigOpen: boolean;
   setIsDistanceFrameConfigOpen: (open: boolean) => void;
   isNearFrameConfigOpen: boolean;
@@ -123,6 +124,7 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
   updateOrder,
   validateOrderAxisHelper,
   saveAndPrintGlassesOrder,
+  printWorkshopTicket,
   isDistanceFrameConfigOpen,
   setIsDistanceFrameConfigOpen,
   isNearFrameConfigOpen,
@@ -903,6 +905,21 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                                     </div>
                                     <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-600 text-white shrink-0">
                                       Ultima bucată
+                                    </span>
+                                  </div>
+                                );
+                              }
+                              if (qty === 2) {
+                                return (
+                                  <div className="mt-1.5 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-800 dark:text-amber-200 text-[11px] font-bold flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-1.5">
+                                      <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                                      <span>
+                                        Stoc redus: au mai rămas <strong>2 buc.</strong> ({matched.brand ? `${matched.brand} - ` : ""}{matched.code})
+                                      </span>
+                                    </div>
+                                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-500 text-white shrink-0">
+                                      Stoc critic
                                     </span>
                                   </div>
                                 );
@@ -2036,6 +2053,21 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                                       </div>
                                     );
                                   }
+                                  if (qty === 2) {
+                                    return (
+                                      <div className="mt-1.5 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-800 dark:text-amber-200 text-[11px] font-bold flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-1.5">
+                                          <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                                          <span>
+                                            Stoc redus: au mai rămas <strong>2 buc.</strong> ({matched.brand ? `${matched.brand} - ` : ""}{matched.code})
+                                          </span>
+                                        </div>
+                                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-500 text-white shrink-0">
+                                          Stoc critic
+                                        </span>
+                                      </div>
+                                    );
+                                  }
                                   return (
                                     <div className="mt-1.5 p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold flex items-center justify-between gap-2">
                                       <div className="flex items-center gap-1.5">
@@ -3073,7 +3105,7 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                   )}
 
                   <div className="pt-2 flex flex-col gap-3">
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className={cn("grid grid-cols-2 gap-3", printWorkshopTicket ? "sm:grid-cols-5" : "sm:grid-cols-4")}>
                       <button
                         onClick={() => setIsGlassesOrderModalOpen(false)}
                         className="py-4 rounded-2xl bg-rose-600 text-white font-black uppercase tracking-widest hover:bg-rose-700 transition-all shadow-xl"
@@ -3093,6 +3125,17 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                         <Printer className="w-5 h-5" />
                         Printează
                       </button>
+                      {printWorkshopTicket && (
+                        <button
+                          type="button"
+                          onClick={printWorkshopTicket}
+                          className="py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider text-xs transition-all shadow-xl flex items-center justify-center gap-1.5 cursor-pointer"
+                          title="Printează eticheta compactă A6 pentru atelierul de optică (fără prețuri)"
+                        >
+                          <Printer className="w-4 h-4 shrink-0" />
+                          <span>Bon Atelier</span>
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => setIsSmsModalOpen(true)}

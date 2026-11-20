@@ -1230,3 +1230,178 @@ export const generateGlassesOrderPdf = ({
     `Comanda_${normalize(order.orderNumber)}_${normalize(record.patientName)}.pdf`
   );
 };
+
+export const generateWorkshopTicketPdf = ({
+  record,
+  order,
+  clinicConfig,
+  triggerPdfPrint,
+}: GlassesOrderPdfOptions): void => {
+  if (!record || !order) return;
+
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a6" }); // 105 x 148 mm
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const normalize = (text: string | undefined): string => normalizeForPDF(text).toUpperCase();
+
+  // Header
+  doc.setFillColor(15, 23, 42);
+  doc.rect(0, 0, pageWidth, 16, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(10);
+  doc.setFont(undefined, "bold");
+  doc.text("BON ATELIER / MONTAJ OPTICA", 6, 7);
+  doc.setFontSize(7.5);
+  doc.setFont(undefined, "normal");
+  const clinicTitle = normalize(clinicConfig?.clinicName || "OPTICENTER");
+  doc.text(`${clinicTitle}  |  CMD #${normalize(String(order.orderNumber || "-"))}`, 6, 12.5);
+
+  let y = 21;
+  doc.setTextColor(30, 41, 59);
+  doc.setFontSize(7.5);
+  const placedAt = order.createdAt
+    ? safeFormatDate(order.createdAt, "dd.MM.yyyy")
+    : format(new Date(), "dd.MM.yyyy");
+  const deliveryStr = order.deliveryDate ? safeFormatDate(order.deliveryDate, "dd.MM.yyyy") : "-";
+  doc.text(`PLASATA: ${placedAt}`, 6, y);
+  doc.setFont(undefined, "bold");
+  doc.text(`GATA: ${deliveryStr}`, pageWidth - 6, y, { align: "right" });
+
+  y += 4;
+  doc.setFillColor(241, 245, 249);
+  doc.rect(5, y, pageWidth - 10, 9, "F");
+  doc.setFontSize(8.5);
+  doc.text(normalize(record.patientName), 7, y + 4);
+  doc.setFontSize(7);
+  doc.setFont(undefined, "normal");
+  doc.text(
+    record.patientPhone ? `TEL: ${formatPhoneNumber(record.patientPhone)}` : "TEL: -",
+    7,
+    y + 7.5
+  );
+
+  y += 12;
+
+  if (order.orderType === "contact_lens") {
+    doc.setFontSize(7.5);
+    doc.setFont(undefined, "bold");
+    doc.text("LENTILE DE CONTACT", 6, y);
+    autoTable(doc, {
+      startY: y + 1.5,
+      margin: { left: 5, right: 5 },
+      head: [["Ochi", "SPH", "CYL", "AX", "BC", "DIA"]],
+      body: [
+        ["OD", order.cl_od?.sph || "-", order.cl_od?.cyl || "-", order.cl_od?.axis || "-", order.cl_od?.base || "-", order.cl_od?.radius || "-"],
+        ["OS", order.cl_os?.sph || "-", order.cl_os?.cyl || "-", order.cl_os?.axis || "-", order.cl_os?.base || "-", order.cl_os?.radius || "-"],
+      ],
+      theme: "grid",
+      styles: { fontSize: 7, cellPadding: 1.2 },
+      headStyles: { fillColor: [6, 182, 212] },
+    });
+    y = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 4 : y + 22;
+  } else {
+    const rows: string[][] = [];
+    if (order.orderType !== "near") {
+      rows.push([
+        "OD DIST",
+        order.od?.sph || "-",
+        order.od?.cyl || "-",
+        order.od?.axis || "-",
+        order.od?.add || "-",
+        order.od?.prism ? `${order.od.prism}${order.od.base || ""}` : "-",
+        order.dp_od || order.dp || "-",
+        order.fittingHeight_od || "-",
+      ]);
+      rows.push([
+        "OS DIST",
+        order.os?.sph || "-",
+        order.os?.cyl || "-",
+        order.os?.axis || "-",
+        order.os?.add || "-",
+        order.os?.prism ? `${order.os.prism}${order.os.base || ""}` : "-",
+        order.dp_os || "-",
+        order.fittingHeight_os || "-",
+      ]);
+    }
+    if (order.orderType === "near" || order.orderType === "both") {
+      rows.push([
+        "OD APR",
+        order.nearOd?.sph || order.od?.sph || "-",
+        order.nearOd?.cyl || order.od?.cyl || "-",
+        order.nearOd?.axis || order.od?.axis || "-",
+        "-",
+        "-",
+        order.nearDp_od || order.dpNear || order.dp || "-",
+        order.nearFittingHeight_od || "-",
+      ]);
+      rows.push([
+        "OS APR",
+        order.nearOs?.sph || order.os?.sph || "-",
+        order.nearOs?.cyl || order.os?.cyl || "-",
+        order.nearOs?.axis || order.os?.axis || "-",
+        "-",
+        "-",
+        order.nearDp_os || "-",
+        order.nearFittingHeight_os || "-",
+      ]);
+    }
+
+    autoTable(doc, {
+      startY: y,
+      margin: { left: 5, right: 5 },
+      head: [["Ochi", "SPH", "CYL", "AX", "ADD", "PR", "DP", "H"]],
+      body: rows,
+      theme: "grid",
+      styles: { fontSize: 6.5, cellPadding: 1, halign: "center" },
+      headStyles: { fillColor: [30, 41, 59], fontSize: 6.5 },
+      columnStyles: { 0: { halign: "left", fontStyle: "bold" } },
+    });
+    y = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 4 : y + 28;
+  }
+
+  doc.setFontSize(7.2);
+  doc.setTextColor(30, 41, 59);
+  const frameTypeMap: Record<string, string> = {
+    full: "CONTUR INTREG",
+    semi: "PE FIR (NYLON)",
+    rimless: "SURUB / CAPSA",
+  };
+  const details: string[] = [];
+  if (order.frameCode || order.nearFrameCode) {
+    details.push(`RAMA: ${normalize([order.frameCode, order.nearFrameCode].filter(Boolean).join(" / "))}`);
+  }
+  if (order.frameType) {
+    details.push(`TIP MONTURA: ${frameTypeMap[order.frameType] || normalize(order.frameType)}`);
+  }
+  if (order.lensWidth || order.lensHeight || order.bridgeSize) {
+    details.push(`CASETAT: ${order.lensWidth || "?"}x${order.lensHeight || "?"} [] ${order.bridgeSize || "?"} mm${order.lensDiameter ? ` | DIA: ${order.lensDiameter}` : ""}`);
+  }
+  if (order.lensRightName || order.lensLeftName) {
+    details.push(`LENTILE: ${normalize([order.lensRightName, order.lensLeftName !== order.lensRightName ? order.lensLeftName : ""].filter(Boolean).join(" / "))}`);
+  }
+  if (Array.isArray(order.lensTreatments) && order.lensTreatments.length > 0) {
+    details.push(`TRATAMENTE: ${normalize(order.lensTreatments.join(", "))}`);
+  }
+  if (order.notes) {
+    details.push(`NOTE: ${normalize(order.notes)}`);
+  }
+
+  details.forEach((line) => {
+    const wrapped = doc.splitTextToSize(line, pageWidth - 12);
+    if (y + wrapped.length * 3.5 < 140) {
+      doc.setFont(undefined, "bold");
+      doc.text(wrapped, 6, y);
+      y += wrapped.length * 3.6 + 1.2;
+    }
+  });
+
+  doc.setFontSize(6.5);
+  doc.setTextColor(120);
+  doc.setFont(undefined, "italic");
+  doc.text("Fisa interna atelier optic (fara valori financiare)", pageWidth / 2, 143, { align: "center" });
+
+  triggerPdfPrint(
+    doc,
+    `Bon_Atelier_${normalize(order.orderNumber)}_${normalize(record.patientName)}.pdf`
+  );
+};
+
