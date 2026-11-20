@@ -57,6 +57,7 @@ import {
   buildGlassesReadyMessage,
 } from "../utils/whatsappUtils";
 import { SmsSendModal } from "./SmsSendModal";
+import { hasLegacyGlassesOrders } from "../utils/legacyOrdersFlag";
 
 export interface GlassesOrderModalProps {
   isOpen: boolean;
@@ -99,6 +100,7 @@ export interface GlassesOrderModalProps {
   isGlassesOrderModalOpen?: boolean;
   setIsGlassesOrderModalOpen?: (open: boolean) => void;
   setMedicalRecords?: React.Dispatch<React.SetStateAction<MedicalRecord[]>>;
+  logActivity?: (action: string, details: string) => Promise<void> | void;
 }
 
 export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
@@ -141,6 +143,7 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
   setTempEditPhone,
   setIsGlassesOrderModalOpen = (open: boolean) => { if (!open) onClose(); },
   setMedicalRecords,
+  logActivity,
 }) => {
   const isGlassesOrderModalOpen = isOpen;
   const [isSmsModalOpen, setIsSmsModalOpen] = React.useState(false);
@@ -2970,6 +2973,37 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                           RON
                         </span>
                       </div>
+                      <div className="pt-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 mr-1">
+                            Plată:
+                          </span>
+                          {[
+                            { id: "numerar", label: "Numerar" },
+                            { id: "card", label: "Card" },
+                            { id: "transfer", label: "Transfer" },
+                          ].map((pm) => {
+                            const isSelected = currentMedicalRecord.glassesOrder?.paymentMethod === pm.id;
+                            return (
+                              <button
+                                key={pm.id}
+                                type="button"
+                                onClick={() => updateOrder("paymentMethod", isSelected ? "" : pm.id)}
+                                className={cn(
+                                  "px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border transition-all cursor-pointer",
+                                  isSelected
+                                    ? "bg-emerald-600 border-emerald-600 text-white shadow-xs"
+                                    : darkMode
+                                      ? "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
+                                      : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100",
+                                )}
+                              >
+                                {pm.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
 
                     <div className="flex-shrink-0 mb-1 flex flex-col items-center gap-2">
@@ -3258,24 +3292,26 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                               );
 
                               try {
-                                const qStandalone = query(
-                                  collection(db, "glasses_orders"),
-                                  where("orderNumber", "==", updatedOrder.orderNumber),
-                                );
-                                const snapStandalone = await getDocs(qStandalone);
-                                if (!snapStandalone.empty) {
-                                  const batch = writeBatch(db);
-                                  snapStandalone.docs.forEach((d) => {
-                                    batch.update(d.ref, {
-                                      status: "completed",
-                                      advance: total,
-                                      balance: 0,
-                                      deliveredAt: updatedOrder.deliveredAt,
-                                      deliveredBy: updatedOrder.deliveredBy,
-                                      updatedAt: nowIso,
+                                if (await hasLegacyGlassesOrders(db)) {
+                                  const qStandalone = query(
+                                    collection(db, "glasses_orders"),
+                                    where("orderNumber", "==", updatedOrder.orderNumber),
+                                  );
+                                  const snapStandalone = await getDocs(qStandalone);
+                                  if (!snapStandalone.empty) {
+                                    const batch = writeBatch(db);
+                                    snapStandalone.docs.forEach((d) => {
+                                      batch.update(d.ref, {
+                                        status: "completed",
+                                        advance: total,
+                                        balance: 0,
+                                        deliveredAt: updatedOrder.deliveredAt,
+                                        deliveredBy: updatedOrder.deliveredBy,
+                                        updatedAt: nowIso,
+                                      });
                                     });
-                                  });
-                                  await batch.commit();
+                                    await batch.commit();
+                                  }
                                 }
                               } catch (standaloneErr) {
                                 console.warn("Could not sync standalone glasses_orders:", standaloneErr);
@@ -3510,37 +3546,46 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                 await setDoc(docRef, removeUndefined(updatedRecord), { merge: true });
               }
 
-              const qStandalone = query(
-                collection(db, "glasses_orders"),
-                where("orderNumber", "==", info.orderNumber),
-              );
-              const snapStandalone = await getDocs(qStandalone);
-              if (!snapStandalone.empty) {
-                const batch = writeBatch(db);
-                snapStandalone.docs.forEach((d) => {
-                  const cur = d.data();
-                  const st =
-                    cur.status === "completed"
-                      ? "completed"
-                      : shouldMarkReady
-                        ? "ready_for_pickup"
-                        : (cur.status || "in-progress");
-                  batch.update(d.ref, {
-                    status: st,
-                    smsNotifiedAt: nowIso,
-                    smsNotifiedBy: notifierName,
-                    updatedAt: nowIso,
+              if (await hasLegacyGlassesOrders(db)) {
+                const qStandalone = query(
+                  collection(db, "glasses_orders"),
+                  where("orderNumber", "==", info.orderNumber),
+                );
+                const snapStandalone = await getDocs(qStandalone);
+                if (!snapStandalone.empty) {
+                  const batch = writeBatch(db);
+                  snapStandalone.docs.forEach((d) => {
+                    const cur = d.data();
+                    const st =
+                      cur.status === "completed"
+                        ? "completed"
+                        : shouldMarkReady
+                          ? "ready_for_pickup"
+                          : (cur.status || "in-progress");
+                    batch.update(d.ref, {
+                      status: st,
+                      smsNotifiedAt: nowIso,
+                      smsNotifiedBy: notifierName,
+                      updatedAt: nowIso,
+                    });
                   });
-                });
-                await batch.commit();
+                  await batch.commit();
+                }
               }
 
-              await addDoc(collection(db, "activityLogs"), {
-                action: "Trimitere Notificare SMS Comandă Ochelari",
-                details: `Trimis SMS către ${info.phone} pentru pacient ${currentMedicalRecord.patientName || ""} (Comanda #${info.orderNumber}). Mesaj: "${info.message.slice(0, 50)}..."`,
-                user: notifierName,
-                timestamp: nowIso,
-              });
+              if (logActivity) {
+                await logActivity(
+                  "Trimitere Notificare SMS Comandă Ochelari",
+                  `Trimis SMS către ${info.phone} pentru pacient ${currentMedicalRecord.patientName || ""} (Comanda #${info.orderNumber}). Mesaj: "${info.message.slice(0, 50)}..."`,
+                );
+              } else {
+                await addDoc(collection(db, "activityLogs"), {
+                  action: "Trimitere Notificare SMS Comandă Ochelari",
+                  details: `Trimis SMS către ${info.phone} pentru pacient ${currentMedicalRecord.patientName || ""} (Comanda #${info.orderNumber}). Mesaj: "${info.message.slice(0, 50)}..."`,
+                  user: notifierName,
+                  timestamp: nowIso,
+                });
+              }
             } catch (err) {
               console.warn("Could not persist SMS notification metadata from GlassesOrderModal:", err);
             }

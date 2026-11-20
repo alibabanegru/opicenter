@@ -9,8 +9,9 @@ import {
   Plus,
   Pencil,
   Trash2,
+  Download,
 } from "lucide-react";
-import { cn, FrameStockItem } from "../appConstants";
+import { cn, FrameStockItem, escapeCsvField } from "../appConstants";
 
 export interface InventoryViewProps {
   darkMode: boolean;
@@ -74,6 +75,17 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               {frameStockList.reduce((acc, item) => acc + (Number(item.quantity) || 0), 0)}
             </span>
             <span className="text-xs text-slate-500 font-medium">bucăți</span>
+          </div>
+          <div className="mt-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+            Valoare:{" "}
+            {frameStockList
+              .reduce(
+                (acc, item) =>
+                  acc + (Number(item.quantity) || 0) * (Number(item.price) || 0),
+                0
+              )
+              .toLocaleString("ro-RO", { maximumFractionDigits: 0 })}{" "}
+            RON
           </div>
         </div>
 
@@ -267,13 +279,74 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           </select>
         </div>
 
-        <button
-          onClick={() => handleOpenFrameModal()}
-          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-lg shadow-blue-500/20 transition-all flex items-center justify-center gap-2 uppercase tracking-wide cursor-pointer shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          Adaugă Ramă Nouă
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            disabled={filteredFrameStock.length === 0}
+            onClick={() => {
+              const headers = [
+                "Cod Ramă",
+                "Brand",
+                "Producător",
+                "Categorie",
+                "Material",
+                "Formă",
+                "Preț Unitar (RON)",
+                "Locație Depozit",
+                "Cantitate (buc)",
+                "Valoare Totală (RON)",
+                "Observații",
+              ];
+              const rows = filteredFrameStock.map((item) => {
+                const qty = Number(item.quantity) || 0;
+                const price = Number(item.price) || 0;
+                return [
+                  item.code || "",
+                  item.brand || "",
+                  item.manufacturer || "",
+                  item.category || "Unisex",
+                  item.material || "",
+                  item.shape || "",
+                  price > 0 ? price.toFixed(2) : "0.00",
+                  item.location || "",
+                  String(qty),
+                  (qty * price).toFixed(2),
+                  item.notes || "",
+                ]
+                  .map(escapeCsvField)
+                  .join(",");
+              });
+              const csv = "\uFEFF" + [headers.map(escapeCsvField).join(","), ...rows].join("\r\n");
+              const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement("a");
+              link.href = url;
+              link.download = `inventar_rame_${new Date().toISOString().slice(0, 10)}.csv`;
+              document.body.appendChild(link);
+              link.click();
+              link.remove();
+              URL.revokeObjectURL(url);
+            }}
+            className={cn(
+              "px-3.5 py-2.5 rounded-xl border font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed",
+              darkMode
+                ? "bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700"
+                : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50 shadow-xs"
+            )}
+            title="Exportă inventarul filtrat curent în format Excel (CSV)"
+          >
+            <Download className="w-4 h-4 text-emerald-500" />
+            Export CSV
+          </button>
+
+          <button
+            onClick={() => handleOpenFrameModal()}
+            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-lg shadow-blue-500/20 transition-all flex items-center justify-center gap-2 uppercase tracking-wide cursor-pointer shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            Adaugă Ramă Nouă
+          </button>
+        </div>
       </div>
 
       {/* Table of Frames */}

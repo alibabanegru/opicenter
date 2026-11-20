@@ -124,6 +124,71 @@ const processTreatmentValue = (newVal: string): string => {
   return processed;
 };
 
+const formatDiopterSigned = (val: number): string => {
+  const rounded = Math.round(val * 4) / 4;
+  const cleanZero = Math.abs(rounded) < 0.001 ? 0 : rounded;
+  const sign = cleanZero >= 0 ? "+" : "";
+  return `${sign}${cleanZero.toFixed(2)}`;
+};
+
+const transposeEyeCylinder = (eye: EyePrescription): EyePrescription | null => {
+  const cylNum = parseFloat(String(eye.cyl || "").replace(",", "."));
+  if (isNaN(cylNum) || Math.abs(cylNum) < 0.01) return null;
+  const sphNum = parseFloat(String(eye.sph || "0").replace(",", ".")) || 0;
+  const newSphNum = Math.max(-25, Math.min(22, sphNum + cylNum));
+  const newCylNum = Math.max(-7, Math.min(7, -cylNum));
+
+  let newAxis = eye.axis || "";
+  const rawAxis = String(eye.axis || "").trim();
+  if (rawAxis !== "") {
+    const axisNum = parseInt(rawAxis, 10);
+    if (!isNaN(axisNum)) {
+      let rot = axisNum <= 90 ? axisNum + 90 : axisNum - 90;
+      if (rot === 0) rot = 180;
+      newAxis = String(rot);
+    }
+  }
+
+  let nextNearSph = eye.near_sph;
+  if (eye.near_sph !== undefined && String(eye.near_sph).trim() !== "") {
+    const nearSphNum = parseFloat(String(eye.near_sph).replace(",", "."));
+    if (!isNaN(nearSphNum)) {
+      const nearShiftBase =
+        eye.near_cyl !== undefined && String(eye.near_cyl).trim() !== ""
+          ? parseFloat(String(eye.near_cyl).replace(",", ".")) || 0
+          : cylNum;
+      nextNearSph = formatDiopterSigned(Math.max(-25, Math.min(22, nearSphNum + nearShiftBase)));
+    }
+  }
+
+  let nextNearCyl = eye.near_cyl;
+  let nextNearAxis = eye.near_axis;
+  if (eye.near_cyl !== undefined && String(eye.near_cyl).trim() !== "") {
+    const nCyl = parseFloat(String(eye.near_cyl).replace(",", "."));
+    if (!isNaN(nCyl) && Math.abs(nCyl) >= 0.01) {
+      nextNearCyl = formatDiopterSigned(Math.max(-7, Math.min(7, -nCyl)));
+      if (eye.near_axis) {
+        const na = parseInt(String(eye.near_axis).trim(), 10);
+        if (!isNaN(na)) {
+          let rot = na <= 90 ? na + 90 : na - 90;
+          if (rot === 0) rot = 180;
+          nextNearAxis = String(rot);
+        }
+      }
+    }
+  }
+
+  return {
+    ...eye,
+    sph: formatDiopterSigned(newSphNum),
+    cyl: formatDiopterSigned(newCylNum),
+    axis: newAxis,
+    near_sph: nextNearSph,
+    near_cyl: nextNearCyl,
+    near_axis: nextNearAxis,
+  };
+};
+
 const bufferedFlushers = new Set<() => void>();
 
 export const flushAllBufferedInputs = () => {
@@ -2453,6 +2518,49 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 </div>
                               )}
 
+                              {currentMedicalRecord && (() => {
+                                const cylNum = parseFloat(String(currentMedicalRecord.od?.cyl || "").replace(",", "."));
+                                const canTranspose = !isNaN(cylNum) && Math.abs(cylNum) >= 0.01;
+                                return (
+                                  <button
+                                    type="button"
+                                    disabled={!canTranspose}
+                                    onClick={() => {
+                                      setCurrentMedicalRecord((prev) => {
+                                        if (!prev) return prev;
+                                        const transposed = transposeEyeCylinder(prev.od);
+                                        if (!transposed) return prev;
+                                        return {
+                                          ...prev,
+                                          od: transposed,
+                                          diagnostic: updateDiagnosticSuggestions(
+                                            prev.diagnostic || "",
+                                            transposed,
+                                            prev.os,
+                                          ),
+                                        };
+                                      });
+                                    }}
+                                    className={cn(
+                                      "flex items-center justify-start gap-1 px-2 py-1 rounded-lg transition-all border shrink-0 w-fit",
+                                      canTranspose
+                                        ? darkMode
+                                          ? "bg-indigo-950/60 border-indigo-700/60 text-indigo-300 hover:bg-indigo-900 cursor-pointer active:scale-95"
+                                          : "bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100 shadow-sm cursor-pointer active:scale-95"
+                                        : darkMode
+                                          ? "bg-slate-900/30 border-slate-800 text-slate-600 cursor-not-allowed opacity-50"
+                                          : "bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed opacity-60",
+                                    )}
+                                    title={canTranspose ? "Transpunere cilindru (+ ↔ −) pentru OD" : "Introduceți o valoare CYL pentru transpunere"}
+                                  >
+                                    <RefreshCw className="w-3 h-3" />
+                                    <span className="text-[9px] font-black uppercase tracking-wider">
+                                      Transpunere ±
+                                    </span>
+                                  </button>
+                                );
+                              })()}
+
                               {(() => {
                                 const age =
                                   currentMedicalRecord.patientBirthDate
@@ -3063,16 +3171,37 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               </div>
                               <div className="grid grid-cols-3 gap-2">
                                 <div>
-                                  <label
-                                    className={cn(
-                                      "block text-[10px] font-black uppercase mb-1",
-                                      darkMode
-                                        ? "text-slate-400"
-                                        : "text-slate-600",
+                                  <div className="flex items-center justify-between gap-1 mb-1">
+                                    <label
+                                      className={cn(
+                                        "block text-[10px] font-black uppercase",
+                                        darkMode
+                                          ? "text-slate-400"
+                                          : "text-slate-600",
+                                      )}
+                                    >
+                                      Near SPH
+                                    </label>
+                                    {currentMedicalRecord.od.near_sph !== undefined && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setCurrentMedicalRecord((prev) =>
+                                            prev
+                                              ? {
+                                                  ...prev,
+                                                  od: { ...prev.od, near_sph: undefined },
+                                                }
+                                              : prev,
+                                          )
+                                        }
+                                        className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-blue-500/15 hover:bg-blue-500/25 text-blue-600 dark:text-blue-400 cursor-pointer"
+                                        title="Recalculează automat Sfera de Aproape (Distanță + Adiție)"
+                                      >
+                                        Auto
+                                      </button>
                                     )}
-                                  >
-                                    Near SPH
-                                  </label>
+                                  </div>
                                   <input
                                     type="text"
                                     placeholder={calculateNearSphereDefault(
@@ -5535,6 +5664,49 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                 </div>
                               )}
 
+                              {currentMedicalRecord && (() => {
+                                const cylNum = parseFloat(String(currentMedicalRecord.os?.cyl || "").replace(",", "."));
+                                const canTranspose = !isNaN(cylNum) && Math.abs(cylNum) >= 0.01;
+                                return (
+                                  <button
+                                    type="button"
+                                    disabled={!canTranspose}
+                                    onClick={() => {
+                                      setCurrentMedicalRecord((prev) => {
+                                        if (!prev) return prev;
+                                        const transposed = transposeEyeCylinder(prev.os);
+                                        if (!transposed) return prev;
+                                        return {
+                                          ...prev,
+                                          os: transposed,
+                                          diagnostic: updateDiagnosticSuggestions(
+                                            prev.diagnostic || "",
+                                            prev.od,
+                                            transposed,
+                                          ),
+                                        };
+                                      });
+                                    }}
+                                    className={cn(
+                                      "flex items-center justify-start gap-1 px-2 py-1 rounded-lg transition-all border shrink-0 w-fit",
+                                      canTranspose
+                                        ? darkMode
+                                          ? "bg-indigo-950/60 border-indigo-700/60 text-indigo-300 hover:bg-indigo-900 cursor-pointer active:scale-95"
+                                          : "bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100 shadow-sm cursor-pointer active:scale-95"
+                                        : darkMode
+                                          ? "bg-slate-900/30 border-slate-800 text-slate-600 cursor-not-allowed opacity-50"
+                                          : "bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed opacity-60",
+                                    )}
+                                    title={canTranspose ? "Transpunere cilindru (+ ↔ −) pentru OS" : "Introduceți o valoare CYL pentru transpunere"}
+                                  >
+                                    <RefreshCw className="w-3 h-3" />
+                                    <span className="text-[9px] font-black uppercase tracking-wider">
+                                      Transpunere ±
+                                    </span>
+                                  </button>
+                                );
+                              })()}
+
                               {(() => {
                                 const age =
                                   currentMedicalRecord.patientBirthDate
@@ -6136,16 +6308,37 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                               </div>
                               <div className="grid grid-cols-3 gap-2">
                                 <div>
-                                  <label
-                                    className={cn(
-                                      "block text-[10px] font-black uppercase mb-1",
-                                      darkMode
-                                        ? "text-slate-400"
-                                        : "text-slate-600",
+                                  <div className="flex items-center justify-between gap-1 mb-1">
+                                    <label
+                                      className={cn(
+                                        "block text-[10px] font-black uppercase",
+                                        darkMode
+                                          ? "text-slate-400"
+                                          : "text-slate-600",
+                                      )}
+                                    >
+                                      Near SPH
+                                    </label>
+                                    {currentMedicalRecord.os.near_sph !== undefined && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setCurrentMedicalRecord((prev) =>
+                                            prev
+                                              ? {
+                                                  ...prev,
+                                                  os: { ...prev.os, near_sph: undefined },
+                                                }
+                                              : prev,
+                                          )
+                                        }
+                                        className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 cursor-pointer"
+                                        title="Recalculează automat Sfera de Aproape (Distanță + Adiție)"
+                                      >
+                                        Auto
+                                      </button>
                                     )}
-                                  >
-                                    Near SPH
-                                  </label>
+                                  </div>
                                   <input
                                     type="text"
                                     placeholder={calculateNearSphereDefault(

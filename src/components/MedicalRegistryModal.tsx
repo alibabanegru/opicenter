@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { ClipboardList, X, Search, Pencil, Trash2, Loader2, Printer } from "lucide-react";
 import { format } from "date-fns";
@@ -34,6 +34,13 @@ export const MedicalRegistryModal: React.FC<MedicalRegistryModalProps> = ({
 }) => {
   const [docToDelete, setDocToDelete] = useState<any | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(60);
+
+  useEffect(() => {
+    if (isOpen) {
+      setVisibleCount(60);
+    }
+  }, [isOpen, registrySearchQuery]);
   return (
     <AnimatePresence>
       {isOpen && (
@@ -61,8 +68,11 @@ export const MedicalRegistryModal: React.FC<MedicalRegistryModalProps> = ({
                   <ClipboardList className="w-6 h-6 text-blue-500" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold font-sans tracking-tight">
-                    Registru Evidență Documente Medicale
+                  <h2 className="text-xl font-bold font-sans tracking-tight flex items-center gap-2">
+                    <span>Registru Evidență Documente Medicale</span>
+                    <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                      {filteredRegistryDocs.length}
+                    </span>
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400 font-semibold mt-0.5">
                     Evidența oficială a documentelor adeverință, referat, raport și certificat medical eliberate pacienților de clinică.
@@ -127,7 +137,7 @@ export const MedicalRegistryModal: React.FC<MedicalRegistryModalProps> = ({
                       );
                     }
 
-                    return filteredDocs.map((docRec, idx) => {
+                    return filteredDocs.slice(0, visibleCount).map((docRec, idx) => {
                       const docLabels: Record<string, string> = {
                         adeverinta: "Adeverință Medicală",
                         referat: "Referat Medical",
@@ -238,6 +248,17 @@ export const MedicalRegistryModal: React.FC<MedicalRegistryModalProps> = ({
                   })()}
                 </tbody>
               </table>
+              {filteredRegistryDocs.length > visibleCount && (
+                <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-center bg-slate-50/70 dark:bg-slate-900/60">
+                  <button
+                    type="button"
+                    onClick={() => setVisibleCount((prev) => prev + 60)}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-xs"
+                  >
+                    Încarcă mai multe ({filteredRegistryDocs.length - visibleCount} rămase)
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Back controls inside modal */}

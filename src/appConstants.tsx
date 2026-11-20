@@ -435,6 +435,7 @@ export interface GlassesOrder {
   total: number;
   advance: number;
   balance: number;
+  paymentMethod?: "numerar" | "card" | "transfer" | "mixt" | "";
   deliveryDate: string;
   nearDeliveryDate?: string;
   isUrgent: boolean;

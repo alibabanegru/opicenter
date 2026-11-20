@@ -50,6 +50,7 @@ import {
   removeUndefined,
   safeParseDate,
   safeFormatDate,
+  escapeCsvField,
 } from "../appConstants";
 import {
   cleanWhatsAppPhone,
@@ -108,6 +109,7 @@ export interface OrdersModalProps {
   onPrintWorkshopTicket?: (order: any, patient: any) => void;
   hasLoadedFullMedicalRecords?: boolean;
   onLoadFullMedicalRecords?: () => Promise<any>;
+  logActivity?: (action: string, details: string) => Promise<void> | void;
 }
 
 export const OrdersModal: React.FC<OrdersModalProps> = ({
@@ -154,6 +156,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   setBulkDeleteMode: propSetBulkDeleteMode,
   hasLoadedFullMedicalRecords,
   onLoadFullMedicalRecords,
+  logActivity,
 }) => {
   const usersList = availableUsers && availableUsers.length > 0
     ? availableUsers
@@ -212,6 +215,20 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   );
   const [statsView, setStatsView] = useState<"general" | "items">("general");
   const [ordersSellerFilter, setOrdersSellerFilter] = useState<string>("all");
+  const [onlyOverdueFilter, setOnlyOverdueFilter] = useState<boolean>(false);
+  const [visibleOrdersLimit, setVisibleOrdersLimit] = useState<number>(50);
+  const [visibleStatsOrdersLimit, setVisibleStatsOrdersLimit] = useState<number>(50);
+
+  React.useEffect(() => {
+    setVisibleOrdersLimit(50);
+    if (ordersTab !== "in-progress") {
+      setOnlyOverdueFilter(false);
+    }
+  }, [ordersTab, ordersSearchQuery, patientOrdersSearchQuery, ordersSellerFilter, onlyOverdueFilter, isOpen]);
+
+  React.useEffect(() => {
+    setVisibleStatsOrdersLimit(50);
+  }, [statsYear, statsMonth, ordersSellerFilter, isOpen]);
 
   const [internalSelectedDeletedOrders, setInternalSelectedDeletedOrders] = useState<string[]>([]);
   const selectedDeletedOrders = propSelectedDeletedOrders !== undefined ? propSelectedDeletedOrders : internalSelectedDeletedOrders;
@@ -398,12 +415,19 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
           }
 
           try {
-            await addDoc(collection(db, "activityLogs"), {
-              action: "Trimitere Notificare WhatsApp Comandă Ochelari",
-              details: `Trimis alertă WhatsApp pacient ${order.patientName || data.patientName || ""} (Comanda #${order.orderNumber || "fără număr"}).`,
-              user: notifierName,
-              timestamp: nowIso,
-            });
+            if (logActivity) {
+              await logActivity(
+                "Trimitere Notificare WhatsApp Comandă Ochelari",
+                `Trimis alertă WhatsApp pacient ${order.patientName || data.patientName || ""} (Comanda #${order.orderNumber || "fără număr"}).`,
+              );
+            } else {
+              await addDoc(collection(db, "activityLogs"), {
+                action: "Trimitere Notificare WhatsApp Comandă Ochelari",
+                details: `Trimis alertă WhatsApp pacient ${order.patientName || data.patientName || ""} (Comanda #${order.orderNumber || "fără număr"}).`,
+                user: notifierName,
+                timestamp: nowIso,
+              });
+            }
           } catch (logErr) {
             console.warn("Log activity error:", logErr);
           }
@@ -561,12 +585,19 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
           }
 
           try {
-            await addDoc(collection(db, "activityLogs"), {
-              action: "Trimitere Notificare SMS Comandă Ochelari",
-              details: `Trimis SMS către ${info.phone} pentru pacient ${selectedSmsOrder?.patientName || data.patientName || ""} (Comanda #${info.orderNumber}). Mesaj: "${info.message.slice(0, 50)}..."`,
-              user: notifierName,
-              timestamp: nowIso,
-            });
+            if (logActivity) {
+              await logActivity(
+                "Trimitere Notificare SMS Comandă Ochelari",
+                `Trimis SMS către ${info.phone} pentru pacient ${selectedSmsOrder?.patientName || data.patientName || ""} (Comanda #${info.orderNumber}). Mesaj: "${info.message.slice(0, 50)}..."`,
+              );
+            } else {
+              await addDoc(collection(db, "activityLogs"), {
+                action: "Trimitere Notificare SMS Comandă Ochelari",
+                details: `Trimis SMS către ${info.phone} pentru pacient ${selectedSmsOrder?.patientName || data.patientName || ""} (Comanda #${info.orderNumber}). Mesaj: "${info.message.slice(0, 50)}..."`,
+                user: notifierName,
+                timestamp: nowIso,
+              });
+            }
           } catch (logErr) {
             console.warn("Log activity error:", logErr);
           }
@@ -847,6 +878,21 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
       ).length;
   }, [medicalRecords]);
 
+  const overdueInProgressCount = useMemo(() => {
+    const todayStart = startOfDay(new Date());
+    return (medicalRecords || [])
+      .flatMap((r) => [
+        ...(r.orderHistory || []),
+        ...(r.glassesOrder ? [r.glassesOrder] : []),
+      ])
+      .filter((o, idx, arr) => {
+        if (o.isDeleted || o.status === "completed" || !o.deliveryDate) return false;
+        if (arr.findIndex((x) => x.orderNumber === o.orderNumber) !== idx) return false;
+        const dDate = safeParseDate(o.deliveryDate);
+        return dDate ? differenceInCalendarDays(dDate, todayStart) < 0 : false;
+      }).length;
+  }, [medicalRecords]);
+
   const handleCollectRemainingBalance = async (order: any, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     const currentTotal = Number(order.total || 0);
@@ -1052,11 +1098,21 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
           ordersSellerFilter === "all" ||
           order.sellerId === ordersSellerFilter;
 
+        const overdueMatch =
+          ordersTab !== "in-progress" ||
+          !onlyOverdueFilter ||
+          (() => {
+            if (order.status === "completed" || order.isDeleted || !order.deliveryDate) return false;
+            const dDate = safeParseDate(order.deliveryDate);
+            return dDate ? differenceInCalendarDays(dDate, startOfDay(new Date())) < 0 : false;
+          })();
+
         return (
           matchesOrderNum &&
           matchesPatient &&
           matchesTab &&
-          sellerMatch
+          sellerMatch &&
+          overdueMatch
         );
       })
       .sort((a, b) => {
@@ -1078,6 +1134,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
     patientOrdersSearchQuery,
     ordersTab,
     ordersSellerFilter,
+    onlyOverdueFilter,
   ]);
 
   const filteredStatsOrders = useMemo(() => {
@@ -1388,6 +1445,34 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                     </button>
                   )}
                 </div>
+                {ordersTab === "in-progress" && overdueInProgressCount > 0 && (
+                  <div className="flex items-center justify-between gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setOnlyOverdueFilter((prev) => !prev)}
+                      className={cn(
+                        "px-3.5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all border flex items-center gap-2 cursor-pointer shadow-xs",
+                        onlyOverdueFilter
+                          ? "bg-rose-600 border-rose-600 text-white shadow-rose-500/20"
+                          : darkMode
+                            ? "bg-rose-950/30 border-rose-800/60 text-rose-300 hover:bg-rose-950/60"
+                            : "bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100",
+                      )}
+                    >
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                      <span>Doar Întârziate ({overdueInProgressCount})</span>
+                    </button>
+                    {onlyOverdueFilter && (
+                      <button
+                        type="button"
+                        onClick={() => setOnlyOverdueFilter(false)}
+                        className="text-xs font-bold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 underline cursor-pointer"
+                      >
+                        Arată toate comenzile în lucru
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
@@ -1848,6 +1933,164 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                               </div>
                             </div>
 
+                            {/* Registru Incasari Azi & Cash vs Card + Export CSV Centralizator */}
+                            {(() => {
+                              const todayKey = format(new Date(), "yyyy-MM-dd");
+                              const todayOrders = filteredStatsOrders.filter((o) => {
+                                const cDay = (o.createdAt || "").slice(0, 10);
+                                const bDay = (o.balanceCollectedAt || "").slice(0, 10);
+                                return cDay === todayKey || bDay === todayKey;
+                              });
+                              const todayCollected = todayOrders.reduce(
+                                (sum, o) => sum + Number(o.advance || 0),
+                                0,
+                              );
+
+                              const cashSum = filteredStatsOrders
+                                .filter((o) => o.paymentMethod === "numerar")
+                                .reduce((s, o) => s + Number(o.advance || 0), 0);
+                              const cashCount = filteredStatsOrders.filter(
+                                (o) => o.paymentMethod === "numerar",
+                              ).length;
+                              const cardSum = filteredStatsOrders
+                                .filter((o) => o.paymentMethod === "card")
+                                .reduce((s, o) => s + Number(o.advance || 0), 0);
+                              const cardCount = filteredStatsOrders.filter(
+                                (o) => o.paymentMethod === "card",
+                              ).length;
+                              const transferSum = filteredStatsOrders
+                                .filter((o) => o.paymentMethod === "transfer")
+                                .reduce((s, o) => s + Number(o.advance || 0), 0);
+                              const transferCount = filteredStatsOrders.filter(
+                                (o) => o.paymentMethod === "transfer",
+                              ).length;
+                              const unspecSum = filteredStatsOrders
+                                .filter((o) => !o.paymentMethod)
+                                .reduce((s, o) => s + Number(o.advance || 0), 0);
+                              const unspecCount = filteredStatsOrders.filter(
+                                (o) => !o.paymentMethod,
+                              ).length;
+
+                              const handleExportStatsCsv = () => {
+                                const headers = [
+                                  "Nr. Comandă",
+                                  "Pacient",
+                                  "Telefon",
+                                  "Data Comandă",
+                                  "Termen Livrare",
+                                  "Tip Comandă",
+                                  "Metodă Plată",
+                                  "Vânzător",
+                                  "Total (RON)",
+                                  "Încasat (RON)",
+                                  "Rest de Plată (RON)",
+                                  "Status",
+                                ];
+                                const rows = filteredStatsOrders.map((o) => {
+                                  const patient = medicalRecords.find(
+                                    (p) =>
+                                      p.glassesOrder?.orderNumber === o.orderNumber ||
+                                      (p.orderHistory || []).some((h) => h.orderNumber === o.orderNumber),
+                                  );
+                                  const totalVal = Number(o.total || 0);
+                                  const advVal = Number(o.advance || 0);
+                                  const balVal = Math.max(0, totalVal - advVal);
+                                  const pmLabel =
+                                    o.paymentMethod === "numerar"
+                                      ? "Numerar"
+                                      : o.paymentMethod === "card"
+                                        ? "Card"
+                                        : o.paymentMethod === "transfer"
+                                          ? "Transfer"
+                                          : "Nespecificat";
+                                  const stLabel =
+                                    o.status === "completed"
+                                      ? "Finalizată"
+                                      : o.status === "ready_for_pickup"
+                                        ? "Gata de ridicare"
+                                        : "În lucru";
+                                  return [
+                                    o.orderNumber || "",
+                                    patient?.patientName || "Anonim",
+                                    patient?.patientPhone || "",
+                                    safeFormatDate(o.createdAt || o.deliveryDate, "dd.MM.yyyy"),
+                                    safeFormatDate(o.deliveryDate, "dd.MM.yyyy"),
+                                    o.orderType || "",
+                                    pmLabel,
+                                    o.sellerName || "",
+                                    totalVal.toFixed(2),
+                                    advVal.toFixed(2),
+                                    balVal.toFixed(2),
+                                    stLabel,
+                                  ]
+                                    .map(escapeCsvField)
+                                    .join(",");
+                                });
+                                const csvContent = "\uFEFF" + [headers.map(escapeCsvField).join(","), ...rows].join("\r\n");
+                                const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+                                const url = URL.createObjectURL(blob);
+                                const link = document.createElement("a");
+                                link.href = url;
+                                link.download = `centralizator_comenzi_${statsYear}_${statsMonth === 0 ? "tot_anul" : String(statsMonth).padStart(2, "0")}.csv`;
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
+                                URL.revokeObjectURL(url);
+                              };
+
+                              return (
+                                <div
+                                  className={cn(
+                                    "p-4 rounded-2xl border space-y-3",
+                                    darkMode
+                                      ? "bg-slate-800/80 border-slate-700"
+                                      : "bg-slate-50 border-slate-200",
+                                  )}
+                                >
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div>
+                                      <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                        Registru Încasări (Numerar vs. Card & Azi)
+                                      </h4>
+                                      <p className="text-xs font-bold text-slate-600 dark:text-slate-300 mt-0.5">
+                                        Azi ({format(new Date(), "dd.MM.yyyy")}):{" "}
+                                        <span className="text-emerald-600 dark:text-emerald-400 font-black">
+                                          {todayCollected.toFixed(2)} RON
+                                        </span>{" "}
+                                        ({todayOrders.length} comenzi)
+                                      </p>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={handleExportStatsCsv}
+                                      className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-sm cursor-pointer transition-all"
+                                    >
+                                      <Download className="w-3.5 h-3.5" />
+                                      Export CSV Centralizator
+                                    </button>
+                                  </div>
+                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                                    <div className={cn("p-3 rounded-xl border", darkMode ? "bg-slate-900/60 border-slate-700" : "bg-white border-slate-200")}>
+                                      <div className="text-[10px] font-black uppercase text-emerald-600 dark:text-emerald-400">Numerar ({cashCount})</div>
+                                      <div className="text-base font-black text-slate-800 dark:text-white">{cashSum.toFixed(2)} RON</div>
+                                    </div>
+                                    <div className={cn("p-3 rounded-xl border", darkMode ? "bg-slate-900/60 border-slate-700" : "bg-white border-slate-200")}>
+                                      <div className="text-[10px] font-black uppercase text-blue-600 dark:text-blue-400">Card ({cardCount})</div>
+                                      <div className="text-base font-black text-slate-800 dark:text-white">{cardSum.toFixed(2)} RON</div>
+                                    </div>
+                                    <div className={cn("p-3 rounded-xl border", darkMode ? "bg-slate-900/60 border-slate-700" : "bg-white border-slate-200")}>
+                                      <div className="text-[10px] font-black uppercase text-indigo-600 dark:text-indigo-400">Transfer ({transferCount})</div>
+                                      <div className="text-base font-black text-slate-800 dark:text-white">{transferSum.toFixed(2)} RON</div>
+                                    </div>
+                                    <div className={cn("p-3 rounded-xl border", darkMode ? "bg-slate-900/60 border-slate-700" : "bg-white border-slate-200")}>
+                                      <div className="text-[10px] font-black uppercase text-slate-400">Nespecificat ({unspecCount})</div>
+                                      <div className="text-base font-black text-slate-600 dark:text-slate-300">{unspecSum.toFixed(2)} RON</div>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
                             {/* Monthly Breakdown (Only if full year selected) */}
                             {statsMonth === 0 && (
                               <div
@@ -2016,8 +2259,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                 Listă Comenzi Perioadă
                               </h3>
                               <div className="space-y-2">
-                                {filteredStatsOrders
-                                  .slice(0, 50)
+                                {[...filteredStatsOrders]
                                   .sort(
                                     (a, b) =>
                                       new Date(
@@ -2027,6 +2269,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                         a.createdAt || a.deliveryDate,
                                       ).getTime(),
                                   )
+                                  .slice(0, visibleStatsOrdersLimit)
                                   .map((order, oIdx) => {
                                     const patient = medicalRecords.find(
                                       (p) =>
@@ -2250,10 +2493,21 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                       </div>
                                     );
                                   })}
-                                {filteredStatsOrders.length > 50 && (
-                                  <p className="text-center text-[10px] text-slate-400 font-bold uppercase italic">
-                                    Se afișează doar ultimele 50 de comenzi...
-                                  </p>
+                                {filteredStatsOrders.length > visibleStatsOrdersLimit && (
+                                  <div className="pt-2 flex justify-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => setVisibleStatsOrdersLimit((prev) => prev + 50)}
+                                      className={cn(
+                                        "px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider border transition-all cursor-pointer",
+                                        darkMode
+                                          ? "bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700"
+                                          : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm",
+                                      )}
+                                    >
+                                      Încarcă mai multe ({filteredStatsOrders.length - visibleStatsOrdersLimit} rămase)
+                                    </button>
+                                  </div>
                                 )}
                               </div>
                             </div>
@@ -2425,7 +2679,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                           </p>
                         </div>
                       ) : (
-                        filteredOrders.map((order, idx) => {
+                        filteredOrders.slice(0, visibleOrdersLimit).map((order, idx) => {
                           const diffDays =
                             order.status !== "completed" &&
                             !order.isDeleted &&
@@ -2635,7 +2889,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                                 {isOverdue && (
                                   <span className="text-[9px] font-extrabold uppercase tracking-wider text-rose-700 dark:text-rose-300 bg-rose-500/15 dark:bg-rose-900/40 border border-rose-300/60 dark:border-rose-700/60 px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
                                     <AlertTriangle className="w-2.5 h-2.5 text-rose-600 dark:text-rose-400 shrink-0" />
-                                    Termen depășit
+                                    Termen depășit ({Math.abs(diffDays!)} {Math.abs(diffDays!) === 1 ? "zi" : "zile"})
                                   </span>
                                 )}
                                 {isDueToday && (
@@ -3087,6 +3341,22 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                         </div>
                       );
                     })
+                  )}
+                  {filteredOrders.length > visibleOrdersLimit && (
+                    <div className="pt-3 flex justify-center">
+                      <button
+                        type="button"
+                        onClick={() => setVisibleOrdersLimit((prev) => prev + 50)}
+                        className={cn(
+                          "px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider border transition-all cursor-pointer",
+                          darkMode
+                            ? "bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700"
+                            : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm",
+                        )}
+                      >
+                        Încarcă mai multe ({filteredOrders.length - visibleOrdersLimit} rămase)
+                      </button>
+                    </div>
                   )}
                 </>
               )}

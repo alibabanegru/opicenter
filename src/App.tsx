@@ -9,6 +9,8 @@ import { RescheduleInfoModal } from "./components/RescheduleInfoModal";
 import { DeleteConfirmationModals } from "./components/DeleteConfirmationModals";
 import { WhatsAppModal } from "./components/WhatsAppModal";
 import { FrameModal } from "./components/FrameModal";
+import { FramePickerModal } from "./components/FramePickerModal";
+import { ReceptionAlertsBanner } from "./components/ReceptionAlertsBanner";
 import { OrderTypeSelectionModal } from "./components/OrderTypeSelectionModal";
 import { MedicalRegistryModal } from "./components/MedicalRegistryModal";
 import { PhoneEditModal } from "./components/PhoneEditModal";
@@ -1229,8 +1231,7 @@ export default function App() {
       !profile ||
       (profile.role !== "admin" &&
         profile.role !== "frontdesk" &&
-        profile.role !== "seller" &&
-        profile.role !== "tv")
+        profile.role !== "seller")
     ) {
       setReceptionAlerts([]);
       return;
@@ -1307,45 +1308,43 @@ export default function App() {
     }
   }, [receptionAlerts, nowTick, dismissedAlertIds]);
 
+  const fetchBannedEmailsOnce = useCallback(async () => {
+    try {
+      const snapshot = await getDocs(collection(db, "banned_emails"));
+      const list = snapshot.docs.map((d) => ({
+        id: d.id,
+        ...d.data(),
+      })) as any[];
+
+      const mainAdminBan = list.find(
+        (b) => b.email?.toLowerCase() === "alibabamosu@gmail.com",
+      );
+      if (mainAdminBan) {
+        deleteDoc(doc(db, "banned_emails", mainAdminBan.id)).catch((err) => {
+          console.error(
+            "Eroare la deblocarea automata a adminului principal:",
+            err,
+          );
+        });
+      }
+      const filteredList = list.filter(
+        (b) => b.email?.toLowerCase() !== "alibabamosu@gmail.com",
+      );
+      setBannedEmails(filteredList);
+    } catch (error: any) {
+      if (!error?.message?.toLowerCase().includes("quota")) {
+        console.error("Error fetching banned emails:", error);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     if (!googleUser) {
       setBannedEmails([]);
       return;
     }
-
-    const unsub = onSnapshot(
-      collection(db, "banned_emails"),
-      (snapshot) => {
-        const list = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as any[];
-
-        const mainAdminBan = list.find(
-          (b) => b.email.toLowerCase() === "alibabamosu@gmail.com",
-        );
-        if (mainAdminBan) {
-          deleteDoc(doc(db, "banned_emails", mainAdminBan.id)).catch((err) => {
-            console.error(
-              "Eroare la deblocarea automata a adminului principal:",
-              err,
-            );
-          });
-        }
-        const filteredList = list.filter(
-          (b) => b.email.toLowerCase() !== "alibabamosu@gmail.com",
-        );
-        setBannedEmails(filteredList);
-      },
-      (error) => {
-        if (!error.message?.toLowerCase().includes("quota")) {
-          console.error("Error fetching banned emails:", error);
-        }
-      }
-    );
-
-    return () => unsub();
-  }, [googleUser]);
+    fetchBannedEmailsOnce();
+  }, [googleUser?.uid, googleUser?.email, fetchBannedEmailsOnce]);
 
   const banEmailAddress = async (
     emailToBan: string,
@@ -1365,11 +1364,13 @@ export default function App() {
       );
       if (alreadyBanned) return;
 
-      await addDoc(collection(db, "banned_emails"), {
+      const entry = {
         email: emailLower,
         blockedAt: new Date().toISOString(),
         reason,
-      });
+      };
+      const docRef = await addDoc(collection(db, "banned_emails"), entry);
+      setBannedEmails((prev) => [{ id: docRef.id, ...entry }, ...prev]);
     } catch (err) {
       console.error("Error banning email:", err);
     }
@@ -1378,6 +1379,7 @@ export default function App() {
   const unbanEmailAddress = async (bannedId: string) => {
     try {
       await deleteDoc(doc(db, "banned_emails", bannedId));
+      setBannedEmails((prev) => prev.filter((b) => b.id !== bannedId));
     } catch (err) {
       console.error("Error unbanning email:", err);
     }
@@ -2829,43 +2831,7 @@ export default function App() {
       updateOrder(updates);
     }
 
-    if (qty > 0 && item.id) {
-      try {
-        let finalQty = 0;
-        await runTransaction(db, async (transaction) => {
-          const frameRef = doc(db, "frame_stock", item.id);
-          const snap = await transaction.get(frameRef);
-          if (!snap.exists()) {
-            throw new Error("Rama nu a fost găsită în baza de date.");
-          }
-          const actualDbQty = Number(snap.data().quantity) || 0;
-          if (actualDbQty <= 0) {
-            throw new Error("Stocul a fost deja epuizat de către un alt utilizator.");
-          }
-          finalQty = actualDbQty - 1;
-          transaction.update(frameRef, {
-            quantity: finalQty,
-            updatedAt: new Date().toISOString(),
-          });
-        });
-
-        // Actualizare sincronizată în starea locală
-        setFrameStockList((prev) =>
-          prev.map((f) => (f.id === item.id ? { ...f, quantity: finalQty } : f))
-        );
-        await logActivity(
-          "Diminuare Stoc Ramă (Comandă)",
-          `Selectată rama "${displayCode}" pentru comanda de ochelari. Stoc diminuat cu 1 buc. (Stoc rămas: ${finalQty} buc.)`
-        );
-      } catch (err: any) {
-        console.error("Eroare tranzacție stoc ramă în Firestore:", err);
-        if (err?.message?.includes("epuizat")) {
-          alert(`⚠️ ATENȚIE: Rama "${displayCode}" figurează cu STOC 0 în baza de date!`);
-        } else {
-          handleFirestoreError(err, OperationType.WRITE, "frame_stock");
-        }
-      }
-    } else {
+    if (qty <= 0) {
       alert(
         `⚠️ ATENȚIE: Rama "${displayCode}" figurează cu STOC 0!\n\nA fost adăugată la comandă, dar stocul este epuizat. Vă rugăm să nu uitați să o re-adăugați în stoc când o veți primi.`
       );
@@ -2874,6 +2840,68 @@ export default function App() {
     setFramePickerTarget(null);
     setFramePickerSearch("");
   };
+
+  const handleCloseFramePicker = useCallback(() => {
+    setFramePickerTarget(null);
+  }, []);
+
+  const handleDismissAlert = useCallback((alertId: string) => {
+    setDismissedAlertIds((prev) => [...prev, alertId]);
+  }, []);
+
+  const handleOpenRecordFromAlert = useCallback(
+    (alertItem: any) => {
+      const record = medicalRecords.find((r) => r.id === alertItem.patientId);
+      if (record) {
+        const apt = appointments.find(
+          (a) =>
+            a.patientName === record.patientName &&
+            a.patientPhone === record.patientPhone,
+        );
+        setCurrentMedicalRecord(checkAndRestoreDraftForRecord(record, true));
+        setActiveAppointment(apt || null);
+        setActivePrescriptionIndex(null);
+        setActiveOrderIndex(null);
+        setIsMedicalRecordModalOpen(true);
+      }
+    },
+    [medicalRecords, appointments],
+  );
+
+  const handleOpenNewOrderFromAlert = useCallback(
+    (alertItem: any) => {
+      const record =
+        medicalRecords.find((r) => r.id === alertItem.patientId) ||
+        medicalRecords.find(
+          (r) =>
+            r.patientName &&
+            alertItem.patientName &&
+            r.patientName.toLowerCase().trim() ===
+              alertItem.patientName.toLowerCase().trim(),
+        );
+      if (record) {
+        const apt = appointments.find(
+          (a) =>
+            a.patientName === record.patientName &&
+            a.patientPhone === record.patientPhone,
+        );
+        setCurrentMedicalRecord(normalizeMedicalRecordShape(record));
+        setActiveAppointment(apt || null);
+        setActivePrescriptionIndex(null);
+        setActiveOrderIndex(null);
+        setIsOrderTypeSelectionModalOpen(true);
+      } else {
+        setPatientName(alertItem.patientName || "");
+        setPatientPhone((alertItem.patientPhone || "").replace(/[^0-9]/g, ""));
+        setPatientAge(alertItem.patientAge?.toString() || "");
+        setFaraTelefon(!alertItem.patientPhone);
+        setHasStoredPhone(!!alertItem.patientPhone);
+        setBookingError(null);
+        setIsNewOrderPatientModalOpen(true);
+      }
+    },
+    [medicalRecords, appointments],
+  );
 
   const auditFilteredLogs = useMemo(() => {
     return activityLogs.filter((log) => {
@@ -6566,7 +6594,7 @@ export default function App() {
     string | null
   >(null);
 
-  const [, setLoginLockData] = useState<{
+  const [loginLockData, setLoginLockData] = useState<{
     failedAttempts: number;
     blockedUntil: number;
   }>({ failedAttempts: 0, blockedUntil: 0 });
@@ -8272,7 +8300,7 @@ export default function App() {
   useEffect(() => {
     const activeUid = profile?.uid;
     const activeRole = profile?.role;
-    if (!activeUid || activeRole === "patient") return;
+    if (!activeUid || activeRole === "patient" || activeRole === "tv") return;
 
     const unsubCurrentProfile = onSnapshot(
       doc(db, "users", activeUid),
@@ -8374,6 +8402,8 @@ export default function App() {
   useEffect(() => {
     if (profile?.role !== "admin" || !isConfigModalOpen || configActiveTab !== "settings") return;
 
+    fetchBannedEmailsOnce();
+
     const q = query(
       collection(db, "connection_logs"),
       orderBy("timestamp", "desc"),
@@ -8414,58 +8444,79 @@ export default function App() {
     if (!profile || (profile.role !== "admin" && profile.role !== "frontdesk")) return;
     const todayStr = format(new Date(), "yyyy-MM-dd");
     if (lastPrunedConfigDayRef.current === todayStr) return;
+
+    const hasPastDates = configs.some(
+      (cfg) =>
+        (cfg.customActiveDates || []).some((cItem) => cItem.date < todayStr) ||
+        (cfg.activeSaturdays || []).some((dateStr) => dateStr < todayStr),
+    );
+    if (!hasPastDates) {
+      lastPrunedConfigDayRef.current = todayStr;
+      return;
+    }
+
     try {
       if (localStorage.getItem("clinic_configs_pruned_day") === todayStr) {
         lastPrunedConfigDayRef.current = todayStr;
         return;
       }
     } catch {}
-    lastPrunedConfigDayRef.current = todayStr;
-    try {
-      localStorage.setItem("clinic_configs_pruned_day", todayStr);
-    } catch {}
 
-    configs.forEach(async (cfg) => {
-      let customChanged = false;
-      let cleanedCustom = cfg.customActiveDates || [];
+    const staggerMs = 2000 + Math.floor(Math.random() * 3000);
+    const timerId = setTimeout(() => {
+      try {
+        if (localStorage.getItem("clinic_configs_pruned_day") === todayStr) {
+          lastPrunedConfigDayRef.current = todayStr;
+          return;
+        }
+        localStorage.setItem("clinic_configs_pruned_day", todayStr);
+      } catch {}
+      lastPrunedConfigDayRef.current = todayStr;
 
-      if (cfg.customActiveDates && cfg.customActiveDates.length > 0) {
-        cleanedCustom = cfg.customActiveDates.filter((cItem) => {
-          const dateStr = cItem.date;
-          if (dateStr < todayStr) {
-            customChanged = true;
-            return false;
-          }
-          return true;
-        });
-      }
+      configs.forEach(async (cfg) => {
+        let customChanged = false;
+        let cleanedCustom = cfg.customActiveDates || [];
 
-      let satChanged = false;
-      let cleanedSat = cfg.activeSaturdays || [];
-      if (cfg.activeSaturdays && cfg.activeSaturdays.length > 0) {
-        cleanedSat = cfg.activeSaturdays.filter((dateStr) => {
-          if (dateStr < todayStr) {
-            satChanged = true;
-            return false;
-          }
-          return true;
-        });
-      }
+        if (cfg.customActiveDates && cfg.customActiveDates.length > 0) {
+          cleanedCustom = cfg.customActiveDates.filter((cItem) => {
+            const dateStr = cItem.date;
+            if (dateStr < todayStr) {
+              customChanged = true;
+              return false;
+            }
+            return true;
+          });
+        }
 
-      if (customChanged || satChanged) {
-        try {
-          const updates: any = {};
-          if (customChanged) updates.customActiveDates = cleanedCustom;
-          if (satChanged) updates.activeSaturdays = cleanedSat;
-          const targetDocId = cfg.doctorId || cfg.id;
-          await setDoc(doc(db, "configs", targetDocId), updates, { merge: true });
-        } catch (err: any) {
-          if (!err?.message?.toLowerCase().includes("quota")) {
-            console.error("Error auto-pruning past doctor dates:", err);
+        let satChanged = false;
+        let cleanedSat = cfg.activeSaturdays || [];
+        if (cfg.activeSaturdays && cfg.activeSaturdays.length > 0) {
+          cleanedSat = cfg.activeSaturdays.filter((dateStr) => {
+            if (dateStr < todayStr) {
+              satChanged = true;
+              return false;
+            }
+            return true;
+          });
+        }
+
+        if (customChanged || satChanged) {
+          try {
+            const updates: any = {};
+            if (customChanged) updates.customActiveDates = cleanedCustom;
+            if (satChanged) updates.activeSaturdays = cleanedSat;
+            const targetDocId = cfg.doctorId || cfg.id;
+            await setDoc(doc(db, "configs", targetDocId), updates, { merge: true });
+          } catch (err: any) {
+            if (!err?.message?.toLowerCase().includes("quota")) {
+              console.error("Error auto-pruning past doctor dates:", err);
+            }
           }
         }
-      }
-    });
+      });
+    }, staggerMs);
+
+    return () => clearTimeout(timerId);
   }, [configs, profile?.role]);
 
   // One-time automatic consolidation of any legacy random-ID configs to canonical doctorId IDs
@@ -9161,17 +9212,22 @@ export default function App() {
 
       // Direct fetch of user document from Firestore to guarantee freshest password
       let freshPass = user.pass;
+      let existingUserDocData: any = null;
       try {
         const userDocSnap = await getDoc(doc(db, "users", user.id));
         if (userDocSnap.exists()) {
           const uData = userDocSnap.data();
+          existingUserDocData = uData;
           if (uData.pass) {
             freshPass = uData.pass;
           }
         } else if (user.id === "admin" || user.role === "admin") {
           const adminDocSnap = await getDoc(doc(db, "users", "admin"));
-          if (adminDocSnap.exists() && adminDocSnap.data()?.pass) {
-            freshPass = adminDocSnap.data()?.pass;
+          if (adminDocSnap.exists()) {
+            existingUserDocData = adminDocSnap.data();
+            if (existingUserDocData?.pass) {
+              freshPass = existingUserDocData.pass;
+            }
           }
         }
       } catch (docErr) {
@@ -9219,16 +9275,24 @@ export default function App() {
 
       if (isValidPassword) {
         if (isAdminAccount) {
-          // Guarantee Firestore users doc sync for administrator
-          setDoc(
-            doc(db, "users", user.id || "admin"),
-            {
-              name: user.name || "Administrator Sistem",
-              role: "admin",
-              pass: freshPass || "Popescu123",
-            },
-            { merge: true }
-          ).catch(() => {});
+          const targetAdminName = user.name || "Administrator Sistem";
+          const targetAdminPass = freshPass || "Popescu123";
+          const adminNeedsSync =
+            !existingUserDocData ||
+            existingUserDocData.name !== targetAdminName ||
+            existingUserDocData.role !== "admin" ||
+            existingUserDocData.pass !== targetAdminPass;
+          if (adminNeedsSync) {
+            setDoc(
+              doc(db, "users", user.id || "admin"),
+              {
+                name: targetAdminName,
+                role: "admin",
+                pass: targetAdminPass,
+              },
+              { merge: true }
+            ).catch(() => {});
+          }
         }
         const newProfile: UserProfile = {
           uid: selectedLoginUser,
@@ -9237,13 +9301,15 @@ export default function App() {
           color: ROLE_COLORS[user.role],
         };
 
-        // Reset failed login attempts on successful login
+        // Reset failed login attempts on successful login (only write Firestore if non-zero)
         const emailKey = (googleUser?.email || auth.currentUser?.email || "unknown").toLowerCase().replace(/[^a-z0-9]/g, "_");
         const updatedLock = { failedAttempts: 0, blockedUntil: 0 };
         setLoginLockData(updatedLock);
-        setDoc(doc(db, "settings", `login_lock_${emailKey}`), updatedLock, { merge: true }).catch((dbErr) =>
-          console.error("Error resetting login lock status:", dbErr)
-        );
+        if (loginLockData.failedAttempts !== 0 || loginLockData.blockedUntil !== 0) {
+          setDoc(doc(db, "settings", `login_lock_${emailKey}`), updatedLock, { merge: true }).catch((dbErr) =>
+            console.error("Error resetting login lock status:", dbErr)
+          );
+        }
         localStorage.setItem(`clinic_login_failed_attempts_${emailKey}`, "0");
         localStorage.setItem(`clinic_login_blocked_until_${emailKey}`, "0");
 
@@ -22769,378 +22835,16 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 pb-8">
         {/* Reception Alerts Popups */}
-        {activeAlerts.length > 0 && (
-          <div className="mb-3 space-y-2.5">
-            {activeAlerts.map((alert, alertIdx) => {
-                const recDetails = [];
-                const patientRecord = medicalRecords.find((r) => r.id === alert.patientId);
-                const prescriptions = patientRecord?.prescriptionHistory || [];
-                const latestPresc = prescriptions[0];
-                const od = latestPresc?.od || patientRecord?.od;
-                const os = latestPresc?.os || patientRecord?.os;
-                const clOd = latestPresc?.cl_od || patientRecord?.cl_od;
-                const clOs = latestPresc?.cl_os || patientRecord?.cl_os;
-
-                if (alert.glasses) {
-                  const formatEye = (eye: any) => {
-                    if (!eye) return "";
-                    const parts = [];
-                    if (eye.sph) {
-                      const val = parseFloat(eye.sph);
-                      parts.push(`${!isNaN(val) && val > 0 && !String(eye.sph).startsWith("+") ? "+" : ""}${eye.sph} SF`);
-                    }
-                    if (eye.cyl) {
-                      const val = parseFloat(eye.cyl);
-                      parts.push(`${!isNaN(val) && val > 0 && !String(eye.cyl).startsWith("+") ? "+" : ""}${eye.cyl} CIL`);
-                    }
-                    if (eye.axis) parts.push(`${eye.axis}°`);
-                    if (eye.add) {
-                      const val = parseFloat(eye.add);
-                      parts.push(`Ad: ${!isNaN(val) && val > 0 && !String(eye.add).startsWith("+") ? "+" : ""}${eye.add}`);
-                    }
-                    if (eye.prism) parts.push(`Pr: ${eye.prism}${eye.base ? ` Bază ${eye.base}` : ""}`);
-                    return parts.length > 0 ? parts.join(" ") : "";
-                  };
-                  const odStr = formatEye(od);
-                  const osStr = formatEye(os);
-                  const recommendedLens = latestPresc?.lensType || patientRecord?.lensType || "";
-                  
-                  let glassesInfo = "Ochelari";
-                  if (odStr || osStr) {
-                    glassesInfo += ` (OD: ${odStr || "—"} / OS: ${osStr || "—"})`;
-                  }
-                  if (recommendedLens) {
-                    glassesInfo += ` | Recomandat: ${recommendedLens}`;
-                  }
-                  recDetails.push(glassesInfo);
-
-                  // Detalii Ochelari Semidistanță dacă sunt activați
-                  const intermediateActive = !!(latestPresc ? latestPresc.intermediate_enabled : patientRecord?.intermediate_enabled);
-                  const interOd = latestPresc ? latestPresc.od : patientRecord?.od;
-                  const interOs = latestPresc ? latestPresc.os : patientRecord?.os;
-                  const hasInterVals = !!(interOd?.intermediate_sph || interOs?.intermediate_sph);
-
-                  if (intermediateActive && hasInterVals) {
-                    const formatInterEye = (sph?: string, cyl?: string, axis?: string) => {
-                      if (!sph && !cyl) return "";
-                      const parts = [];
-                      if (sph) {
-                        const val = parseFloat(sph);
-                        parts.push(`${!isNaN(val) && val > 0 && !String(sph).startsWith("+") ? "+" : ""}${sph} SF`);
-                      }
-                      if (cyl) {
-                        const val = parseFloat(cyl);
-                        parts.push(`${!isNaN(val) && val > 0 && !String(cyl).startsWith("+") ? "+" : ""}${cyl} CIL`);
-                      }
-                      if (axis) parts.push(`${axis}°`);
-                      return parts.join(" ");
-                    };
-
-                    const interOdStr = formatInterEye(interOd?.intermediate_sph, interOd?.intermediate_cyl, interOd?.intermediate_axis);
-                    const interOsStr = formatInterEye(interOs?.intermediate_sph, interOs?.intermediate_cyl, interOs?.intermediate_axis);
-                    const interDist = latestPresc?.intermediate_distance || patientRecord?.intermediate_distance || "";
-
-                    let interInfo = "👓 Semidistanță";
-                    if (interDist) interInfo += ` (${interDist})`;
-                    if (interOdStr || interOsStr) {
-                      interInfo += `: OD: ${interOdStr || "—"} / OS: ${interOsStr || "—"}`;
-                    }
-                    recDetails.push(interInfo);
-                  }
-                }
-                if (alert.contactLenses) {
-                  const formatEyeCL = (cl: any) => {
-                    if (!cl) return "";
-                    const parts = [];
-                    if (cl.sph) {
-                      const val = parseFloat(cl.sph);
-                      parts.push(`${!isNaN(val) && val > 0 && !String(cl.sph).startsWith("+") ? "+" : ""}${cl.sph} SF`);
-                    }
-                    if (cl.cyl) {
-                      const val = parseFloat(cl.cyl);
-                      parts.push(`${!isNaN(val) && val > 0 && !String(cl.cyl).startsWith("+") ? "+" : ""}${cl.cyl} CIL`);
-                    }
-                    if (cl.axis) parts.push(`${cl.axis}°`);
-                    if (cl.base) parts.push(`BC: ${cl.base}`);
-                    if (cl.radius) parts.push(`DIA: ${cl.radius}`);
-                    if (cl.brand) parts.push(cl.brand);
-                    if (cl.wearingType) parts.push(cl.wearingType);
-                    return parts.length > 0 ? parts.join(" ") : "";
-                  };
-                  const getCLType = (cl: any) => {
-                    if (!cl) return "";
-                    if (cl.cyl && parseFloat(cl.cyl) !== 0) {
-                      return "Torică";
-                    }
-                    return "Sferică";
-                  };
-                  const odStr = formatEyeCL(clOd);
-                  const osStr = formatEyeCL(clOs);
-                  const types = [clOd && getCLType(clOd), clOs && getCLType(clOs)].filter(Boolean);
-                  const uniqueTypes = Array.from(new Set(types));
-                  const typeLabel = uniqueTypes.length > 0 ? uniqueTypes.join("/") : "";
-                  
-                  let clInfo = "Lentile contact";
-                  if (odStr || osStr) {
-                    clInfo += ` (${typeLabel ? `Tip: ${typeLabel} | ` : ""}OD: ${odStr || "—"} / OS: ${osStr || "—"})`;
-                  }
-                  recDetails.push(clInfo);
-                }
-                if (alert.treatment) {
-                  const lines = alert.treatment.split("\n").map((l) => l.trim()).filter(Boolean);
-                  const meds: string[] = [];
-                  for (const line of lines) {
-                    if (
-                      line.toLowerCase().includes("medicamentele se administreaza") ||
-                      line.toLowerCase().includes("ordinea prescrisa")
-                    ) {
-                      continue;
-                    }
-                    let name = line.replace(/^[^a-zA-Z0-9ăâîșțĂÂÎȘȚ]+/g, "").trim();
-                    if (!name) continue;
-
-                    const delimiters = ["(", "[", " - ", " – ", " — ", ":", ","];
-                    for (const delim of delimiters) {
-                      if (name.includes(delim)) {
-                        name = name.split(delim)[0].trim();
-                      }
-                    }
-
-                    const keywords = [
-                      "comprimatele",
-                      "capsulele",
-                      "picăturile",
-                      "picaturile",
-                      "se administrează",
-                      "se administreaza",
-                      "administrează",
-                      "administreaza",
-                      "se aplică",
-                      "se aplica",
-                      "nu necesită",
-                      "nu necesita",
-                      "mod de",
-                      "se dizolvă",
-                      "se dizolva",
-                      "pot fi",
-                      "mestecate",
-                      "dizolvate",
-                      "in gura",
-                      "în gură",
-                      "fara apa",
-                      "fără apă",
-                      "1 pic",
-                      "2 pic",
-                      "3 pic",
-                      "1 caps",
-                      "1 tb",
-                      "1 cp",
-                      "1 comp",
-                      "se pun"
-                    ];
-
-                    for (const keyword of keywords) {
-                      const lowerName = name.toLowerCase();
-                      const idx = lowerName.indexOf(keyword);
-                      if (idx !== -1) {
-                        name = name.substring(0, idx).trim();
-                      }
-                    }
-
-                    name = name.replace(/[-:,;]+$/, "").trim();
-
-                    if (name) {
-                      meds.push(name);
-                    }
-                  }
-                  if (meds.length > 0) {
-                    recDetails.push(`Tratament: ${meds.join(", ")}`);
-                  } else {
-                    recDetails.push(`Tratament: ${alert.treatment}`);
-                  }
-                }
-
-                return (
-                  <div
-                    key={`reception-alert-${alert.id || 'alert'}-${alertIdx}`}
-                    className={cn(
-                      "py-2.5 px-4 rounded-xl border border-l-4 border-l-rose-600 flex items-center gap-3 shadow-xs relative overflow-hidden",
-                      darkMode
-                        ? "bg-rose-950/25 border-rose-900/50 text-rose-100"
-                        : "bg-rose-50/60 border-rose-200 text-rose-950",
-                    )}
-                  >
-                    <div className="p-1.5 rounded-lg bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400 shrink-0">
-                      <AlertTriangle className="w-4 h-4" />
-                    </div>
-
-                    <div className="flex-1 min-w-0 pr-8 flex items-center gap-x-3 gap-y-1.5 flex-wrap text-xs font-medium">
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="font-extrabold text-xs uppercase tracking-wide">
-                          {alert.patientName}
-                        </span>
-                        {/* Open Patient Record/Fisa Icon Button */}
-                        {profile?.role !== "tv" && (
-                          <button
-                            onClick={() => {
-                              const record = medicalRecords.find((r) => r.id === alert.patientId);
-                              if (record) {
-                                const apt = appointments.find(
-                                  (a) =>
-                                    a.patientName === record.patientName &&
-                                    a.patientPhone === record.patientPhone
-                                );
-                                setCurrentMedicalRecord(checkAndRestoreDraftForRecord(record, true));
-                                setActiveAppointment(apt || null);
-                                setActivePrescriptionIndex(null);
-                                setActiveOrderIndex(null);
-                                setIsMedicalRecordModalOpen(true);
-                              }
-                            }}
-                            className="p-1 rounded bg-blue-500 hover:bg-blue-600 text-white transition-colors flex items-center justify-center shadow-sm shrink-0 hover:scale-105 active:scale-95 cursor-pointer"
-                            title="Deschide fișă pacient"
-                          >
-                            <FileText className="w-3 h-3" />
-                          </button>
-                        )}
-                        {/* Quick New Glasses Order Icon Button: Only admin, frontdesk, seller (not tv, not doctor) */}
-                        {!isDoctor && profile?.role !== "tv" && (
-                          <button
-                            onClick={() => {
-                              const record =
-                                medicalRecords.find((r) => r.id === alert.patientId) ||
-                                medicalRecords.find(
-                                  (r) =>
-                                    r.patientName &&
-                                    alert.patientName &&
-                                    r.patientName.toLowerCase().trim() ===
-                                      alert.patientName.toLowerCase().trim()
-                                );
-                              if (record) {
-                                const apt = appointments.find(
-                                  (a) =>
-                                    a.patientName === record.patientName &&
-                                    a.patientPhone === record.patientPhone
-                                );
-                                setCurrentMedicalRecord(normalizeMedicalRecordShape(record));
-                                setActiveAppointment(apt || null);
-                                setActivePrescriptionIndex(null);
-                                setActiveOrderIndex(null);
-                                setIsOrderTypeSelectionModalOpen(true);
-                              } else {
-                                setPatientName(alert.patientName || "");
-                                setPatientPhone((alert.patientPhone || "").replace(/[^0-9]/g, ""));
-                                setPatientAge(alert.patientAge?.toString() || "");
-                                setFaraTelefon(!alert.patientPhone);
-                                setHasStoredPhone(!!alert.patientPhone);
-                                setBookingError(null);
-                                setIsNewOrderPatientModalOpen(true);
-                              }
-                            }}
-                            className="p-1 rounded bg-emerald-500 hover:bg-emerald-600 text-white transition-colors flex items-center justify-center shadow-sm shrink-0 hover:scale-105 active:scale-95 cursor-pointer"
-                            title="Deschide Comandă Nouă Ochelari"
-                          >
-                            <Glasses className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                      {alert.patientAge && (
-                        <span className="px-1.5 py-0.5 rounded-full bg-red-200/60 dark:bg-red-900/60 text-[10px] font-bold text-red-800 dark:text-red-300 shrink-0">
-                          {alert.patientAge} ani
-                        </span>
-                      )}
-
-                      <span className="text-red-300 dark:text-red-800 hidden md:inline">|</span>
-
-                      <div className="flex items-center gap-1 flex-wrap">
-                        <span className="font-extrabold uppercase tracking-wider text-[9px] text-red-600 dark:text-red-400">
-                          Recomandări prescrise:
-                        </span>
-                        <span className="font-semibold text-xs flex items-center gap-x-1.5 flex-wrap">
-                          {recDetails.length === 0 ? (
-                            "Fără recomandări specifice"
-                          ) : (
-                            recDetails.map((detail, idx) => {
-                              const isOchelari = detail === "Ochelari";
-                              return (
-                                <span key={idx} className="flex items-center gap-1">
-                                  {idx > 0 && <span className="text-red-300 dark:text-red-800 mx-1">/</span>}
-                                  <span>{detail}</span>
-                                  {isOchelari && !isDoctor && profile?.role !== "tv" && (
-                                    <button
-                                      onClick={() => {
-                                        const record =
-                                          medicalRecords.find((r) => r.id === alert.patientId) ||
-                                          medicalRecords.find(
-                                            (r) =>
-                                              r.patientName &&
-                                              alert.patientName &&
-                                              r.patientName.toLowerCase().trim() ===
-                                                alert.patientName.toLowerCase().trim()
-                                          );
-                                        if (record) {
-                                          const apt = appointments.find(
-                                            (a) =>
-                                              a.patientName === record.patientName &&
-                                              a.patientPhone === record.patientPhone
-                                          );
-                                          setCurrentMedicalRecord(normalizeMedicalRecordShape(record));
-                                          setActiveAppointment(apt || null);
-                                          setActivePrescriptionIndex(null);
-                                          setActiveOrderIndex(null);
-                                          setIsOrderTypeSelectionModalOpen(true);
-                                        } else {
-                                          setPatientName(alert.patientName || "");
-                                          setPatientPhone((alert.patientPhone || "").replace(/[^0-9]/g, ""));
-                                          setPatientAge(alert.patientAge?.toString() || "");
-                                          setFaraTelefon(!alert.patientPhone);
-                                          setHasStoredPhone(!!alert.patientPhone);
-                                          setBookingError(null);
-                                          setIsNewOrderPatientModalOpen(true);
-                                        }
-                                      }}
-                                      className="p-1 rounded bg-emerald-500 hover:bg-emerald-600 text-white transition-colors flex items-center justify-center shadow-sm shrink-0 hover:scale-105 active:scale-95 cursor-pointer ml-1"
-                                      title="Deschide Comandă Nouă Ochelari"
-                                    >
-                                      <Glasses className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
-                                </span>
-                              );
-                            })
-                          )}
-                        </span>
-                      </div>
-
-                      {alert.examinations && alert.examinations.length > 0 && (
-                        <>
-                          <span className="text-red-300 dark:text-red-800 hidden md:inline">|</span>
-                          <div className="flex items-center gap-1 flex-wrap">
-                            <span className="font-extrabold uppercase tracking-wider text-[9px] text-red-600 dark:text-red-400">
-                              Examinări efectuate:
-                            </span>
-                            <span className="font-semibold text-xs" title={alert.examinations.join(", ")}>
-                              {alert.examinations.join(", ")}
-                            </span>
-                          </div>
-                        </>
-                      )}
-                    </div>
-
-                    {/* Quick Close Button */}
-                    {profile?.role !== "tv" && (
-                      <button
-                        onClick={() => setDismissedAlertIds((prev) => [...prev, alert.id])}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full transition-colors hover:bg-red-100 dark:hover:bg-red-900/30 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-300"
-                        title="Ascunde"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-          </div>
+        {profile?.role !== "tv" && activeAlerts.length > 0 && (
+          <ReceptionAlertsBanner
+            activeAlerts={activeAlerts}
+            medicalRecords={medicalRecords}
+            darkMode={darkMode}
+            isDoctor={isDoctor}
+            onOpenRecordFromAlert={handleOpenRecordFromAlert}
+            onOpenNewOrderFromAlert={handleOpenNewOrderFromAlert}
+            onDismissAlert={handleDismissAlert}
+          />
         )}
 
         {/* Calendar Header */}
@@ -26351,6 +26055,7 @@ export default function App() {
         onPrintWorkshopTicket={(order, patient) => printWorkshopTicket(order, patient)}
         hasLoadedFullMedicalRecords={hasLoadedMedicalRecordsArchive || hasLoadedAllHistory}
         onLoadFullMedicalRecords={() => ensureMedicalRecordsArchiveLoaded(false)}
+        logActivity={logActivity}
       />
 
       {/* Booking Modal */}
@@ -27136,6 +26841,7 @@ export default function App() {
         setIsPhoneEditModalOpen={setIsPhoneEditModalOpen}
         setTempEditPhone={setTempEditPhone}
         setIsGlassesOrderModalOpen={setIsGlassesOrderModalOpen}
+        logActivity={logActivity}
       />
 
       {/* Admin Config & Undo Buttons Container */}
@@ -32820,222 +32526,17 @@ export default function App() {
       </AnimatePresence>
 
       {/* 👓 FRAME STOCK PICKER MODAL (For Glasses Order) */}
-      <AnimatePresence>
-        {framePickerTarget !== null && (
-          <motion.div
-            key="frame-picker-modal-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-[100]"
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className={cn(
-                "rounded-3xl p-6 sm:p-8 w-full max-w-4xl shadow-2xl border flex flex-col h-[88vh] max-h-[88vh]",
-                darkMode
-                  ? "bg-slate-900 border-slate-800 text-slate-100"
-                  : "bg-white border-slate-200 text-slate-900"
-              )}
-            >
-              {/* Modal Header */}
-              <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-4 mb-5">
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-2xl">
-                    <Store className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-xl font-black tracking-tight">
-                        Alege Ramă din Stoc
-                      </h2>
-                      <span className="text-xs px-2.5 py-0.5 rounded-full font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                        {framePickerTarget === "distance"
-                          ? "Ochelari Distanță"
-                          : "Ochelari Aproape"}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Căutați și selectați o ramă din inventarul clinicii. Ramele cu stoc 0 pot fi selectate, dar necesită reaprovizionare.
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setFramePickerTarget(null)}
-                  className={cn(
-                    "p-2 rounded-full transition-colors cursor-pointer",
-                    darkMode
-                      ? "hover:bg-slate-800 text-slate-400 hover:text-white"
-                      : "hover:bg-slate-100 text-slate-500 hover:text-black"
-                  )}
-                >
-                  <X className="w-6 h-6" />
-                </button>
-              </div>
-
-              {/* Controls: Search + Category filter */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-                <div className="sm:col-span-2 relative">
-                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    value={framePickerSearch}
-                    onChange={(e) => setFramePickerSearch(e.target.value)}
-                    placeholder="Caută după Brand, Cod, Producător, Locație..."
-                    className={cn(
-                      "w-full pl-9 pr-8 py-2.5 border-2 rounded-xl outline-none text-xs sm:text-sm font-medium transition-all",
-                      darkMode
-                        ? "bg-slate-800 border-slate-700 text-slate-100 focus:border-emerald-500"
-                        : "bg-slate-50 border-slate-200 text-slate-900 focus:border-emerald-500"
-                    )}
-                  />
-                  {framePickerSearch && (
-                    <button
-                      type="button"
-                      onClick={() => setFramePickerSearch("")}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-sm font-bold"
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-
-                <div>
-                  <select
-                    value={framePickerCategory}
-                    onChange={(e) => setFramePickerCategory(e.target.value)}
-                    className={cn(
-                      "w-full px-3 py-2.5 border-2 rounded-xl outline-none text-xs sm:text-sm font-bold transition-all cursor-pointer",
-                      darkMode
-                        ? "bg-slate-800 border-slate-700 text-slate-100 focus:border-emerald-500"
-                        : "bg-slate-50 border-slate-200 text-slate-900 focus:border-emerald-500"
-                    )}
-                  >
-                    <option value="Toate">Toate Categoriile</option>
-                    <option value="Bărbați">Bărbați</option>
-                    <option value="Dame">Dame</option>
-                    <option value="Copii">Copii</option>
-                    <option value="Unisex">Unisex</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* List of frames */}
-              <div className="overflow-y-auto flex-1 space-y-2.5 pr-1 min-h-[250px]">
-                {filteredPickerStockFrames.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-48 text-center p-6 space-y-2">
-                    <Store className="w-10 h-10 text-slate-400 opacity-40" />
-                    <p className="text-sm font-bold text-slate-500">
-                      Nu s-a găsit nicio ramă în stoc conform filtrelor aplicate.
-                    </p>
-                  </div>
-                ) : (
-                  filteredPickerStockFrames.map((item) => {
-                    const qty = Number(item.quantity) || 0;
-                    const isOutOfStock = qty <= 0;
-                    const fullName = item.brand ? `${item.brand} - ${item.code}` : item.code;
-
-                    return (
-                      <div
-                        key={`picker-frame-${item.id}`}
-                        className={cn(
-                          "p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs",
-                          darkMode
-                            ? "bg-slate-800/60 border-slate-700/60 hover:bg-slate-800"
-                            : "bg-slate-50 border-slate-200 hover:bg-slate-100/80"
-                        )}
-                      >
-                        <div className="flex-1 space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-black text-base text-slate-900 dark:text-slate-100">
-                              {fullName}
-                            </span>
-                            {item.category && (
-                              <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
-                                {item.category}
-                              </span>
-                            )}
-                            {item.location && (
-                              <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1">
-                                📍 Locație: {item.location}
-                              </span>
-                            )}
-                          </div>
-                          {item.manufacturer && (
-                            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                              Producător: {item.manufacturer}
-                            </p>
-                          )}
-                          {item.notes && (
-                            <p className="text-xs italic text-slate-400">
-                              Notă: {item.notes}
-                            </p>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-4 justify-between sm:justify-end shrink-0">
-                          <div className="text-right">
-                            <div className="font-black text-base text-emerald-600 dark:text-emerald-400">
-                              {item.price ? `${item.price} LEI` : "Preț neprecizat"}
-                            </div>
-                            <span
-                              className={cn(
-                                "inline-block text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase mt-0.5 tracking-wider",
-                                qty > 2
-                                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
-                                  : qty > 0
-                                  ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
-                                  : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
-                              )}
-                            >
-                              {qty > 2
-                                ? `Stoc: ${qty} buc.`
-                                : qty > 0
-                                ? `Stoc scăzut: ${qty} buc.`
-                                : `Stoc 0 (Epuizat)`}
-                            </span>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => handleSelectFrameFromStock(item)}
-                            className={cn(
-                              "px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shrink-0 shadow-md active:scale-95",
-                              isOutOfStock
-                                ? "bg-amber-600 hover:bg-amber-700 text-white shadow-amber-600/20"
-                                : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20"
-                            )}
-                          >
-                            <Check className="w-4 h-4" />
-                            <span>{isOutOfStock ? "Alege (Stoc 0)" : "Alege"}</span>
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-
-              {/* Modal Footer */}
-              <div className="pt-4 border-t border-slate-200 dark:border-slate-800 mt-4 flex justify-between items-center text-xs text-slate-500">
-                <span className="font-bold">
-                  {filteredPickerStockFrames.length} rame în lista de stoc
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setFramePickerTarget(null)}
-                  className="px-5 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold transition-all cursor-pointer"
-                >
-                  Închide
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <FramePickerModal
+        framePickerTarget={framePickerTarget}
+        onClose={handleCloseFramePicker}
+        darkMode={darkMode}
+        framePickerSearch={framePickerSearch}
+        setFramePickerSearch={setFramePickerSearch}
+        framePickerCategory={framePickerCategory}
+        setFramePickerCategory={setFramePickerCategory}
+        filteredPickerStockFrames={filteredPickerStockFrames}
+        onSelectFrame={handleSelectFrameFromStock}
+      />
 
       {/* 👓 FRAME STOCK ADD/EDIT MODAL */}
       <FrameModal
