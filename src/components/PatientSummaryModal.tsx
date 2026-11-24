@@ -27,11 +27,16 @@ import {
   MONTHS_RO,
 } from "../appConstants";
 import MyopiaChart from "./MyopiaChart";
+import {
+  getComprehensivePatientAxialData,
+  generateBothMyopiaChartsA4Pdf,
+} from "../services/myopiaPdfService";
 
 interface PatientSummaryModalProps {
   isOpen: boolean;
   onClose: () => void;
   record: MedicalRecord;
+  medicalRecords?: MedicalRecord[];
   medicalDocuments?: any[];
   darkMode?: boolean;
   userRole?: string;
@@ -117,6 +122,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
   isOpen,
   onClose,
   record,
+  medicalRecords = [],
   medicalDocuments = [],
   darkMode = false,
   userRole,
@@ -522,86 +528,16 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
     );
   }, [record, medicalDocuments, sortOrder]);
 
-  // Axial length data for MyopiaChart
+  // Axial length data for MyopiaChart (unified across medicalRecords and medicalDocuments)
   const axialDataOD = useMemo(() => {
     if (!record) return [];
-    const history = record.prescriptionHistory || [];
-    const data = history
-      .filter((item) => item.axialLength?.od)
-      .map((item) => {
-        const age = record.patientBirthDate
-          ? calculateAge(record.patientBirthDate, new Date(item.date))
-          : record.patientAge;
-        return {
-          date: item.date,
-          age: age || 0,
-          axialLength: parseFloat(item.axialLength?.od || "0"),
-          isFromHistory: true,
-          historyItem: item,
-          eye: "OD",
-        };
-      })
-      .filter((item) => (item.axialLength || 0) > 0);
-
-    const currentAL = record.axialLength?.od;
-    if (currentAL) {
-      const currentAge = record.patientBirthDate
-        ? calculateAge(record.patientBirthDate)
-        : record.patientAge;
-      const currentVal = parseFloat(currentAL);
-      if (currentVal > 0 && !data.some((d) => d.age === currentAge)) {
-        data.push({
-          date: record.updatedAt || new Date().toISOString(),
-          age: currentAge || 0,
-          axialLength: currentVal,
-          isFromHistory: false,
-          historyItem: null,
-          eye: "OD",
-        });
-      }
-    }
-    return data.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [record]);
+    return getComprehensivePatientAxialData("OD", record, medicalRecords, medicalDocuments);
+  }, [record, medicalRecords, medicalDocuments]);
 
   const axialDataOS = useMemo(() => {
     if (!record) return [];
-    const history = record.prescriptionHistory || [];
-    const data = history
-      .filter((item) => item.axialLength?.os)
-      .map((item) => {
-        const age = record.patientBirthDate
-          ? calculateAge(record.patientBirthDate, new Date(item.date))
-          : record.patientAge;
-        return {
-          date: item.date,
-          age: age || 0,
-          axialLength: parseFloat(item.axialLength?.os || "0"),
-          isFromHistory: true,
-          historyItem: item,
-          eye: "OS",
-        };
-      })
-      .filter((item) => (item.axialLength || 0) > 0);
-
-    const currentAL = record.axialLength?.os;
-    if (currentAL) {
-      const currentAge = record.patientBirthDate
-        ? calculateAge(record.patientBirthDate)
-        : record.patientAge;
-      const currentVal = parseFloat(currentAL);
-      if (currentVal > 0 && !data.some((d) => d.age === currentAge)) {
-        data.push({
-          date: record.updatedAt || new Date().toISOString(),
-          age: currentAge || 0,
-          axialLength: currentVal,
-          isFromHistory: false,
-          historyItem: null,
-          eye: "OS",
-        });
-      }
-    }
-    return data.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [record]);
+    return getComprehensivePatientAxialData("OS", record, medicalRecords, medicalDocuments);
+  }, [record, medicalRecords, medicalDocuments]);
 
   const hasAxialLengthData = axialDataOD.length > 0 || axialDataOS.length > 0;
 
@@ -1615,7 +1551,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
           {/* Bottom Section: Axial Length Myopia Charts - ONLY IF DATA EXISTS */}
           {hasAxialLengthData && (
             <div className="pt-5 border-t border-slate-200 dark:border-slate-800 space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <div>
                   <h3 className="text-sm font-black uppercase tracking-wider text-slate-800 dark:text-slate-100 flex items-center gap-2">
                     <Activity className="w-4 h-4 text-blue-600 dark:text-blue-400" />
@@ -1625,6 +1561,22 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                     Evoluția percentilelor de creștere a lungimii axiale în timp
                   </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    generateBothMyopiaChartsA4Pdf({
+                      record,
+                      isMyopiaCombinedView: false,
+                      medicalRecords,
+                      medicalDocuments,
+                    })
+                  }
+                  className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer active:scale-95"
+                  title="Descarcă graficele de miopie OD & OS în format PDF A4"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Export Grafice Miopie A4
+                </button>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-1">

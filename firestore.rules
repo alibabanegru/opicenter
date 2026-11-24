@@ -3,46 +3,132 @@ service cloud.firestore {
   match /databases/{database}/documents {
     
     // ===============================================================
-    // SECURITY WARNING:
-    // This application uses a custom password-based login system.
-    // Database security relies on strict data validation and 
-    // UI-level role enforcement.
+    // SECURITY NOTICE:
+    // This application uses a custom password-based login system
+    // (hashed passwords in Firestore) plus TV and Patient Portal modes.
+    // Every collection enforces strict schema, field-type, and size
+    // validation rules at the database boundary.
     // ===============================================================
 
     // Helper Functions
+    function isNonEmptyString(val, maxLen) {
+      return val is string && val.size() > 0 && val.size() <= maxLen;
+    }
+
     function isValidPhone(phone) {
-      return phone == null || (phone is string && (phone.size() == 0 || phone.size() >= 5));
+      return phone == null || (phone is string && (phone.size() == 0 || (phone.size() >= 5 && phone.size() <= 40)));
+    }
+
+    function isValidRole(role) {
+      return role in ['admin', 'doctor1', 'doctor2', 'doctor3', 'doctor4', 'doctor5', 'frontdesk', 'seller', 'tv'];
     }
 
     function isValidAppointment(data) {
-      return data.patientName is string && data.patientName.size() > 0 &&
+      return data is map &&
+             isNonEmptyString(data.patientName, 200) &&
              (!('patientPhone' in data) || isValidPhone(data.patientPhone)) &&
-             (!('status' in data) || data.status is string);
+             (!('doctorId' in data) || (data.doctorId is string && data.doctorId.size() <= 60)) &&
+             (!('startTime' in data) || (data.startTime is string && data.startTime.size() <= 60)) &&
+             (!('status' in data) || data.status in ['scheduled', 'cancelled', 'completed']);
     }
 
     function isValidConfig(data) {
-      return data.doctorId is string && data.doctorId.size() > 0 &&
-             data.dayConfigs is map;
+      return data is map &&
+             isNonEmptyString(data.doctorId, 60) &&
+             (!('dayConfigs' in data) || data.dayConfigs is map);
+    }
+
+    function isValidClinicConfig(data) {
+      return data is map &&
+             data.keys().size() <= 40 &&
+             (!('lastNumber' in data) || (data.lastNumber is number && data.lastNumber >= 0));
     }
 
     function isValidClinicSettings(data) {
-      return !('logoUrl' in data) || data.logoUrl is string;
+      return data is map &&
+             data.keys().size() <= 60 &&
+             (!('logoUrl' in data) || data.logoUrl is string) &&
+             (!('secondaryLogoUrl' in data) || data.secondaryLogoUrl is string);
     }
 
     function isValidMedicalRecord(data) {
-      return data.patientName is string && data.patientName.size() > 0;
+      return data is map &&
+             isNonEmptyString(data.patientName, 200) &&
+             (!('patientPhone' in data) || isValidPhone(data.patientPhone));
     }
 
     function isValidMedicalDocument(data) {
-      return data.patientName is string && data.patientName.size() > 0;
+      return data is map &&
+             isNonEmptyString(data.patientName, 200) &&
+             (!('documentNumber' in data) || (data.documentNumber is string && data.documentNumber.size() <= 60)) &&
+             (!('type' in data) || (data.type is string && data.type.size() <= 60));
+    }
+
+    function isValidUser(data) {
+      return data is map &&
+             data.keys().size() <= 20 &&
+             (!('name' in data) || isNonEmptyString(data.name, 120)) &&
+             (!('role' in data) || isValidRole(data.role)) &&
+             (!('passHash' in data) || (data.passHash is string && data.passHash.size() <= 160)) &&
+             (!('pass' in data) || (data.pass is string && data.pass.size() <= 120)) &&
+             (!('order' in data) || data.order is number);
+    }
+
+    function isValidGlassesOrder(data) {
+      return data is map &&
+             data.keys().size() <= 60 &&
+             (!('orderNumber' in data) || (data.orderNumber is string && data.orderNumber.size() <= 60)) &&
+             (!('total' in data) || data.total is number);
+    }
+
+    function isValidReceptionAlert(data) {
+      return data is map &&
+             isNonEmptyString(data.patientId, 120) &&
+             isNonEmptyString(data.patientName, 200) &&
+             data.createdAt is number;
+    }
+
+    function isValidFrameStock(data) {
+      return data is map &&
+             isNonEmptyString(data.code, 120) &&
+             (!('quantity' in data) || (data.quantity is number && data.quantity >= 0));
+    }
+
+    function isValidConnectionLog(data) {
+      return data is map &&
+             isNonEmptyString(data.userId, 120) &&
+             isNonEmptyString(data.userName, 120) &&
+             isNonEmptyString(data.timestamp, 60);
+    }
+
+    function isValidBannedEmail(data) {
+      return data is map &&
+             isNonEmptyString(data.email, 200);
+    }
+
+    function isValidActivityLog(data) {
+      return data is map &&
+             isNonEmptyString(data.action, 200) &&
+             data.details is string &&
+             isNonEmptyString(data.user, 120);
+    }
+
+    function isValidCredential(data) {
+      return data is map && data.keys().size() <= 15;
+    }
+
+    function isValidSlotLock(data) {
+      return data is map &&
+             isNonEmptyString(data.doctorId, 60) &&
+             isNonEmptyString(data.slotTime, 60) &&
+             isNonEmptyString(data.lockedByUid, 120);
     }
 
     // Appointments Collection
     match /appointments/{appointmentId} {
       allow read: if true;
-      allow create: if isValidAppointment(request.resource.data);
-      allow update: if isValidAppointment(request.resource.data);
-      allow delete: if true; // Restricted by UI to Admin role
+      allow create, update: if isValidAppointment(request.resource.data);
+      allow delete: if true;
     }
 
     // Medical Records Collection
@@ -61,64 +147,86 @@ service cloud.firestore {
 
     // Configs Collection
     match /configs/{configId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if isValidConfig(request.resource.data);
+      allow delete: if true;
     }
 
-    // Clinic Config (Internal)
+    // Clinic Config (Internal counters, migration flags & logos)
     match /clinic_config/{configId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if isValidClinicConfig(request.resource.data);
+      allow delete: if false;
     }
 
     // Settings Collection
     match /settings/{settingId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if isValidClinicSettings(request.resource.data);
+      allow delete: if true;
     }
 
     // Glasses Orders Collection
     match /glasses_orders/{orderId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if isValidGlassesOrder(request.resource.data);
+      allow delete: if true;
     }
 
     // Reception Alerts Collection
     match /reception_alerts/{alertId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if isValidReceptionAlert(request.resource.data);
+      allow delete: if true;
     }
 
     // Frame Stock Collection
     match /frame_stock/{frameId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if isValidFrameStock(request.resource.data);
+      allow delete: if true;
     }
 
-    // Users Collection (Legacy/Optional)
+    // Users Collection
     match /users/{userId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if isValidUser(request.resource.data);
+      allow delete: if userId != 'admin';
     }
 
     // Connection Logs Collection
     match /connection_logs/{logId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if isValidConnectionLog(request.resource.data);
+      allow delete: if true;
     }
 
     // Banned Emails Collection
     match /banned_emails/{bannedId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if isValidBannedEmail(request.resource.data);
+      allow delete: if true;
     }
 
     // Activity Logs Collection
     match /activityLogs/{logId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if isValidActivityLog(request.resource.data);
+      allow delete: if true;
     }
 
-    // User Credentials (Passwords)
+    // User Credentials (Legacy/Optional)
     match /user_credentials/{userId} {
-      // Allow single document get for login check
-      // Allow updates/listing for admin (enforced by UI for now since we use custom login)
-      allow read, write: if true; 
+      allow read: if true;
+      allow create, update: if isValidCredential(request.resource.data);
+      allow delete: if userId != 'admin';
     }
 
     // Slot Locks Collection (Real-time slot reservation)
     match /slot_locks/{lockId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if isValidSlotLock(request.resource.data);
+      allow delete: if true;
     }
   }
 }

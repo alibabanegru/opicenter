@@ -297,29 +297,14 @@ app.post("/api/notify-booking", async (req, res) => {
 // Deprecated local auth and currency proxy routes removed (client uses Firebase Auth and BNRModal fetches directly).
 
 app.post("/api/verify-recaptcha", async (req, res) => {
+  const apiKey = process.env.RECAPTCHA_API_KEY || process.env.GEMINI_API_KEY;
   try {
     const { token, expectedAction } = req.body;
-    if (!token) {
-      return res.status(400).json({ success: false, error: "Missing reCAPTCHA token" });
+    if (!token || typeof token !== "string") {
+      return res.status(400).json({ success: false, valid: false, error: "Missing reCAPTCHA token" });
     }
 
-    // 1. Check if mock token
-    if (
-      token.startsWith("mock_recaptcha_enterprise_token_") ||
-      token === "recaptcha_bypass_success_token_fallback"
-    ) {
-      return res.json({
-        success: true,
-        score: 1.0,
-        valid: true,
-        action: expectedAction || "bypass",
-        reasons: [],
-        mocked: true,
-      });
-    }
-
-    // 2. Google Cloud API Key
-    const apiKey = process.env.RECAPTCHA_API_KEY || process.env.GEMINI_API_KEY;
+    // 1. If no server-side API key is configured, allow local/preview bypass gracefully
     if (!apiKey) {
       return res.json({
         success: true,
@@ -328,6 +313,21 @@ app.post("/api/verify-recaptcha", async (req, res) => {
         action: expectedAction || "bypass",
         reasons: ["api_key_not_configured"],
         bypass: true,
+      });
+    }
+
+    // 2. When API key IS configured, reject simulated/bypass tokens (fail-closed)
+    if (
+      token.startsWith("mock_recaptcha_enterprise_token_") ||
+      token === "recaptcha_bypass_success_token_fallback"
+    ) {
+      return res.status(400).json({
+        success: false,
+        valid: false,
+        score: 0.0,
+        action: expectedAction || "",
+        reasons: ["mock_token_rejected"],
+        error: "Token reCAPTCHA simulat respins în mediul securizat.",
       });
     }
 
@@ -370,13 +370,13 @@ app.post("/api/verify-recaptcha", async (req, res) => {
         simpleErrorMessage = errorText.substring(0, 250);
       }
 
-      return res.json({
-        success: true,
-        score: 0.8,
-        valid: true,
+      return res.status(502).json({
+        success: false,
+        score: 0.0,
+        valid: false,
         action: expectedAction || "",
-        reasons: ["google_api_error_fallback"],
-        apiError: `reCAPTCHA Enterprise verification fallback: ${simpleErrorMessage}`,
+        reasons: ["google_api_error"],
+        error: `reCAPTCHA Enterprise verification failed: ${simpleErrorMessage}`,
       });
     }
 
@@ -384,13 +384,13 @@ app.post("/api/verify-recaptcha", async (req, res) => {
 
     if (assessment.error) {
       const simpleErrorMessage = assessment.error.message || "Unknown internal API error";
-      return res.json({
-        success: true,
-        score: 0.8,
-        valid: true,
+      return res.status(502).json({
+        success: false,
+        score: 0.0,
+        valid: false,
         action: expectedAction || "",
-        reasons: ["google_api_error_payload_fallback"],
-        apiError: `reCAPTCHA Enterprise error payload: ${simpleErrorMessage}`,
+        reasons: ["google_api_error_payload"],
+        error: `reCAPTCHA Enterprise error payload: ${simpleErrorMessage}`,
       });
     }
 
@@ -412,11 +412,11 @@ app.post("/api/verify-recaptcha", async (req, res) => {
     });
   } catch (error: any) {
     console.error("[reCAPTCHA Enterprise Proxy] Critical verification error:", error);
-    res.json({
-      success: true,
-      score: 0.7,
-      valid: true,
-      reasons: ["server_error_fallback"],
+    return res.status(502).json({
+      success: false,
+      score: 0.0,
+      valid: false,
+      reasons: ["server_error"],
       error: error.message || "Internal verification error",
     });
   }
@@ -430,12 +430,19 @@ app.post("/api/send-sms", async (req, res) => {
     const {
       phone,
       message,
-      deviceId = process.env.SMSGATE_DEVICE_ID || "pPJGD0r_iQHoyPpFIGRV9",
+      deviceId = process.env.SMSGATE_DEVICE_ID || "",
       server = process.env.SMSGATE_SERVER || "api.sms-gate.app:443",
-      username = process.env.SMSGATE_USER || "7-6VQI",
-      password = process.env.SMSGATE_PASS || "tjswcokinl5anf",
+      username = process.env.SMSGATE_USER || "",
+      password = process.env.SMSGATE_PASS || "",
       simNumber,
     } = req.body;
+
+    if (!username || !password) {
+      return res.status(503).json({
+        success: false,
+        error: "Gateway SMS neconfigurat: lipsesc variabilele SMSGATE_USER / SMSGATE_PASS.",
+      });
+    }
 
     if (!phone || typeof phone !== "string" || !phone.trim()) {
       return res.status(400).json({ success: false, error: "Numărul de telefon este obligatoriu." });
@@ -512,9 +519,17 @@ app.post("/api/send-sms", async (req, res) => {
 app.get("/api/sms-status", async (req, res) => {
   try {
     const server = (req.query.server as string) || process.env.SMSGATE_SERVER || "api.sms-gate.app:443";
-    const username = (req.query.username as string) || process.env.SMSGATE_USER || "7-6VQI";
-    const password = (req.query.password as string) || process.env.SMSGATE_PASS || "tjswcokinl5anf";
-    const targetDeviceId = (req.query.deviceId as string) || process.env.SMSGATE_DEVICE_ID || "pPJGD0r_iQHoyPpFIGRV9";
+    const username = (req.query.username as string) || process.env.SMSGATE_USER || "";
+    const password = (req.query.password as string) || process.env.SMSGATE_PASS || "";
+    const targetDeviceId = (req.query.deviceId as string) || process.env.SMSGATE_DEVICE_ID || "";
+
+    if (!username || !password) {
+      return res.status(503).json({
+        success: false,
+        connected: false,
+        error: "Gateway SMS neconfigurat: lipsesc variabilele SMSGATE_USER / SMSGATE_PASS.",
+      });
+    }
 
     const cleanHost = server.replace(/:443$/, "").replace(/^https?:\/\//, "");
     const apiUrl = `https://${cleanHost}/3rdparty/v1/devices`;

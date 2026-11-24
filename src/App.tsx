@@ -249,6 +249,8 @@ import {
   SlotLock,
   safeParseDate,
   safeFormatDate,
+  hashPassword,
+  verifyPassword,
 } from "./appConstants";
 import { hasLegacyGlassesOrders, markLegacyGlassesOrdersStatus } from "./utils/legacyOrdersFlag";
 import {
@@ -1704,12 +1706,20 @@ export default function App() {
     let alteCount = 0;
 
     const recordLookupMap = new Map<string, MedicalRecord>();
+    const recordByNameMap = new Map<string, MedicalRecord>();
     for (const r of medicalRecords) {
-      const key = `${r.patientName || ""}__${r.patientPhone || ""}`;
+      const normName = normalizePatientName(r.patientName);
+      const normPhone = normalizePhone(r.patientPhone);
+      const key = `${normName}__${normPhone}`;
       if (!recordLookupMap.has(key)) {
         recordLookupMap.set(key, r);
       }
+      if (normName && !recordByNameMap.has(normName)) {
+        recordByNameMap.set(normName, r);
+      }
     }
+
+    const todayStr = format(new Date(), "yyyy-MM-dd");
 
     appointments.forEach((app) => {
       if (app.status === "cancelled") return;
@@ -1718,9 +1728,10 @@ export default function App() {
 
       if (!app.startTime) return;
       const appDate = new Date(app.startTime);
+      if (isNaN(appDate.getTime())) return;
       const yr = appDate.getFullYear().toString();
       const mo = appDate.getMonth().toString(); // "0" - "11"
-      const dayISO = app.startTime.substring(0, 10); // YYYY-MM-DD
+      const dayISO = format(appDate, "yyyy-MM-dd"); // Local calendar date YYYY-MM-DD
 
       if (adminStatsYear !== "all" && yr !== adminStatsYear) return;
 
@@ -1728,7 +1739,6 @@ export default function App() {
 
       if (adminStatsDay !== "all") {
         if (adminStatsDay === "today") {
-          const todayStr = new Date().toISOString().substring(0, 10);
           if (dayISO !== todayStr) return;
         } else if (dayISO !== adminStatsDay) {
           return;
@@ -1737,19 +1747,26 @@ export default function App() {
 
       totalPatients++;
 
-      const matchingRecord = recordLookupMap.get(
-        `${app.patientName || ""}__${app.patientPhone || ""}`,
-      );
+      const normAppName = normalizePatientName(app.patientName);
+      const normAppPhone = normalizePhone(app.patientPhone);
+      const matchingRecord =
+        recordLookupMap.get(`${normAppName}__${normAppPhone}`) ||
+        (normAppName ? recordByNameMap.get(normAppName) : undefined);
 
       const isControl = !!app.isControl || !!matchingRecord?.isControl;
       const isConsultComplet = !!app.isConsultComplet || !!matchingRecord?.isConsultComplet;
 
-      const hasGlasses = !!matchingRecord?.glassesOrder && (
-        !!matchingRecord.glassesOrder.frameCode ||
-        !!matchingRecord.glassesOrder.total ||
-        (matchingRecord.glassesOrder.od && (!!matchingRecord.glassesOrder.od.sph || !!matchingRecord.glassesOrder.od.cyl)) ||
-        (matchingRecord.glassesOrder.os && (!!matchingRecord.glassesOrder.os.sph || !!matchingRecord.glassesOrder.os.cyl))
-      );
+      const hasValidOrder = (o?: GlassesOrder | null) =>
+        !!o &&
+        !o.isDeleted &&
+        (!!o.frameCode ||
+          !!o.total ||
+          (o.od && (!!o.od.sph || !!o.od.cyl)) ||
+          (o.os && (!!o.os.sph || !!o.os.cyl)));
+
+      const hasGlasses =
+        hasValidOrder(matchingRecord?.glassesOrder) ||
+        (matchingRecord?.orderHistory || []).some((o) => hasValidOrder(o));
 
       const hasTreatment = !!matchingRecord?.treatment?.trim() || !!matchingRecord?.medications?.trim();
 
@@ -2200,10 +2217,28 @@ export default function App() {
   const [hasLoadedAllHistory, setHasLoadedAllHistory] = useState(false);
   const [hasLoadedMedicalRecordsArchive, setHasLoadedMedicalRecordsArchive] = useState(false);
   const [hasLoadedAppointmentsArchive, setHasLoadedAppointmentsArchive] = useState(false);
+  const [hasLoadedAllMedicalDocuments, setHasLoadedAllMedicalDocuments] = useState(false);
+  const [isLoadingAllMedicalDocuments, setIsLoadingAllMedicalDocuments] = useState(false);
+  const [knownGlobalDocCount, setKnownGlobalDocCount] = useState<number>(0);
   const fullArchivePromiseRef = useRef<Promise<{ allApps: Appointment[]; allMeds: MedicalRecord[] } | null> | null>(null);
   const medsArchivePromiseRef = useRef<Promise<MedicalRecord[] | null> | null>(null);
   const appsArchivePromiseRef = useRef<Promise<Appointment[] | null> | null>(null);
+  const docsArchivePromiseRef = useRef<Promise<any[] | null> | null>(null);
   const hasLoadedAllMedicalDocumentsRef = useRef<boolean>(false);
+  const previewDocNumberRef = useRef<string | null>(null);
+
+  const extractMaxDocSuffix = (docs: any[]): number => {
+    let maxNum = 0;
+    for (const d of docs || []) {
+      const numStr = String(d?.documentNumber || "");
+      const m = numStr.match(/-(\d+)$/);
+      if (m) {
+        const parsed = parseInt(m[1], 10);
+        if (!isNaN(parsed) && parsed > maxNum) maxNum = parsed;
+      }
+    }
+    return maxNum;
+  };
 
   const ensureMedicalRecordsArchiveLoaded = useCallback(
     async (silent = true): Promise<MedicalRecord[] | null> => {
@@ -2288,9 +2323,59 @@ export default function App() {
     [hasLoadedAppointmentsArchive, hasLoadedAllHistory, hasLoadedMedicalRecordsArchive, appointments]
   );
 
+  const ensureMedicalDocumentsArchiveLoaded = useCallback(
+    async (silent = true): Promise<any[] | null> => {
+      if (hasLoadedAllMedicalDocumentsRef.current || hasLoadedAllMedicalDocuments) {
+        return medicalDocuments;
+      }
+      if (docsArchivePromiseRef.current) {
+        return docsArchivePromiseRef.current;
+      }
+      if (!silent) {
+        setIsLoadingAllMedicalDocuments(true);
+      }
+      const p = (async () => {
+        try {
+          const docsSnap = await getDocs(collection(db, "medicalDocuments"));
+          const allDocs = docsSnap.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .filter((d: any) => !d.isDeleted);
+          setMedicalDocuments(allDocs);
+          hasLoadedAllMedicalDocumentsRef.current = true;
+          setHasLoadedAllMedicalDocuments(true);
+          const maxNum = Math.max(allDocs.length, extractMaxDocSuffix(allDocs));
+          if (maxNum > 0) {
+            setKnownGlobalDocCount((prev) => Math.max(prev, maxNum));
+          }
+          if (!silent) {
+            setSuccessMessage(`Arhiva documentelor medicale a fost încărcată (${allDocs.length} documente).`);
+          }
+          return allDocs;
+        } catch (e) {
+          console.error("Error loading medicalDocuments archive:", e);
+          if (!silent) {
+            setErrorMessage("Eroare la descărcarea arhivei de documente medicale.");
+          }
+          return null;
+        } finally {
+          docsArchivePromiseRef.current = null;
+          if (!silent) {
+            setIsLoadingAllMedicalDocuments(false);
+          }
+        }
+      })();
+      docsArchivePromiseRef.current = p;
+      return p;
+    },
+    [hasLoadedAllMedicalDocuments]
+  );
+
   const ensureFullArchiveLoaded = useCallback(
     async (silent = true): Promise<{ allApps: Appointment[]; allMeds: MedicalRecord[] } | null> => {
       if (hasLoadedAllHistory) {
+        if (!hasLoadedAllMedicalDocumentsRef.current) {
+          await ensureMedicalDocumentsArchiveLoaded(true);
+        }
         return { allApps: appointments, allMeds: medicalRecords };
       }
       if (fullArchivePromiseRef.current) {
@@ -2304,6 +2389,7 @@ export default function App() {
           const [loadedApps, loadedMeds] = await Promise.all([
             ensureAppointmentsArchiveLoaded(true),
             ensureMedicalRecordsArchiveLoaded(true),
+            ensureMedicalDocumentsArchiveLoaded(true),
           ]);
           if (!loadedApps || !loadedMeds) {
             if (!silent) {
@@ -2332,7 +2418,7 @@ export default function App() {
       fullArchivePromiseRef.current = p;
       return p;
     },
-    [hasLoadedAllHistory, appointments, medicalRecords, ensureAppointmentsArchiveLoaded, ensureMedicalRecordsArchiveLoaded]
+    [hasLoadedAllHistory, appointments, medicalRecords, ensureAppointmentsArchiveLoaded, ensureMedicalRecordsArchiveLoaded, ensureMedicalDocumentsArchiveLoaded]
   );
 
   const searchArchiveByPrefix = useCallback(
@@ -2648,6 +2734,7 @@ export default function App() {
       setMedicalRecords(meds50);
       setMedicalDocuments(docs30);
       hasLoadedAllMedicalDocumentsRef.current = false;
+      setHasLoadedAllMedicalDocuments(false);
       searchedOmniboxQueriesRef.current.clear();
       searchedRegistryQueriesRef.current.clear();
       loadedArchiveMonthsRef.current.clear();
@@ -4387,15 +4474,66 @@ export default function App() {
   };
 
   const [availableUsers, setAvailableUsers] = useState<
-    { id: string; name: string; role: Role; pass?: string; avatar?: string; email?: string; googleEmail?: string; phone?: string; patientPhone?: string; }[]
+    { id: string; name: string; role: Role; pass?: string; passHash?: string; avatar?: string; email?: string; googleEmail?: string; phone?: string; patientPhone?: string; order?: number; }[]
   >(() => {
+    try {
+      const cached = sessionStorage.getItem("clinic_cached_users");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return deduplicateUsers(parsed.map(({ pass: _plainPass, ...rest }: any) => rest));
+        }
+      }
+    } catch {}
     return Object.entries(USERS_DATA).map(([id, u]) => ({
       id,
       name: u.name,
       role: u.role,
-      pass: u.pass,
     }));
   });
+
+  const updateUsersStateAndCache = useCallback(
+    (
+      updater:
+        | typeof availableUsers
+        | ((prev: typeof availableUsers) => typeof availableUsers),
+    ) => {
+      setAvailableUsers((prev) => {
+        const next = typeof updater === "function" ? updater(prev) : updater;
+        const cleanNext = deduplicateUsers(next).map((u) => {
+          if (u.passHash && u.pass !== undefined) {
+            const { pass: _plainPass, ...rest } = u;
+            return rest;
+          }
+          return u;
+        });
+        try {
+          const cacheSafe = cleanNext.map(({ pass: _plainPass, ...rest }) => rest);
+          sessionStorage.setItem("clinic_cached_users", JSON.stringify(cacheSafe));
+        } catch {}
+        return cleanNext;
+      });
+    },
+    [],
+  );
+
+  const refreshUsersFromFirestore = useCallback(async () => {
+    try {
+      const snap = await getDocs(collection(db, "users")).catch(() => null);
+      if (snap && !snap.empty) {
+        const dbUsers = snap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as any[];
+        const cleanUsers = deduplicateUsers(dbUsers);
+        updateUsersStateAndCache(cleanUsers);
+        return cleanUsers;
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.GET, "users");
+    }
+    return null;
+  }, [updateUsersStateAndCache]);
 
   const currentUserAvatar = useMemo(() => {
     if (!profile) return null;
@@ -4570,7 +4708,7 @@ export default function App() {
       );
       let name = doctor ? doctor.name : null;
       if (name?.toLowerCase().includes("ing. optometrist")) {
-        return "ing, Optometrist";
+        return "ing. Optometrist";
       }
       return name;
     }
@@ -4591,7 +4729,7 @@ export default function App() {
         );
         let name = doctor ? doctor.name : null;
         if (name?.toLowerCase().includes("ing. optometrist")) {
-          return "ing, Optometrist";
+          return "ing. Optometrist";
         }
         return name;
       }
@@ -4837,7 +4975,14 @@ export default function App() {
 
     if (customInitialMessage) {
       initialTemplate = "custom";
-      messageText = normalizeRomanianDiacritics(customInitialMessage);
+      let stripDiacriticsPref = false;
+      try {
+        stripDiacriticsPref =
+          localStorage.getItem("clinic_setting_whatsapp_strip_diacritics") === "true";
+      } catch {}
+      messageText = stripDiacriticsPref
+        ? stripDiacritics(customInitialMessage)
+        : normalizeRomanianDiacritics(customInitialMessage);
     } else if (nextApp) {
       initialTemplate = "next_appointment";
       messageText = generateMessageFromTemplate(
@@ -5168,8 +5313,14 @@ export default function App() {
   useEffect(() => {
     if (isConfigModalOpen) {
       syncClinicSettingsFromFirebase(false);
+      setPasswordDrafts({});
+      setEditingUserId(null);
+      refreshUsersFromFirestore();
+    } else {
+      setPasswordDrafts({});
+      setEditingUserId(null);
     }
-  }, [isConfigModalOpen, syncClinicSettingsFromFirebase]);
+  }, [isConfigModalOpen, syncClinicSettingsFromFirebase, refreshUsersFromFirestore]);
 
   const saveTreatmentCategories = async (
     newCategories: Record<
@@ -6057,12 +6208,16 @@ export default function App() {
         newUserName.toLowerCase().replace(/\s+/g, "_") +
         "_" +
         Math.floor(Math.random() * 1000);
-      await setDoc(doc(db, "users", userId), {
-        name: newUserName,
+      const trimmedPass = (newUserPass || "").trim();
+      const passHash = await hashPassword(trimmedPass);
+      const newUserObj = {
+        name: newUserName.trim(),
         role: finalRole,
-        pass: newUserPass,
+        passHash,
         order: availableUsers.length,
-      });
+      };
+      await setDoc(doc(db, "users", userId), newUserObj);
+      updateUsersStateAndCache((prev) => [...prev, { id: userId, ...newUserObj }]);
       setNewUserName("");
       setNewUserPass("");
       setSuccessMessage("Utilizator adăugat cu succes.");
@@ -6147,6 +6302,7 @@ export default function App() {
             advance: currentTotal,
             balance: 0,
             balanceCollectedAt: nowIso,
+            balanceCollectedAmount: restCollected,
             balanceCollectedBy: handlerName,
           };
           history[orderIdx] = updatedOrder;
@@ -6160,6 +6316,7 @@ export default function App() {
             advance: currentTotal,
             balance: 0,
             balanceCollectedAt: nowIso,
+            balanceCollectedAmount: restCollected,
             balanceCollectedBy: handlerName,
           };
           if (!updatedOrder) updatedOrder = updatedMainGlasses;
@@ -6188,6 +6345,7 @@ export default function App() {
                   advance: currentTotal,
                   balance: 0,
                   balanceCollectedAt: nowIso,
+                  balanceCollectedAmount: restCollected,
                   balanceCollectedBy: handlerName,
                   updatedAt: nowIso,
                 });
@@ -6387,6 +6545,7 @@ export default function App() {
     try {
       setLoading(true);
       await deleteDoc(doc(db, "users", userId));
+      updateUsersStateAndCache((prev) => prev.filter((u) => u.id !== userId));
       setUserToDeleteId(null);
       setSuccessMessage("Utilizator șters cu succes.");
     } catch (error) {
@@ -6428,6 +6587,15 @@ export default function App() {
         doc(db, "users", targetUser.id),
         { order: newTargetOrder },
         { merge: true },
+      );
+      updateUsersStateAndCache((prev) =>
+        prev.map((u) =>
+          u.id === currentUser.id
+            ? { ...u, order: newCurrentOrder }
+            : u.id === targetUser.id
+              ? { ...u, order: newTargetOrder }
+              : u,
+        ),
       );
       setSuccessMessage("Ordinea a fost actualizată!");
     } catch (error) {
@@ -6647,7 +6815,6 @@ export default function App() {
         id: "admin",
         name: USERS_DATA.admin?.name || "Administrator",
         role: "admin" as Role,
-        pass: USERS_DATA.admin?.pass || "Popescu123",
       } as any);
     }
 
@@ -7932,37 +8099,150 @@ export default function App() {
 
 
   useEffect(() => {
-    try {
-      if (localStorage.getItem("clinic_users_seeded_v1") === "1") return;
-    } catch {}
     const seedAndCleanupUsers = async () => {
       try {
+        let alreadySeededLocal = false;
+        let alreadyRestoredDoctorPassesLocal = false;
+        let alreadyHashedPasswordsLocal = false;
+        try {
+          alreadySeededLocal = localStorage.getItem("clinic_users_seeded_v1") === "1";
+          alreadyRestoredDoctorPassesLocal =
+            localStorage.getItem("clinic_doctor_passes_restored_v1") === "1";
+          alreadyHashedPasswordsLocal =
+            localStorage.getItem("clinic_password_hashing_migrated_v1") === "1";
+        } catch {}
+
+        if (alreadySeededLocal && alreadyRestoredDoctorPassesLocal && alreadyHashedPasswordsLocal) return;
+
         const clinicDocSnap = await getDoc(doc(db, "clinic_config", "main")).catch(() => null);
-        if (clinicDocSnap && clinicDocSnap.data()?.usersSeeded) {
-          try {
-            localStorage.setItem("clinic_users_seeded_v1", "1");
-          } catch {}
-        } else if (clinicDocSnap && !clinicDocSnap.data()?.usersSeeded) {
-          for (const [id, data] of Object.entries(USERS_DATA)) {
-            const userDocRef = doc(db, "users", id);
+        const clinicData = clinicDocSnap?.data();
+
+        if (!alreadySeededLocal) {
+          if (clinicData?.usersSeeded) {
+            try {
+              localStorage.setItem("clinic_users_seeded_v1", "1");
+            } catch {}
+          } else {
+            const existingUsersSnap = await getDocs(collection(db, "users")).catch(() => null);
+            const existingIds = new Set(existingUsersSnap ? existingUsersSnap.docs.map((d) => d.id) : []);
+
+            for (const [id, data] of Object.entries(USERS_DATA)) {
+              if (existingIds.has(id)) continue;
+              const userDocRef = doc(db, "users", id);
+              const singleSnap = await getDoc(userDocRef).catch(() => null);
+              // Nu suprascrie niciodată un utilizator existent (pentru a nu reseta parola salvată)
+              if (singleSnap && singleSnap.exists()) continue;
+              const passHash = await hashPassword(data.pass);
+              await setDoc(
+                userDocRef,
+                {
+                  name: data.name,
+                  role: data.role,
+                  passHash,
+                },
+                { merge: true },
+              ).catch(() => {});
+            }
             await setDoc(
-              userDocRef,
-              {
-                name: data.name,
-                role: data.role,
-                pass: data.pass,
-              },
+              doc(db, "clinic_config", "main"),
+              { usersSeeded: true },
               { merge: true },
             ).catch(() => {});
+            try {
+              localStorage.setItem("clinic_users_seeded_v1", "1");
+            } catch {}
           }
-          await setDoc(
-            doc(db, "clinic_config", "main"),
-            { usersSeeded: true },
-            { merge: true },
-          ).catch(() => {});
-          try {
-            localStorage.setItem("clinic_users_seeded_v1", "1");
-          } catch {}
+        }
+
+        // Recuperare unică (o singură dată) pentru parolele Dr. Zorila și Dr. Ilie dacă au fost resetate anterior la "123"
+        let restoredAny = false;
+        if (!alreadyRestoredDoctorPassesLocal) {
+          if (clinicData?.doctorPassesRestoredV1) {
+            try {
+              localStorage.setItem("clinic_doctor_passes_restored_v1", "1");
+            } catch {}
+          } else {
+            const usersSnap = await getDocs(collection(db, "users")).catch(() => null);
+            if (usersSnap && !usersSnap.empty) {
+              for (const uDoc of usersSnap.docs) {
+                const uData = uDoc.data();
+                if (typeof uData.passHash === "string" && uData.passHash.startsWith("sha256$")) {
+                  continue;
+                }
+                const currentPass = typeof uData.pass === "string" ? uData.pass.trim() : "";
+                const isOldResetDefault = currentPass === "" || currentPass === "123";
+                if (!isOldResetDefault) continue;
+
+                const nameLower = (uData.name || "").toLowerCase();
+                if (uDoc.id === "zorila" || uData.role === "doctor2" || nameLower.includes("zorila")) {
+                  const passHash = await hashPassword("Zorila123");
+                  await setDoc(doc(db, "users", uDoc.id), { passHash, pass: deleteField() }, { merge: true }).catch(() => {});
+                  restoredAny = true;
+                } else if (uDoc.id === "ilie" || uData.role === "doctor3" || nameLower.includes("ilie")) {
+                  const passHash = await hashPassword("Larisa123");
+                  await setDoc(doc(db, "users", uDoc.id), { passHash, pass: deleteField() }, { merge: true }).catch(() => {});
+                  restoredAny = true;
+                }
+              }
+              await setDoc(
+                doc(db, "clinic_config", "main"),
+                { doctorPassesRestoredV1: true },
+                { merge: true },
+              ).catch(() => {});
+              try {
+                localStorage.setItem("clinic_doctor_passes_restored_v1", "1");
+              } catch {}
+            }
+          }
+        }
+
+        // Migrare unică (o singură dată) a parolelor plaintext rămase către hash SHA-256 cu salt
+        let hashedAny = false;
+        if (!alreadyHashedPasswordsLocal) {
+          if (clinicData?.passwordHashingMigratedV1) {
+            try {
+              localStorage.setItem("clinic_password_hashing_migrated_v1", "1");
+            } catch {}
+          } else {
+            const usersSnap = await getDocs(collection(db, "users")).catch(() => null);
+            if (usersSnap && !usersSnap.empty) {
+              for (const uDoc of usersSnap.docs) {
+                const uData = uDoc.data();
+                const hasValidHash =
+                  typeof uData.passHash === "string" && uData.passHash.startsWith("sha256$");
+                const hasPlain = typeof uData.pass === "string";
+                if (hasValidHash && !hasPlain) continue;
+
+                let nextHash = hasValidHash ? uData.passHash : undefined;
+                if (!nextHash) {
+                  const plainSource =
+                    (typeof uData.pass === "string" && uData.pass.trim()) ||
+                    USERS_DATA[uDoc.id]?.pass ||
+                    (uDoc.id === "admin" || uData.role === "admin" ? "Popescu123" : "123");
+                  nextHash = await hashPassword(plainSource);
+                }
+
+                await setDoc(
+                  doc(db, "users", uDoc.id),
+                  { passHash: nextHash, pass: deleteField() },
+                  { merge: true },
+                ).catch(() => {});
+                hashedAny = true;
+              }
+              await setDoc(
+                doc(db, "clinic_config", "main"),
+                { passwordHashingMigratedV1: true },
+                { merge: true },
+              ).catch(() => {});
+              try {
+                localStorage.setItem("clinic_password_hashing_migrated_v1", "1");
+              } catch {}
+            }
+          }
+        }
+
+        if (restoredAny || hashedAny) {
+          refreshUsersFromFirestore();
         }
       } catch (err: any) {
         if (!err?.message?.toLowerCase().includes("quota")) {
@@ -7971,39 +8251,12 @@ export default function App() {
       }
     };
     seedAndCleanupUsers();
-  }, []);
+  }, [refreshUsersFromFirestore]);
 
   // Sincronizare în timp real (real-time push synchronization) a datelor din Firebase
   useEffect(() => {
-    // 1. Users loader (Point 3.A: Session cache + single fetch - elimină ascultătorul live permanent pentru datele statice ale medicilor/personalului)
-    const loadUsers = async () => {
-      try {
-        const cached = sessionStorage.getItem("clinic_cached_users");
-        if (cached) {
-          try {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setAvailableUsers(parsed);
-            }
-          } catch {}
-        }
-        const snap = await getDocs(collection(db, "users")).catch(() => null);
-        if (snap && !snap.empty) {
-          const dbUsers = snap.docs.map((doc) => ({
-            id: doc.id,
-            ...doc.data(),
-          })) as any[];
-          const cleanUsers = deduplicateUsers(dbUsers);
-          setAvailableUsers(cleanUsers);
-          try {
-            sessionStorage.setItem("clinic_cached_users", JSON.stringify(cleanUsers));
-          } catch {}
-        }
-      } catch (error) {
-        handleFirestoreError(error, OperationType.GET, "users");
-      }
-    };
-    loadUsers();
+    // 1. Users loader
+    refreshUsersFromFirestore();
 
     if (!profile && !standalonePortalBypass) {
       setAppointments([]);
@@ -8149,13 +8402,30 @@ export default function App() {
             const preservedOlder = prev.filter(
               (d: any) => !freshIds.has(d.id)
             );
-            return [...fresh, ...preservedOlder];
+            const mergedDocs = [...fresh, ...preservedOlder];
+            const maxNum = Math.max(mergedDocs.length, extractMaxDocSuffix(mergedDocs));
+            if (maxNum > 0) {
+              setKnownGlobalDocCount((k) => Math.max(k, maxNum));
+            }
+            return mergedDocs;
           });
         },
         (error) => {
           handleFirestoreError(error, OperationType.GET, "medicalDocuments");
         }
       );
+
+      // Citește contorul global de documente medicale pentru numerotare monotonă chiar și în modul Smart Loading 30 zile
+      getDoc(doc(db, "clinic_config", "document_counter"))
+        .then((counterSnap) => {
+          if (counterSnap.exists()) {
+            const lastNum = counterSnap.data()?.lastNumber;
+            if (typeof lastNum === "number" && lastNum > 0) {
+              setKnownGlobalDocCount((prev) => Math.max(prev, lastNum));
+            }
+          }
+        })
+        .catch(() => {});
     }
 
     // 6. Frame Stock (skip listener on TV / patient screens)
@@ -8318,6 +8588,20 @@ export default function App() {
               localStorage.setItem("clinic_user", JSON.stringify(updatedProfile));
             } catch {}
           }
+          if (data.pass !== undefined || data.passHash !== undefined || data.name !== undefined) {
+            updateUsersStateAndCache((prev) =>
+              prev.map((u) =>
+                u.id === activeUid
+                  ? {
+                      ...u,
+                      ...(data.name ? { name: data.name } : {}),
+                      ...(data.passHash !== undefined ? { passHash: data.passHash } : {}),
+                      ...(data.pass !== undefined && !data.passHash ? { pass: data.pass } : {}),
+                    }
+                  : u,
+              ),
+            );
+          }
         } else if (!isFromCache) {
           const roleFallbackIds: Record<string, string> = {
             tv: "tv",
@@ -8332,15 +8616,27 @@ export default function App() {
             : roleFallbackIds[currProfile.role] || null;
 
           if (canonicalId && USERS_DATA[canonicalId]) {
-            setDoc(
-              doc(db, "users", canonicalId),
-              {
-                name: currProfile.displayName || USERS_DATA[canonicalId]?.name || "Utilizator",
-                role: currProfile.role,
-                pass: USERS_DATA[canonicalId]?.pass || "123",
-              },
-              { merge: true }
-            ).catch((e) => console.error("Error auto-creating missing user document:", e));
+            (async () => {
+              try {
+                const canonRef = doc(db, "users", canonicalId);
+                const canonSnap = await getDoc(canonRef);
+                // Creează documentul implicit DOAR dacă nu există deja în Firestore (nu suprascrie parolele modificate)
+                if (!canonSnap.exists()) {
+                  const defaultHash = await hashPassword(USERS_DATA[canonicalId]?.pass || "123");
+                  await setDoc(
+                    canonRef,
+                    {
+                      name: currProfile.displayName || USERS_DATA[canonicalId]?.name || "Utilizator",
+                      role: currProfile.role,
+                      passHash: defaultHash,
+                    },
+                    { merge: true },
+                  );
+                }
+              } catch (e) {
+                console.error("Error checking/creating missing user document:", e);
+              }
+            })();
           }
         }
       },
@@ -9182,12 +9478,12 @@ export default function App() {
             id: "admin",
             name: USERS_DATA.admin?.name || "Administrator",
             role: "admin" as Role,
-            pass: USERS_DATA.admin?.pass || "Popescu123",
           };
         } else if (selectedLoginUser && USERS_DATA[selectedLoginUser]) {
           user = {
             id: selectedLoginUser,
-            ...USERS_DATA[selectedLoginUser],
+            name: USERS_DATA[selectedLoginUser].name,
+            role: USERS_DATA[selectedLoginUser].role,
           };
         }
       }
@@ -9210,23 +9506,38 @@ export default function App() {
       }
       setLoginPermissionError(null);
 
-      // Direct fetch of user document from Firestore to guarantee freshest password
-      let freshPass = user.pass;
+      // Direct fetch of user document from Firestore to guarantee freshest authoritative password/hash
+      let freshPass: string | undefined = undefined;
+      let freshPassHash: string | undefined = undefined;
       let existingUserDocData: any = null;
+      let resolvedDocId = user.id;
       try {
         const userDocSnap = await getDoc(doc(db, "users", user.id));
         if (userDocSnap.exists()) {
           const uData = userDocSnap.data();
           existingUserDocData = uData;
-          if (uData.pass) {
-            freshPass = uData.pass;
+          if (typeof uData.passHash === "string" && uData.passHash.startsWith("sha256$")) {
+            freshPassHash = uData.passHash;
+          }
+          if (typeof uData.pass === "string" && uData.pass.trim() !== "") {
+            freshPass = uData.pass.trim();
           }
         } else if (user.id === "admin" || user.role === "admin") {
           const adminDocSnap = await getDoc(doc(db, "users", "admin"));
           if (adminDocSnap.exists()) {
+            resolvedDocId = "admin";
             existingUserDocData = adminDocSnap.data();
-            if (existingUserDocData?.pass) {
-              freshPass = existingUserDocData.pass;
+            if (
+              typeof existingUserDocData?.passHash === "string" &&
+              existingUserDocData.passHash.startsWith("sha256$")
+            ) {
+              freshPassHash = existingUserDocData.passHash;
+            }
+            if (
+              typeof existingUserDocData?.pass === "string" &&
+              existingUserDocData.pass.trim() !== ""
+            ) {
+              freshPass = existingUserDocData.pass.trim();
             }
           }
         }
@@ -9242,56 +9553,62 @@ export default function App() {
         (user.name && user.name.toLowerCase().includes("admin"));
       const cleanInput = (password || "").trim();
 
-      let isValidPassword = false;
+      const storedHash = freshPassHash || user.passHash;
+      const legacyPlain =
+        freshPass ??
+        (!storedHash
+          ? (
+              user.pass ||
+              USERS_DATA[user.id]?.pass ||
+              (isAdminAccount ? "Popescu123" : "123")
+            ).trim()
+          : undefined);
 
-      if (isAdminAccount) {
-        // Administrator password check: accepts Popescu123, popescu123, 123, freshPass from DB, or USERS_DATA
-        const adminFallbackPass = USERS_DATA.admin?.pass || "Popescu123";
-        isValidPassword =
-          cleanInput === "Popescu123" ||
-          cleanInput === "popescu123" ||
-          cleanInput.toLowerCase() === "popescu123" ||
-          cleanInput === "123" ||
-          (freshPass && cleanInput === freshPass.trim()) ||
-          (freshPass && cleanInput.toLowerCase() === freshPass.trim().toLowerCase()) ||
-          (user.pass && cleanInput === user.pass.trim()) ||
-          (user.pass && cleanInput.toLowerCase() === user.pass.trim().toLowerCase()) ||
-          (adminFallbackPass && cleanInput === adminFallbackPass.trim()) ||
-          (adminFallbackPass && cleanInput.toLowerCase() === adminFallbackPass.trim().toLowerCase());
-      } else {
-        // PERMISSIVE FOR CLINIC STAFF: Doctors, Reception, TV
-        // Allow the standard clinic default password "123"
-        // OR the user's specific password (fresh from DB, cached in user object, or in USERS_DATA)
-        // Both case-sensitive and case-insensitive
-        const customPass = freshPass || user.pass;
-        const fallbackPass = USERS_DATA[user.id]?.pass;
-        isValidPassword =
-          cleanInput === "123" ||
-          (customPass && cleanInput === customPass) ||
-          (customPass && cleanInput.toLowerCase() === customPass.toLowerCase()) ||
-          (fallbackPass && cleanInput === fallbackPass) ||
-          (fallbackPass && cleanInput.toLowerCase() === fallbackPass.toLowerCase());
+      if (freshPassHash && freshPassHash !== user.passHash) {
+        updateUsersStateAndCache((prev) =>
+          prev.map((u) => (u.id === user!.id ? { ...u, passHash: freshPassHash } : u)),
+        );
       }
 
+      const isValidPassword =
+        cleanInput !== "" && (await verifyPassword(cleanInput, storedHash, legacyPlain));
+
       if (isValidPassword) {
+        // Migrare automată în fundal dacă contul folosea încă stocare plaintext sau lipsea hash-ul
+        if (!storedHash || freshPass !== undefined) {
+          const computedHash = storedHash || (await hashPassword(cleanInput));
+          setDoc(
+            doc(db, "users", resolvedDocId || user.id),
+            { passHash: computedHash, pass: deleteField() },
+            { merge: true },
+          ).catch(() => {});
+          updateUsersStateAndCache((prev) =>
+            prev.map((u) => (u.id === user!.id ? { ...u, passHash: computedHash } : u)),
+          );
+        }
+
         if (isAdminAccount) {
           const targetAdminName = user.name || "Administrator Sistem";
-          const targetAdminPass = freshPass || "Popescu123";
+          const hasStoredCred =
+            Boolean(storedHash) ||
+            (typeof existingUserDocData?.pass === "string" &&
+              existingUserDocData.pass.trim() !== "");
           const adminNeedsSync =
             !existingUserDocData ||
             existingUserDocData.name !== targetAdminName ||
             existingUserDocData.role !== "admin" ||
-            existingUserDocData.pass !== targetAdminPass;
+            !hasStoredCred;
           if (adminNeedsSync) {
-            setDoc(
-              doc(db, "users", user.id || "admin"),
-              {
-                name: targetAdminName,
-                role: "admin",
-                pass: targetAdminPass,
-              },
-              { merge: true }
-            ).catch(() => {});
+            const adminPayload: Record<string, any> = {
+              name: targetAdminName,
+              role: "admin",
+            };
+            if (!hasStoredCred) {
+              adminPayload.passHash = await hashPassword(cleanInput || "Popescu123");
+            }
+            setDoc(doc(db, "users", resolvedDocId || "admin"), adminPayload, {
+              merge: true,
+            }).catch(() => {});
           }
         }
         const newProfile: UserProfile = {
@@ -9847,6 +10164,7 @@ export default function App() {
       setShowAdminAppointments(false);
       sessionStorage.removeItem("clinic_user");
       localStorage.removeItem("clinic_user");
+      refreshUsersFromFirestore();
     } catch (err) {
       console.error("Logout error:", err);
     }
@@ -12674,6 +12992,89 @@ export default function App() {
     return true;
   };
 
+  const syncOrderFrameStock = async (orderInput: GlassesOrder): Promise<GlassesOrder> => {
+    const syncedOrder = { ...orderInput };
+    const framesToCheck = [
+      syncedOrder.frameCode,
+      syncedOrder.nearFrameCode,
+    ].filter((c): c is string => typeof c === "string" && Boolean(c.trim()));
+
+    const currentTargetFrameIds: string[] = [];
+    for (const rawCode of framesToCheck) {
+      const cleanCode = rawCode.trim().toLowerCase();
+      const matched = frameStockList.find((f) => {
+        const full = f.brand ? `${f.brand} - ${f.code}` : f.code;
+        const fullMfr = f.manufacturer ? `${f.manufacturer} - ${f.code}` : f.code;
+        return (
+          full.trim().toLowerCase() === cleanCode ||
+          fullMfr.trim().toLowerCase() === cleanCode ||
+          f.code.trim().toLowerCase() === cleanCode
+        );
+      });
+      if (matched && matched.id) {
+        currentTargetFrameIds.push(matched.id);
+      }
+    }
+
+    const prevDeductedFrameIds: string[] = [...(syncedOrder.stockDeductedFrames || [])];
+    // 1. Dacă rama a fost schimbată sau ștearsă din comandă, returnăm stocul (+1)
+    const framesToReturn = prevDeductedFrameIds.filter((id) => !currentTargetFrameIds.includes(id));
+    if (framesToReturn.length > 0) {
+      await returnFrameStockHelper(
+        framesToReturn,
+        `rama modificată/eliminată din comanda #${syncedOrder.orderNumber || ""}`
+      );
+    }
+
+    // 2. Pentru ramele noi care nu au fost încă scăzute, scădem 1 buc din stoc atomic
+    const activeDeductedFrameIds = prevDeductedFrameIds.filter((id) => currentTargetFrameIds.includes(id));
+    for (const targetId of currentTargetFrameIds) {
+      if (!activeDeductedFrameIds.includes(targetId)) {
+        try {
+          let finalQty = 0;
+          let frameBrand = "";
+          let frameCode = "";
+          let deductedSuccess = false;
+
+          await runTransaction(db, async (transaction) => {
+            const frameRef = doc(db, "frame_stock", targetId);
+            const snap = await transaction.get(frameRef);
+            if (!snap.exists()) return;
+            const data = snap.data();
+            frameBrand = data.brand || "";
+            frameCode = data.code || "";
+            const currentDbQty = Number(data.quantity) || 0;
+            if (currentDbQty > 0) {
+              finalQty = currentDbQty - 1;
+              transaction.update(frameRef, {
+                quantity: finalQty,
+                updatedAt: new Date().toISOString(),
+              });
+              deductedSuccess = true;
+            }
+          });
+
+          if (deductedSuccess) {
+            setFrameStockList((prev) =>
+              prev.map((f) => (f.id === targetId ? { ...f, quantity: finalQty } : f))
+            );
+            activeDeductedFrameIds.push(targetId);
+            await logActivity(
+              "Scădere Automată Stoc Ramă",
+              `Scăzut automat 1 buc. din stoc pentru rama "${frameBrand ? frameBrand + " - " : ""}${frameCode || targetId}" la salvarea comenzii #${syncedOrder.orderNumber}. Stoc nou: ${finalQty} buc.`
+            );
+          }
+        } catch (stockErr) {
+          console.error("Eroare tranzacție scădere automată stoc ramă:", stockErr);
+        }
+      }
+    }
+
+    syncedOrder.stockDeductedFrames = activeDeductedFrameIds;
+    syncedOrder.stockDeducted = activeDeductedFrameIds.length > 0;
+    return syncedOrder;
+  };
+
   const finalizeOrder = async () => {
     if (!currentMedicalRecord || !currentMedicalRecord.glassesOrder) {
       setIsGlassesOrderModalOpen(false);
@@ -12689,87 +13090,7 @@ export default function App() {
     setLoading(true);
     try {
       let newHistory = [...(currentMedicalRecord.orderHistory || [])];
-      const currentOrder = { ...currentMedicalRecord.glassesOrder };
-
-      // Găsire rame curente din comandă
-      const framesToCheck = [
-        currentOrder.frameCode,
-        currentOrder.nearFrameCode,
-      ].filter((c): c is string => typeof c === "string" && Boolean(c.trim()));
-
-      const currentTargetFrameIds: string[] = [];
-      for (const rawCode of framesToCheck) {
-        const cleanCode = rawCode.trim().toLowerCase();
-        const matched = frameStockList.find((f) => {
-          const full = f.brand ? `${f.brand} - ${f.code}` : f.code;
-          const fullMfr = f.manufacturer ? `${f.manufacturer} - ${f.code}` : f.code;
-          return (
-            full.trim().toLowerCase() === cleanCode ||
-            fullMfr.trim().toLowerCase() === cleanCode ||
-            f.code.trim().toLowerCase() === cleanCode
-          );
-        });
-        if (matched && matched.id) {
-          currentTargetFrameIds.push(matched.id);
-        }
-      }
-
-      const prevDeductedFrameIds: string[] = [...(currentOrder.stockDeductedFrames || [])];
-      // 1. Dacă rama a fost schimbată sau ștearsă din comandă, returnăm stocul (+1)
-      const framesToReturn = prevDeductedFrameIds.filter((id) => !currentTargetFrameIds.includes(id));
-      if (framesToReturn.length > 0) {
-        await returnFrameStockHelper(
-          framesToReturn,
-          `rama modificată/eliminată din comanda #${currentOrder.orderNumber || ""}`
-        );
-      }
-
-      // 2. Pentru ramele noi care nu au fost încă scăzute, scădem 1 buc din stoc atomic
-      let activeDeductedFrameIds = prevDeductedFrameIds.filter((id) => currentTargetFrameIds.includes(id));
-      for (const targetId of currentTargetFrameIds) {
-        if (!activeDeductedFrameIds.includes(targetId)) {
-          try {
-            let finalQty = 0;
-            let frameBrand = "";
-            let frameCode = "";
-            let deductedSuccess = false;
-
-            await runTransaction(db, async (transaction) => {
-              const frameRef = doc(db, "frame_stock", targetId);
-              const snap = await transaction.get(frameRef);
-              if (!snap.exists()) return;
-              const data = snap.data();
-              frameBrand = data.brand || "";
-              frameCode = data.code || "";
-              const currentDbQty = Number(data.quantity) || 0;
-              if (currentDbQty > 0) {
-                finalQty = currentDbQty - 1;
-                transaction.update(frameRef, {
-                  quantity: finalQty,
-                  updatedAt: new Date().toISOString(),
-                });
-                deductedSuccess = true;
-              }
-            });
-
-            if (deductedSuccess) {
-              setFrameStockList((prev) =>
-                prev.map((f) => (f.id === targetId ? { ...f, quantity: finalQty } : f))
-              );
-              activeDeductedFrameIds.push(targetId);
-              await logActivity(
-                "Scădere Automată Stoc Ramă",
-                `Scăzut automat 1 buc. din stoc pentru rama "${frameBrand ? frameBrand + " - " : ""}${frameCode || targetId}" la salvarea comenzii #${currentOrder.orderNumber}. Stoc nou: ${finalQty} buc.`
-              );
-            }
-          } catch (stockErr) {
-            console.error("Eroare tranzacție scădere automată stoc ramă:", stockErr);
-          }
-        }
-      }
-
-      currentOrder.stockDeductedFrames = activeDeductedFrameIds;
-      currentOrder.stockDeducted = activeDeductedFrameIds.length > 0;
+      const currentOrder = await syncOrderFrameStock({ ...currentMedicalRecord.glassesOrder });
 
       if (activeOrderIndex === null) {
         const hasData =
@@ -12821,6 +13142,20 @@ export default function App() {
             const batch = writeBatch(db);
             snapStandalone.docs.forEach((d) => {
               batch.update(d.ref, removeUndefined({
+                status: currentOrder.status,
+                total: currentOrder.total,
+                advance: currentOrder.advance,
+                balance: currentOrder.balance,
+                paymentMethod: currentOrder.paymentMethod,
+                deliveryDate: currentOrder.deliveryDate,
+                notes: currentOrder.notes,
+                deliveredAt: currentOrder.deliveredAt,
+                deliveredBy: currentOrder.deliveredBy,
+                balanceCollectedAt: currentOrder.balanceCollectedAt,
+                balanceCollectedAmount: currentOrder.balanceCollectedAmount,
+                balanceCollectedBy: currentOrder.balanceCollectedBy,
+                stockDeducted: currentOrder.stockDeducted,
+                stockDeductedFrames: currentOrder.stockDeductedFrames,
                 createdAt: currentOrder.createdAt,
                 orderDate: (currentOrder as any).orderDate || currentOrder.createdAt,
                 updatedAt: new Date().toISOString(),
@@ -15217,7 +15552,46 @@ export default function App() {
     }
   }, [appointments]);
 
-  const exportToPDF = (type: "day" | "week") => {
+  const exportToPDF = async (type: "day" | "week") => {
+    const requiredStart =
+      type === "day"
+        ? startOfDay(selectedDate)
+        : startOfWeek(selectedDate, { weekStartsOn: 1 });
+    const requiredEnd =
+      type === "day"
+        ? addDays(startOfDay(selectedDate), 1)
+        : endOfWeek(selectedDate, { weekStartsOn: 1 });
+
+    let sourceAppointments = appointments;
+    const thirtyDaysCutoff = subDays(startOfDay(new Date()), 30);
+    if (
+      isBefore(requiredStart, thirtyDaysCutoff) &&
+      !hasLoadedAllHistory &&
+      !hasLoadedAppointmentsArchive
+    ) {
+      try {
+        const rangeSnap = await getDocs(
+          query(
+            collection(db, "appointments"),
+            where("startTime", ">=", requiredStart.toISOString()),
+            where("startTime", "<=", requiredEnd.toISOString()),
+          ),
+        );
+        if (!rangeSnap.empty) {
+          const fetched = rangeSnap.docs.map(
+            (d) => ({ id: d.id, ...d.data() }) as Appointment,
+          );
+          const mergedMap = new Map<string, Appointment>();
+          appointments.forEach((a) => mergedMap.set(a.id, a));
+          fetched.forEach((a) => mergedMap.set(a.id, a));
+          sourceAppointments = Array.from(mergedMap.values());
+          setAppointments(sourceAppointments);
+        }
+      } catch (fetchErr) {
+        console.warn("Could not fetch past appointments before PDF export:", fetchErr);
+      }
+    }
+
     const doc = new jsPDF();
 
     const doctorFilter = profile?.role.startsWith("doctor")
@@ -15246,7 +15620,7 @@ export default function App() {
       doctorFilter !== "all" ? 38 : 30,
     );
 
-    const filteredApps = appointments
+    const filteredApps = sourceAppointments
       .filter((app) => {
         const appDate = safeParseDate(app.startTime);
         if (!appDate) return false;
@@ -16354,7 +16728,7 @@ export default function App() {
         );
         let name = doctor ? doctor.name : null;
         if (name?.toLowerCase().includes("ing. optometrist")) {
-          return "ing, Optometrist";
+          return "ing. Optometrist";
         }
         return name;
       }
@@ -16375,7 +16749,7 @@ export default function App() {
           );
           let name = doctor ? doctor.name : null;
           if (name?.toLowerCase().includes("ing. optometrist")) {
-            return "ing, Optometrist";
+            return "ing. Optometrist";
           }
           return name;
         }
@@ -18765,8 +19139,14 @@ export default function App() {
 
       treatmentLines.forEach((line) => {
         const splitLine = doc.splitTextToSize(cleanStr(line), pageWidth - 20);
-        doc.text(splitLine, 10, currentY);
-        currentY += splitLine.length * 5;
+        splitLine.forEach((subLine: string) => {
+          if (currentY + 5 > pageHeight - 18) {
+            doc.addPage();
+            currentY = 15;
+          }
+          doc.text(subLine, 10, currentY);
+          currentY += 5;
+        });
       });
 
       y = currentY;
@@ -18959,7 +19339,12 @@ export default function App() {
 
       defaultDocName = getSigningDoctorDefault(defaultDocName);
 
-      const nextConsecutiveNumber = (medicalDocuments || []).length + 1;
+      const nextConsecutiveNumber =
+        Math.max(
+          knownGlobalDocCount,
+          extractMaxDocSuffix(medicalDocuments),
+          (medicalDocuments || []).length,
+        ) + 1;
       const currentDateStr = format(now, "dd.MM.yyyy");
       const regNumber = `${currentDateStr}-${nextConsecutiveNumber}`;
 
@@ -19074,8 +19459,12 @@ export default function App() {
 
       if (docForCurrentPrescription) {
         setEditingMedicalDocId(docForCurrentPrescription.id);
+        previewDocNumberRef.current = docForCurrentPrescription.documentNumber
+          ? null
+          : regNumber;
       } else {
         setEditingMedicalDocId(null);
+        previewDocNumberRef.current = regNumber;
       }
 
       const lastDocOfSamePatientAndType = [...(medicalDocuments || [])]
@@ -19177,6 +19566,42 @@ export default function App() {
         (isSamePrescription ? prevForm?.correctedIopOs : "") ||
         "";
 
+      const resolvedCnpForDoc =
+        currentMedicalRecord.patientCnp ||
+        activeAppointment?.patientCnp ||
+        targetRecord?.patientCnp ||
+        appointments.find(
+          (a) =>
+            a.patientName &&
+            currentMedicalRecord.patientName &&
+            a.patientName.toLowerCase().trim() ===
+              currentMedicalRecord.patientName.toLowerCase().trim() &&
+            a.patientCnp
+        )?.patientCnp ||
+        (isSamePatient ? patientFormGeneral?.patientCnp : "") ||
+        "";
+
+      const resolvedBirthDateForDoc =
+        currentMedicalRecord.patientBirthDate ||
+        activeAppointment?.patientBirthDate ||
+        targetRecord?.patientBirthDate ||
+        appointments.find(
+          (a) =>
+            a.patientName &&
+            currentMedicalRecord.patientName &&
+            a.patientName.toLowerCase().trim() ===
+              currentMedicalRecord.patientName.toLowerCase().trim() &&
+            a.patientBirthDate
+        )?.patientBirthDate ||
+        (isSamePrescription
+          ? prevForm?.patientBirthDate || prevForm?.birthDate
+          : "") ||
+        (isSamePatient
+          ? patientFormGeneral?.patientBirthDate || patientFormGeneral?.birthDate
+          : "") ||
+        (resolvedCnpForDoc ? getBirthDateFromCNP(resolvedCnpForDoc) || "" : "") ||
+        "";
+
       setDocumentForm({
         patientName:
           currentMedicalRecord.patientName ||
@@ -19222,20 +19647,9 @@ export default function App() {
           currentMedicalRecord.patientSex ||
           (isSamePatient ? patientFormGeneral?.patientSex : "") ||
           "",
-        patientCnp:
-          currentMedicalRecord.patientCnp ||
-          activeAppointment?.patientCnp ||
-          targetRecord?.patientCnp ||
-          appointments.find(
-            (a) =>
-              a.patientName &&
-              currentMedicalRecord.patientName &&
-              a.patientName.toLowerCase().trim() ===
-                currentMedicalRecord.patientName.toLowerCase().trim() &&
-              a.patientCnp
-          )?.patientCnp ||
-          (isSamePatient ? patientFormGeneral?.patientCnp : "") ||
-          "",
+        patientCnp: resolvedCnpForDoc,
+        patientBirthDate: resolvedBirthDateForDoc,
+        birthDate: resolvedBirthDateForDoc,
         patientSeries:
           currentMedicalRecord.patientSeries ||
           (isSamePatient ? patientFormGeneral?.patientSeries : "") ||
@@ -19276,8 +19690,8 @@ export default function App() {
         medications: pickVal(prevForm?.medications, currentMedicalRecord.medications),
         otherEyeDiseases: pickVal(prevForm?.otherEyeDiseases, currentMedicalRecord.otherEyeDiseases),
         examinationInterpretation: pickVal(prevForm?.examinationInterpretation, currentMedicalRecord.examinationInterpretation),
-        documentNumber: regNumber,
-        certificatNumber: regNumber,
+        documentNumber: docForCurrentPrescription?.documentNumber || regNumber,
+        certificatNumber: docForCurrentPrescription?.documentNumber || regNumber,
         servesTo:
           (isSamePatient ? patientFormGeneral?.servesTo : "") ||
           (type === "referat"
@@ -19292,14 +19706,14 @@ export default function App() {
         isControl: !!currentMedicalRecord.isControl,
         isGratis: !!currentMedicalRecord.isGratis,
         firstName: currentMedicalRecord.patientName
-          ? currentMedicalRecord.patientName.split(" ").slice(1).join(" ")
+          ? currentMedicalRecord.patientName.trim().split(/\s+/).slice(1).join(" ")
           : "",
         lastName: currentMedicalRecord.patientName
-          ? currentMedicalRecord.patientName.split(" ")[0]
+          ? currentMedicalRecord.patientName.trim().split(/\s+/)[0] || ""
           : "",
-        ageSimple: currentMedicalRecord.patientBirthDate
+        ageSimple: resolvedBirthDateForDoc
           ? calculateAge(
-              currentMedicalRecord.patientBirthDate,
+              resolvedBirthDateForDoc,
               referenceDate,
             )?.toString() || ""
           : currentMedicalRecord.patientAge?.toString() || "",
@@ -19556,6 +19970,8 @@ export default function App() {
         patientName: activeRecord.patientName || "",
         patientCnp: activeRecord.patientCnp || "",
         patientPhone: activeRecord.patientPhone || "",
+        patientBirthDate: activeRecord.patientBirthDate || "",
+        birthDate: activeRecord.patientBirthDate || "",
       }));
       setActiveDocumentModal(type);
     }
@@ -19563,9 +19979,24 @@ export default function App() {
 
   const openDoctorDocumentEdit = (docRecord: any) => {
     setEditingMedicalDocId(docRecord.id);
+    previewDocNumberRef.current = null;
     // Asigură că la deschiderea documentului din istoric/sumar/registru se încarcă
     // fidel și exact starea salvată a formularului:
     const savedValues = docRecord.formValues || {};
+    const docName = (docRecord.patientName || "").toLowerCase().trim();
+    const docPhone = (docRecord.patientPhone || "").trim();
+    const patientRecord = medicalRecords.find(
+      (rec) =>
+        (rec.patientName || "").toLowerCase().trim() === docName &&
+        (!docPhone || (rec.patientPhone || "").trim() === docPhone),
+    ) || medicalRecords.find(
+      (rec) => docName && (rec.patientName || "").toLowerCase().trim() === docName,
+    );
+    const resolvedSavedBirthDate =
+      savedValues.patientBirthDate ||
+      savedValues.birthDate ||
+      patientRecord?.patientBirthDate ||
+      "";
     setDocumentForm({
       ...savedValues,
       unitJudet: savedValues.unitJudet ?? "Arges",
@@ -19576,16 +20007,9 @@ export default function App() {
       certificatNumber: docRecord.documentNumber || savedValues.certificatNumber || "",
       patientName: docRecord.patientName || savedValues.patientName || "",
       patientPhone: docRecord.patientPhone || savedValues.patientPhone || "",
+      patientBirthDate: resolvedSavedBirthDate,
+      birthDate: resolvedSavedBirthDate,
     });
-    const docName = (docRecord.patientName || "").toLowerCase().trim();
-    const docPhone = (docRecord.patientPhone || "").trim();
-    const patientRecord = medicalRecords.find(
-      (rec) =>
-        (rec.patientName || "").toLowerCase().trim() === docName &&
-        (!docPhone || (rec.patientPhone || "").trim() === docPhone),
-    ) || medicalRecords.find(
-      (rec) => docName && (rec.patientName || "").toLowerCase().trim() === docName,
-    );
     if (patientRecord) {
       setCurrentMedicalRecord(patientRecord);
     }
@@ -19629,12 +20053,68 @@ export default function App() {
 
     let latestRecord = activeRec || currentMedicalRecord;
 
-    let currentRegNum = documentForm.documentNumber || "";
-    if (!currentRegNum) {
-      const nextConsecutiveNumber = (medicalDocuments || []).length + 1;
+    let currentRegNum = (documentForm.documentNumber || "").trim();
+    const shouldAllocateAtomicNumber =
+      !currentRegNum ||
+      (!editingMedicalDocId &&
+        previewDocNumberRef.current !== null &&
+        currentRegNum === previewDocNumberRef.current);
+
+    if (shouldAllocateAtomicNumber) {
+      let allocatedNum =
+        Math.max(
+          knownGlobalDocCount,
+          extractMaxDocSuffix(medicalDocuments),
+          (medicalDocuments || []).length,
+        ) + 1;
+      try {
+        const counterRef = doc(db, "clinic_config", "document_counter");
+        allocatedNum = await runTransaction(db, async (tx) => {
+          const snap = await tx.get(counterRef);
+          const remoteLast =
+            snap.exists() && typeof snap.data()?.lastNumber === "number"
+              ? snap.data().lastNumber
+              : 0;
+          const nextNum =
+            Math.max(
+              remoteLast,
+              knownGlobalDocCount,
+              extractMaxDocSuffix(medicalDocuments),
+              (medicalDocuments || []).length,
+            ) + 1;
+          tx.set(
+            counterRef,
+            { lastNumber: nextNum, updatedAt: new Date().toISOString() },
+            { merge: true },
+          );
+          return nextNum;
+        });
+      } catch (counterErr) {
+        console.warn("Atomic document counter fallback:", counterErr);
+      }
+      setKnownGlobalDocCount((prev) => Math.max(prev, allocatedNum));
       const currentDateStr = format(getActiveDate(activeRec), "dd.MM.yyyy");
-      currentRegNum = `${currentDateStr}-${nextConsecutiveNumber}`;
+      currentRegNum = `${currentDateStr}-${allocatedNum}`;
+      setDocumentForm((prev: any) => ({
+        ...prev,
+        documentNumber: currentRegNum,
+        certificatNumber: currentRegNum,
+      }));
+    } else {
+      const mSuffix = currentRegNum.match(/-(\d+)$/);
+      if (mSuffix) {
+        const parsedSuffix = parseInt(mSuffix[1], 10);
+        if (!isNaN(parsedSuffix) && parsedSuffix > knownGlobalDocCount) {
+          setKnownGlobalDocCount(parsedSuffix);
+          setDoc(
+            doc(db, "clinic_config", "document_counter"),
+            { lastNumber: parsedSuffix, updatedAt: new Date().toISOString() },
+            { merge: true },
+          ).catch(() => {});
+        }
+      }
     }
+    previewDocNumberRef.current = null;
 
     const finalFormValues = {
       ...documentForm,
@@ -19700,12 +20180,40 @@ export default function App() {
       }
     })();
 
-    // 3. Sync clinical CNP changes only if actually modified compared to activeRec
+    // 3. Sync clinical CNP & birthDate changes only if actually modified compared to activeRec
+    const normalizeBirthInput = (raw: string): string => {
+      const trimmed = raw.trim();
+      if (!trimmed) return "";
+      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+      const dmy = trimmed.match(/^(\d{2})[-./](\d{2})[-./](\d{4})$/);
+      if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
+      return "";
+    };
     const formCnpTrimmed = (finalFormValues.patientCnp || "").trim();
     const existingRecCnp = (activeRec?.patientCnp || "").trim();
-    if (formCnpTrimmed && formCnpTrimmed !== existingRecCnp) {
-      const detectedSex = getSexFromCNP(formCnpTrimmed);
-      const detectedBirth = getBirthDateFromCNP(formCnpTrimmed);
+    const cnpChanged = !!(formCnpTrimmed && formCnpTrimmed !== existingRecCnp);
+    const detectedSex = formCnpTrimmed ? getSexFromCNP(formCnpTrimmed) : null;
+    const detectedBirth = formCnpTrimmed ? getBirthDateFromCNP(formCnpTrimmed) : null;
+    const formBirthNormalized = normalizeBirthInput(
+      finalFormValues.patientBirthDate || finalFormValues.birthDate || ""
+    );
+    const existingRecBirth = (activeRec?.patientBirthDate || "").trim();
+    const effectiveBirthSync = formBirthNormalized || (cnpChanged ? (detectedBirth || "") : "");
+    const birthChanged = !!(effectiveBirthSync && effectiveBirthSync !== existingRecBirth);
+    const parsedFormAge = finalFormValues.ageSimple
+      ? parseInt(String(finalFormValues.ageSimple).trim(), 10)
+      : NaN;
+    const resolvedPatientAge = effectiveBirthSync
+      ? (calculateAge(effectiveBirthSync, getActiveDate(activeRec)) ??
+          (!isNaN(parsedFormAge) ? parsedFormAge : activeRec?.patientAge))
+      : !isNaN(parsedFormAge)
+        ? parsedFormAge
+        : activeRec?.patientAge;
+    const ageChanged =
+      resolvedPatientAge !== undefined &&
+      resolvedPatientAge !== activeRec?.patientAge;
+
+    if (cnpChanged || birthChanged) {
       syncPatientUniversal(
         {
           patientName: resolvedPatientName,
@@ -19714,11 +20222,12 @@ export default function App() {
           recordId: activeRec?.id,
         },
         {
-          patientCnp: formCnpTrimmed,
-          ...(detectedSex ? { patientSex: detectedSex } : {}),
-          ...(detectedBirth ? { patientBirthDate: detectedBirth } : {}),
+          ...(cnpChanged ? { patientCnp: formCnpTrimmed } : {}),
+          ...(cnpChanged && detectedSex ? { patientSex: detectedSex } : {}),
+          ...(effectiveBirthSync ? { patientBirthDate: effectiveBirthSync } : {}),
+          ...(resolvedPatientAge !== undefined ? { patientAge: resolvedPatientAge } : {}),
         }
-      ).catch((e) => console.warn("Universal CNP sync error from documentForm:", e));
+      ).catch((e) => console.warn("Universal CNP/birthDate sync error from documentForm:", e));
     }
 
     if (activeRec) {
@@ -19853,11 +20362,15 @@ export default function App() {
         }
       }
 
+      const resolvedBirthForRecord =
+        effectiveBirthSync || detectedFormBirth || activeRec.patientBirthDate || "";
+
       const updatedRecord: MedicalRecord = {
         ...activeRec,
         ...(formCnpTrimmed ? { patientCnp: formCnpTrimmed } : {}),
         ...(detectedFormSex ? { patientSex: detectedFormSex } : {}),
-        ...(detectedFormBirth ? { patientBirthDate: detectedFormBirth } : {}),
+        ...(resolvedBirthForRecord ? { patientBirthDate: resolvedBirthForRecord } : {}),
+        ...(resolvedPatientAge !== undefined ? { patientAge: resolvedPatientAge } : {}),
         isConsultComplet: docIsConsultComplet,
         isControl: docIsControl,
         isGratis: docIsGratis,
@@ -19903,11 +20416,14 @@ export default function App() {
       // Sincronizare cu programarea curentă activă (fără a suprascrie programările vechi)
       if (activeAppointment?.id) {
         const activeAppId = activeAppointment.id;
-        updateDoc(doc(db, "appointments", activeAppId), {
+        const appUpdatePayload: Record<string, any> = {
           isConsultComplet: docIsConsultComplet,
           isControl: docIsControl,
           isGratis: docIsGratis,
-        }).catch((appSyncErr) =>
+          ...(birthChanged ? { patientBirthDate: effectiveBirthSync } : {}),
+          ...(ageChanged || birthChanged ? { patientAge: resolvedPatientAge } : {}),
+        };
+        updateDoc(doc(db, "appointments", activeAppId), appUpdatePayload).catch((appSyncErr) =>
           console.warn("Could not sync active appointment from documentForm:", appSyncErr)
         );
 
@@ -19919,6 +20435,8 @@ export default function App() {
                   isConsultComplet: docIsConsultComplet,
                   isControl: docIsControl,
                   isGratis: docIsGratis,
+                  ...(birthChanged ? { patientBirthDate: effectiveBirthSync } : {}),
+                  ...(ageChanged || birthChanged ? { patientAge: resolvedPatientAge } : {}),
                 }
               : app
           )
@@ -19930,6 +20448,8 @@ export default function App() {
                 isConsultComplet: docIsConsultComplet,
                 isControl: docIsControl,
                 isGratis: docIsGratis,
+                ...(birthChanged ? { patientBirthDate: effectiveBirthSync } : {}),
+                ...(ageChanged || birthChanged ? { patientAge: resolvedPatientAge } : {}),
               }
             : prev
         );
@@ -20678,7 +21198,7 @@ export default function App() {
     const backupData = {
       appointments: exportAppointments,
       medicalRecords: exportRecords,
-      availableUsers,
+      availableUsers: availableUsers.map(({ pass: _plain, ...rest }) => rest),
       configs,
       clinicConfig,
       frameStockList,
@@ -20929,7 +21449,7 @@ export default function App() {
           try {
             setAppointments(json.appointments);
             setMedicalRecords(json.medicalRecords);
-            if (json.availableUsers) setAvailableUsers(json.availableUsers);
+            if (json.availableUsers) updateUsersStateAndCache(json.availableUsers);
             if (json.configs) setConfigs(json.configs);
             if (json.clinicConfig) setClinicConfig(json.clinicConfig);
             if (Array.isArray(json.frameStockList)) {
@@ -20951,13 +21471,18 @@ export default function App() {
               );
             }
             if (Array.isArray(json.availableUsers)) {
+              const sanitizedUsers: any[] = [];
               for (const usr of json.availableUsers) {
                 if (!usr?.id) continue;
-                await setDoc(doc(db, "users", usr.id), removeUndefined(usr));
+                const { pass: rawPass, ...restUsr } = usr;
+                const finalUsr: any = { ...restUsr };
+                if (typeof rawPass === "string" && rawPass.trim() && !finalUsr.passHash) {
+                  finalUsr.passHash = await hashPassword(rawPass);
+                }
+                await setDoc(doc(db, "users", usr.id), removeUndefined(finalUsr));
+                sanitizedUsers.push(finalUsr);
               }
-              try {
-                sessionStorage.setItem("clinic_cached_users", JSON.stringify(deduplicateUsers(json.availableUsers)));
-              } catch {}
+              updateUsersStateAndCache(sanitizedUsers);
             }
             if (Array.isArray(json.frameStockList)) {
               for (const frame of json.frameStockList) {
@@ -23172,12 +23697,17 @@ export default function App() {
                       ? "bg-pink-950/30 border-pink-800/50 hover:bg-pink-950/50 text-pink-400"
                       : "bg-pink-50 border-pink-200 hover:bg-pink-100 text-pink-600",
                   )}
-                  title="Aniversări Pacienți (Astăzi & În curând)"
+                  title={
+                    hasLoadedMedicalRecordsArchive || hasLoadedAllHistory
+                      ? "Aniversări Pacienți (Astăzi & În curând)"
+                      : "Aniversări Pacienți (calculat pe fișele recente; deschideți fereastra pentru încărcare completă)"
+                  }
                 >
                   <Cake className="w-4 h-4" />
                   {todayBirthdayCount > 0 && (
-                    <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white font-black text-[9px] w-4.5 h-4.5 rounded-full flex items-center justify-center border border-white dark:border-slate-900">
+                    <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white font-black text-[9px] min-w-[18px] h-[18px] px-0.5 rounded-full flex items-center justify-center border border-white dark:border-slate-900">
                       {todayBirthdayCount}
+                      {!(hasLoadedMedicalRecordsArchive || hasLoadedAllHistory) ? "+" : ""}
                     </span>
                   )}
                 </button>
@@ -23787,7 +24317,7 @@ export default function App() {
                                       : "text-[8px]",
                                   )}
                                 >
-                                  ing, Optometrist
+                                  ing. Optometrist
                                 </span>
                               )}
                               {isTv && (
@@ -26055,6 +26585,7 @@ export default function App() {
         onPrintWorkshopTicket={(order, patient) => printWorkshopTicket(order, patient)}
         hasLoadedFullMedicalRecords={hasLoadedMedicalRecordsArchive || hasLoadedAllHistory}
         onLoadFullMedicalRecords={() => ensureMedicalRecordsArchiveLoaded(false)}
+        syncOrderFrameStock={syncOrderFrameStock}
         logActivity={logActivity}
       />
 
@@ -26841,6 +27372,7 @@ export default function App() {
         setIsPhoneEditModalOpen={setIsPhoneEditModalOpen}
         setTempEditPhone={setTempEditPhone}
         setIsGlassesOrderModalOpen={setIsGlassesOrderModalOpen}
+        syncOrderFrameStock={syncOrderFrameStock}
         logActivity={logActivity}
       />
 
@@ -27449,6 +27981,11 @@ export default function App() {
                                                 { avatar: base64String },
                                                 { merge: true },
                                               );
+                                              updateUsersStateAndCache((prev) =>
+                                                prev.map((u) =>
+                                                  u.id === user.id ? { ...u, avatar: base64String } : u,
+                                                ),
+                                              );
                                               setSuccessMessage(
                                                 "Poza utilizatorului a fost actualizată!",
                                               );
@@ -27492,6 +28029,12 @@ export default function App() {
                                             Parolă:
                                           </label>
                                           <input
+                                            type="password"
+                                            placeholder={
+                                              user.passHash
+                                                ? "Parolă nouă (opțional)"
+                                                : "Parolă..."
+                                            }
                                             value={
                                               passwordDrafts[user.id] ??
                                               user.pass ??
@@ -27506,24 +28049,41 @@ export default function App() {
                                             onKeyDown={async (e) => {
                                               if (e.key === "Enter") {
                                                 e.preventDefault();
-                                                const newPass =
+                                                const newPass = (
                                                   passwordDrafts[user.id] !== undefined
                                                     ? passwordDrafts[user.id]
-                                                    : user.pass ?? "";
-                                                const updates: any = {
-                                                  name: editUserName || user.name,
-                                                  pass: newPass,
+                                                    : user.pass ?? ""
+                                                ).trim();
+                                                if (!newPass && !user.passHash) {
+                                                  setErrorMessage("Parola nu poate fi goală!");
+                                                  return;
+                                                }
+                                                const cleanName = (editUserName || user.name).trim();
+                                                const newHash = newPass ? await hashPassword(newPass) : undefined;
+                                                const firestoreUpdates: any = {
+                                                  name: cleanName,
+                                                  ...(newHash ? { passHash: newHash, pass: deleteField() } : {}),
                                                 };
                                                 await setDoc(
                                                   doc(db, "users", user.id),
-                                                  updates,
+                                                  firestoreUpdates,
                                                   { merge: true },
                                                 );
-                                                setAvailableUsers((prev) =>
-                                                  prev.map((u) =>
-                                                    u.id === user.id ? { ...u, ...updates } : u,
-                                                  ),
+                                                updateUsersStateAndCache((prev) =>
+                                                  prev.map((u) => {
+                                                    if (u.id !== user.id) return u;
+                                                    if (newHash) {
+                                                      const { pass: _plain, ...rest } = u;
+                                                      return { ...rest, name: cleanName, passHash: newHash };
+                                                    }
+                                                    return { ...u, name: cleanName };
+                                                  }),
                                                 );
+                                                setPasswordDrafts((prev) => {
+                                                  const next = { ...prev };
+                                                  delete next[user.id];
+                                                  return next;
+                                                });
                                                 setEditingUserId(null);
                                                 setSuccessMessage("Date actualizate!");
                                               }
@@ -27539,24 +28099,41 @@ export default function App() {
                                         <div className="flex items-end gap-1">
                                           <button
                                             onClick={async () => {
-                                              const newPass =
+                                              const newPass = (
                                                 passwordDrafts[user.id] !== undefined
                                                   ? passwordDrafts[user.id]
-                                                  : user.pass ?? "";
-                                              const updates: any = {
-                                                name: editUserName || user.name,
-                                                pass: newPass,
+                                                  : user.pass ?? ""
+                                              ).trim();
+                                              if (!newPass && !user.passHash) {
+                                                setErrorMessage("Parola nu poate fi goală!");
+                                                return;
+                                              }
+                                              const cleanName = (editUserName || user.name).trim();
+                                              const newHash = newPass ? await hashPassword(newPass) : undefined;
+                                              const firestoreUpdates: any = {
+                                                name: cleanName,
+                                                ...(newHash ? { passHash: newHash, pass: deleteField() } : {}),
                                               };
                                               await setDoc(
                                                 doc(db, "users", user.id),
-                                                updates,
+                                                firestoreUpdates,
                                                 { merge: true },
                                               );
-                                              setAvailableUsers((prev) =>
-                                                prev.map((u) =>
-                                                  u.id === user.id ? { ...u, ...updates } : u,
-                                                ),
+                                              updateUsersStateAndCache((prev) =>
+                                                prev.map((u) => {
+                                                  if (u.id !== user.id) return u;
+                                                  if (newHash) {
+                                                    const { pass: _plain, ...rest } = u;
+                                                    return { ...rest, name: cleanName, passHash: newHash };
+                                                  }
+                                                  return { ...u, name: cleanName };
+                                                }),
                                               );
+                                              setPasswordDrafts((prev) => {
+                                                const next = { ...prev };
+                                                delete next[user.id];
+                                                return next;
+                                              });
                                               setEditingUserId(null);
                                               setSuccessMessage(
                                                 "Date actualizate!",
@@ -27568,9 +28145,14 @@ export default function App() {
                                             <Check className="w-4 h-4" />
                                           </button>
                                           <button
-                                            onClick={() =>
-                                              setEditingUserId(null)
-                                            }
+                                            onClick={() => {
+                                              setPasswordDrafts((prev) => {
+                                                const next = { ...prev };
+                                                delete next[user.id];
+                                                return next;
+                                              });
+                                              setEditingUserId(null);
+                                            }}
                                             className="p-1 text-slate-400 hover:bg-slate-500/20 rounded cursor-pointer transition-all"
                                             title="Anulează"
                                           >
@@ -27608,9 +28190,13 @@ export default function App() {
                                           </div>
                                           <div className="flex items-center gap-2">
                                             <span className="text-[10px] font-mono text-slate-500">
-                                              {visiblePasswords[user.id]
-                                                ? user.pass
-                                                : "••••"}
+                                              {user.passHash && !user.pass
+                                                ? (visiblePasswords[user.id]
+                                                    ? "Criptată (SHA-256)"
+                                                    : "••••••")
+                                                : visiblePasswords[user.id]
+                                                  ? user.pass
+                                                  : "••••"}
                                             </span>
                                             <button
                                               onClick={(e) => {
@@ -28637,18 +29223,36 @@ export default function App() {
                                           onKeyDown={async (e) => {
                                             if (e.key === "Enter") {
                                               e.preventDefault();
-                                              const p = passwordDrafts[userAccount.id] ?? userAccount.pass ?? "";
-                                              await setDoc(doc(db, "users", userAccount.id), { pass: p }, { merge: true });
-                                              setAvailableUsers((prev) =>
-                                                prev.map((u) => (u.id === userAccount.id ? { ...u, pass: p } : u))
+                                              const p = (passwordDrafts[userAccount.id] ?? userAccount.pass ?? "").trim();
+                                              if (!p) {
+                                                if (userAccount.passHash) {
+                                                  setSuccessMessage("Parola existentă este păstrată.");
+                                                } else {
+                                                  setErrorMessage("Parola nu poate fi goală!");
+                                                }
+                                                return;
+                                              }
+                                              const newHash = await hashPassword(p);
+                                              await setDoc(doc(db, "users", userAccount.id), { passHash: newHash, pass: deleteField() }, { merge: true });
+                                              updateUsersStateAndCache((prev) =>
+                                                prev.map((u) => {
+                                                  if (u.id !== userAccount.id) return u;
+                                                  const { pass: _plain, ...rest } = u;
+                                                  return { ...rest, passHash: newHash };
+                                                })
                                               );
+                                              setPasswordDrafts((prev) => {
+                                                const next = { ...prev };
+                                                delete next[userAccount.id];
+                                                return next;
+                                              });
                                               setSuccessMessage("Parolă medic salvată!");
                                             }
                                           }}
-                                          placeholder="Parolă"
-                                          title="Parolă medic"
+                                          placeholder={userAccount.passHash ? "Parolă nouă..." : "Parolă"}
+                                          title={userAccount.passHash ? "Introduceți o parolă nouă pentru a o schimba" : "Parolă medic"}
                                           className={cn(
-                                            "w-20 text-xs font-mono font-bold bg-transparent outline-none",
+                                            "w-24 text-xs font-mono font-bold bg-transparent outline-none",
                                             darkMode ? "text-slate-100" : "text-slate-900"
                                           )}
                                         />
@@ -28686,11 +29290,23 @@ export default function App() {
                                         (u) => u.role === role,
                                       );
                                       if (userAccount && passwordDrafts[userAccount.id] !== undefined) {
-                                        const p = passwordDrafts[userAccount.id];
-                                        await setDoc(doc(db, "users", userAccount.id), { pass: p }, { merge: true });
-                                        setAvailableUsers((prev) =>
-                                          prev.map((u) => (u.id === userAccount.id ? { ...u, pass: p } : u))
-                                        );
+                                        const p = passwordDrafts[userAccount.id].trim();
+                                        if (p) {
+                                          const newHash = await hashPassword(p);
+                                          await setDoc(doc(db, "users", userAccount.id), { passHash: newHash, pass: deleteField() }, { merge: true });
+                                          updateUsersStateAndCache((prev) =>
+                                            prev.map((u) => {
+                                              if (u.id !== userAccount.id) return u;
+                                              const { pass: _plain, ...rest } = u;
+                                              return { ...rest, passHash: newHash };
+                                            })
+                                          );
+                                        }
+                                        setPasswordDrafts((prev) => {
+                                          const next = { ...prev };
+                                          delete next[userAccount.id];
+                                          return next;
+                                        });
                                       }
                                       setSuccessMessage("Date medic salvate!");
                                     }}
@@ -31461,20 +32077,45 @@ export default function App() {
                               savePosteriorSegmentOptions(posteriorSegmentOptionsDraft, true).catch(() => {});
                               saveRoleLabels(roleLabelsState, true).catch(() => {});
 
-                              // Persist any modified user passwords from passwordDrafts
-                              for (const [userId, draftPass] of Object.entries(passwordDrafts)) {
+                              // Persist any modified user passwords from passwordDrafts (hashed)
+                              const draftsSnapshot = { ...passwordDrafts };
+                              const savedStateUpdatesById: Record<string, any> = {};
+                              for (const [userId, draftPass] of Object.entries(draftsSnapshot)) {
                                 if (draftPass !== undefined) {
-                                  const updates: any = { pass: draftPass };
-                                  if (editingUserId === userId && editUserName) {
-                                    updates.name = editUserName;
-                                  }
-                                  setDoc(doc(db, "users", userId), updates, { merge: true }).catch((err) =>
+                                  const cleanDraftPass = draftPass.trim();
+                                  const cleanEditName =
+                                    editingUserId === userId && editUserName
+                                      ? editUserName.trim()
+                                      : undefined;
+                                  if (!cleanDraftPass && !cleanEditName) continue;
+                                  const newHash = cleanDraftPass ? await hashPassword(cleanDraftPass) : undefined;
+                                  const firestoreUpdates: any = {
+                                    ...(newHash ? { passHash: newHash, pass: deleteField() } : {}),
+                                    ...(cleanEditName ? { name: cleanEditName } : {}),
+                                  };
+                                  savedStateUpdatesById[userId] = {
+                                    ...(newHash ? { passHash: newHash } : {}),
+                                    ...(cleanEditName ? { name: cleanEditName } : {}),
+                                  };
+                                  await setDoc(doc(db, "users", userId), firestoreUpdates, { merge: true }).catch((err) =>
                                     console.error("Error auto-saving password draft:", err)
                                   );
-                                  setAvailableUsers((prev) =>
-                                    prev.map((u) => (u.id === userId ? { ...u, ...updates } : u))
-                                  );
                                 }
+                              }
+                              if (Object.keys(savedStateUpdatesById).length > 0) {
+                                updateUsersStateAndCache((prev) =>
+                                  prev.map((u) => {
+                                    const upd = savedStateUpdatesById[u.id];
+                                    if (!upd) return u;
+                                    if (upd.passHash) {
+                                      const { pass: _plain, ...rest } = u;
+                                      return { ...rest, ...upd };
+                                    }
+                                    return { ...u, ...upd };
+                                  }),
+                                );
+                                setPasswordDrafts({});
+                                setEditingUserId(null);
                               }
                             }
 
@@ -32351,13 +32992,32 @@ export default function App() {
                         setBackupAuthPassword(e.target.value);
                         setBackupAuthError("");
                       }}
-                      onKeyDown={(e) => {
+                      onKeyDown={async (e) => {
                         if (e.key === "Enter") {
                           const p = (backupAuthPassword || "").trim();
+                          const localAdmin = availableUsers.find(
+                            (u) => u.id === "admin" || u.role === "admin",
+                          );
+                          let adminHash = localAdmin?.passHash;
+                          let adminPlain =
+                            localAdmin?.pass?.trim() ||
+                            USERS_DATA.admin?.pass ||
+                            "Popescu123";
+                          try {
+                            const adminSnap = await getDoc(doc(db, "users", "admin"));
+                            if (adminSnap.exists()) {
+                              const d = adminSnap.data();
+                              if (typeof d?.passHash === "string" && d.passHash.trim()) {
+                                adminHash = d.passHash.trim();
+                              }
+                              if (typeof d?.pass === "string" && d.pass.trim()) {
+                                adminPlain = d.pass.trim();
+                              }
+                            }
+                          } catch {}
                           const isPassOk =
-                            p === "Popescu123" ||
-                            p === "popescu123" ||
-                            p.toLowerCase() === "popescu123";
+                            p !== "" &&
+                            (await verifyPassword(p, adminHash, adminPlain));
                           if (isPassOk) {
                             setIsBackupUnlocked(true);
                             setBackupAuthError("");
@@ -32380,12 +33040,31 @@ export default function App() {
                     )}
 
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         const p = (backupAuthPassword || "").trim();
+                        const localAdmin = availableUsers.find(
+                          (u) => u.id === "admin" || u.role === "admin",
+                        );
+                        let adminHash = localAdmin?.passHash;
+                        let adminPlain =
+                          localAdmin?.pass?.trim() ||
+                          USERS_DATA.admin?.pass ||
+                          "Popescu123";
+                        try {
+                          const adminSnap = await getDoc(doc(db, "users", "admin"));
+                          if (adminSnap.exists()) {
+                            const d = adminSnap.data();
+                            if (typeof d?.passHash === "string" && d.passHash.trim()) {
+                              adminHash = d.passHash.trim();
+                            }
+                            if (typeof d?.pass === "string" && d.pass.trim()) {
+                              adminPlain = d.pass.trim();
+                            }
+                          }
+                        } catch {}
                         const isPassOk =
-                          p === "Popescu123" ||
-                          p === "popescu123" ||
-                          p.toLowerCase() === "popescu123";
+                          p !== "" &&
+                          (await verifyPassword(p, adminHash, adminPlain));
                         if (isPassOk) {
                           setIsBackupUnlocked(true);
                           setBackupAuthError("");
@@ -32590,6 +33269,9 @@ export default function App() {
             console.error("Eroare la ștergerea documentului din registru:", err);
           }
         }}
+        hasLoadedAllDocs={hasLoadedAllMedicalDocuments}
+        isLoadingAllDocs={isLoadingAllMedicalDocuments}
+        onLoadAllDocs={() => ensureMedicalDocumentsArchiveLoaded(false)}
       />
 
       {/* Export Modal */}
@@ -32725,6 +33407,7 @@ export default function App() {
           isOpen={isPatientSummaryModalOpen}
           onClose={() => setIsPatientSummaryModalOpen(false)}
           record={currentMedicalRecord}
+          medicalRecords={medicalRecords}
           medicalDocuments={medicalDocuments}
           darkMode={darkMode}
           userRole={profile?.role}

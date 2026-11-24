@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ClipboardList, X, Search, Pencil, Trash2, Loader2, Printer } from "lucide-react";
+import { ClipboardList, X, Search, Pencil, Trash2, Loader2, Printer, Database } from "lucide-react";
 import { format } from "date-fns";
 import { ro } from "date-fns/locale";
 import { doc, deleteDoc } from "firebase/firestore";
@@ -18,6 +18,9 @@ export interface MedicalRegistryModalProps {
   setSuccessMessage: (msg: string) => void;
   onDeleteDocument?: (docId: string) => Promise<void> | void;
   onPrintDocument?: (docRec: any) => void;
+  hasLoadedAllDocs?: boolean;
+  isLoadingAllDocs?: boolean;
+  onLoadAllDocs?: () => Promise<any> | void;
 }
 
 export const MedicalRegistryModal: React.FC<MedicalRegistryModalProps> = ({
@@ -31,6 +34,9 @@ export const MedicalRegistryModal: React.FC<MedicalRegistryModalProps> = ({
   setSuccessMessage,
   onDeleteDocument,
   onPrintDocument,
+  hasLoadedAllDocs,
+  isLoadingAllDocs,
+  onLoadAllDocs,
 }) => {
   const [docToDelete, setDocToDelete] = useState<any | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -79,12 +85,32 @@ export const MedicalRegistryModal: React.FC<MedicalRegistryModalProps> = ({
                   </p>
                 </div>
               </div>
-              <button
-                onClick={onClose}
-                className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"
-              >
-                <X className="w-6 h-6" />
-              </button>
+              <div className="flex items-center gap-2.5 shrink-0">
+                {onLoadAllDocs && !hasLoadedAllDocs && (
+                  <button
+                    type="button"
+                    onClick={() => onLoadAllDocs()}
+                    disabled={isLoadingAllDocs}
+                    className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-sm transition-all cursor-pointer active:scale-95"
+                    title="Descarcă toate documentele medicale din arhiva clinicii"
+                  >
+                    {isLoadingAllDocs ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Database className="w-3.5 h-3.5" />
+                    )}
+                    <span>
+                      {isLoadingAllDocs ? "Se încarcă..." : "Încarcă arhiva completă (30 Zile Activ)"}
+                    </span>
+                  </button>
+                )}
+                <button
+                  onClick={onClose}
+                  className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
             </div>
 
             {/* Search input bar */}

@@ -110,44 +110,99 @@ export const IopChartModal: React.FC<IopChartModalProps> = ({
     const byDayKey = new Map<string, IopTimelinePoint>();
 
     combined.forEach((rec) => {
-      const iopOd = parseNumericVal(rec.iop?.od);
-      const iopOs = parseNumericVal(rec.iop?.os);
-      const corrOd = parseNumericVal(rec.correctedIop?.od);
-      const corrOs = parseNumericVal(rec.correctedIop?.os);
-      const cctOd = parseNumericVal(rec.pachymetry?.od);
-      const cctOs = parseNumericVal(rec.pachymetry?.os);
-
-      if (
-        iopOd === null &&
-        iopOs === null &&
-        corrOd === null &&
-        corrOs === null &&
-        cctOd === null &&
-        cctOs === null
-      ) {
-        return;
-      }
-
-      const rawDate =
-        rec.id === currentMedicalRecord.id
-          ? rec.updatedAt || rec.createdAt || new Date().toISOString()
-          : rec.updatedAt || rec.createdAt;
-      const { label, ts } = formatDateShort(rawDate);
       const isCurrent = rec.id === currentMedicalRecord.id;
-      const key = `${label}_${rec.id || "curr"}`;
+      const rawCurrentDate = isCurrent
+        ? rec.updatedAt || rec.createdAt || new Date().toISOString()
+        : rec.updatedAt || rec.createdAt;
 
-      byDayKey.set(key, {
-        key,
-        timestamp: ts,
-        dateLabel: isCurrent ? `${label} (Activ)` : label,
-        iopOd,
-        iopOs,
-        corrOd,
-        corrOs,
-        cctOd,
-        cctOs,
-        source: isCurrent ? "Consultație curentă" : "Istoric",
-      });
+      const pushPoint = (
+        pointKey: string,
+        rawDateStr: string | undefined,
+        iopObj: { od?: string; os?: string } | undefined,
+        corrObj: { od?: string; os?: string } | undefined,
+        cctObj: { od?: string; os?: string } | undefined,
+        isActivePoint: boolean,
+        sourceLabel: string,
+      ) => {
+        const iopOd = parseNumericVal(iopObj?.od);
+        const iopOs = parseNumericVal(iopObj?.os);
+        const corrOd = parseNumericVal(corrObj?.od);
+        const corrOs = parseNumericVal(corrObj?.os);
+        const cctOd = parseNumericVal(cctObj?.od);
+        const cctOs = parseNumericVal(cctObj?.os);
+
+        if (
+          iopOd === null &&
+          iopOs === null &&
+          corrOd === null &&
+          corrOs === null &&
+          cctOd === null &&
+          cctOs === null
+        ) {
+          return null;
+        }
+
+        const { label, ts } = formatDateShort(rawDateStr);
+        const point: IopTimelinePoint = {
+          key: pointKey,
+          timestamp: ts,
+          dateLabel: isActivePoint ? `${label} (Activ)` : label,
+          iopOd,
+          iopOs,
+          corrOd,
+          corrOs,
+          cctOd,
+          cctOs,
+          source: sourceLabel,
+        };
+        byDayKey.set(pointKey, point);
+        return point;
+      };
+
+      const activePoint = pushPoint(
+        `rec_${rec.id || "curr"}`,
+        rawCurrentDate,
+        rec.iop,
+        rec.correctedIop,
+        rec.pachymetry,
+        isCurrent,
+        isCurrent ? "Consultație curentă" : "Istoric",
+      );
+
+      if (Array.isArray(rec.prescriptionHistory)) {
+        rec.prescriptionHistory.forEach((hist: any, idx: number) => {
+          if (!hist) return;
+          const { label: hLabel } = formatDateShort(hist.date);
+          const iopOd = parseNumericVal(hist.iop?.od);
+          const iopOs = parseNumericVal(hist.iop?.os);
+          const corrOd = parseNumericVal(hist.correctedIop?.od);
+          const corrOs = parseNumericVal(hist.correctedIop?.os);
+          const cctOd = parseNumericVal(hist.pachymetry?.od);
+          const cctOs = parseNumericVal(hist.pachymetry?.os);
+
+          const sameAsActive =
+            activePoint &&
+            activePoint.dateLabel.startsWith(hLabel) &&
+            activePoint.iopOd === iopOd &&
+            activePoint.iopOs === iopOs &&
+            activePoint.corrOd === corrOd &&
+            activePoint.corrOs === corrOs &&
+            activePoint.cctOd === cctOd &&
+            activePoint.cctOs === cctOs;
+
+          if (sameAsActive) return;
+
+          pushPoint(
+            `hist_${rec.id || "curr"}_${idx}_${hLabel}`,
+            hist.date,
+            hist.iop,
+            hist.correctedIop,
+            hist.pachymetry,
+            false,
+            "Consultație anterioară",
+          );
+        });
+      }
     });
 
     return Array.from(byDayKey.values()).sort((a, b) => a.timestamp - b.timestamp);

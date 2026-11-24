@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Cake, X, Search, CheckCircle2, Send } from "lucide-react";
 import { cn, matchPatientName } from "../appConstants";
@@ -83,6 +83,16 @@ export const PatientBirthdayModal: React.FC<PatientBirthdayModalProps> = ({
     todayBirthdays[0] ||
     upcomingBirthdays[0] ||
     null;
+
+  useEffect(() => {
+    if (isOpen && selectedPatient) {
+      setBirthdayCustomMessage(
+        generatePatientBirthdayMessage(selectedPatient.name, selectedPatient.birthDate),
+      );
+    } else if (!isOpen) {
+      setBirthdayCustomMessage("");
+    }
+  }, [isOpen, selectedPatient?.id]);
 
   return (
     <AnimatePresence>
@@ -343,7 +353,13 @@ export const PatientBirthdayModal: React.FC<PatientBirthdayModalProps> = ({
                         type="button"
                         onClick={() => {
                           if (selectedPatient) {
-                            sendBirthdayWhatsAppMessage(selectedPatient.phone, birthdayCustomMessage);
+                            const msgToSend = birthdayCustomMessage.trim()
+                              ? birthdayCustomMessage
+                              : generatePatientBirthdayMessage(
+                                  selectedPatient.name,
+                                  selectedPatient.birthDate,
+                                );
+                            sendBirthdayWhatsAppMessage(selectedPatient.phone, msgToSend);
                             markBirthdayAsSent(selectedPatient.id);
                           }
                         }}

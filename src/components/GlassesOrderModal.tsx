@@ -100,6 +100,7 @@ export interface GlassesOrderModalProps {
   isGlassesOrderModalOpen?: boolean;
   setIsGlassesOrderModalOpen?: (open: boolean) => void;
   setMedicalRecords?: React.Dispatch<React.SetStateAction<MedicalRecord[]>>;
+  syncOrderFrameStock?: (order: GlassesOrder) => Promise<GlassesOrder>;
   logActivity?: (action: string, details: string) => Promise<void> | void;
 }
 
@@ -143,6 +144,7 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
   setTempEditPhone,
   setIsGlassesOrderModalOpen = (open: boolean) => { if (!open) onClose(); },
   setMedicalRecords,
+  syncOrderFrameStock,
   logActivity,
 }) => {
   const isGlassesOrderModalOpen = isOpen;
@@ -1194,16 +1196,42 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                             </div>
 
                             {currentMedicalRecord.glassesOrder?.od?.prism && (
-                              <div className="mt-2 pt-1.5 border-t border-blue-100 dark:border-blue-900/40 flex items-center justify-between px-1">
+                              <div
+                                onClick={() => {
+                                  setPrismTarget("glassesOrder");
+                                  setPrismEye("OD");
+                                  setTempPrismValue(currentMedicalRecord.glassesOrder?.od?.prism || "");
+                                  setTempPrismBase((currentMedicalRecord.glassesOrder?.od?.base || "") as any);
+                                  setIsPrismModalOpen(true);
+                                }}
+                                className="mt-2 pt-1.5 border-t border-blue-100 dark:border-blue-900/40 flex items-center justify-between px-1 gap-1.5 cursor-pointer group"
+                                title="Click pentru a edita prisma OD"
+                              >
                                 <span className="text-[10px] font-black text-blue-600 dark:text-blue-400 flex items-center gap-1">
                                   <Triangle className="w-2.5 h-2.5 fill-current shrink-0" />
                                   Prismă: {currentMedicalRecord.glassesOrder.od.prism} pdpt
                                 </span>
-                                {currentMedicalRecord.glassesOrder.od.base && (
-                                  <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300">
-                                    Baza {currentMedicalRecord.glassesOrder.od.base}
-                                  </span>
-                                )}
+                                <div className="flex items-center gap-1">
+                                  {currentMedicalRecord.glassesOrder.od.base && (
+                                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300">
+                                      Baza {currentMedicalRecord.glassesOrder.od.base}
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      updateOrder({
+                                        "od.prism": "",
+                                        "od.base": "",
+                                      });
+                                    }}
+                                    className="p-0.5 rounded-md text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/50 transition-colors cursor-pointer"
+                                    title="Șterge prisma OD"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </div>
                             )}
                           </div>
@@ -1491,16 +1519,42 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                             </div>
 
                             {currentMedicalRecord.glassesOrder?.os?.prism && (
-                              <div className="mt-2 pt-1.5 border-t border-emerald-100 dark:border-emerald-900/40 flex items-center justify-between px-1">
+                              <div
+                                onClick={() => {
+                                  setPrismTarget("glassesOrder");
+                                  setPrismEye("OS");
+                                  setTempPrismValue(currentMedicalRecord.glassesOrder?.os?.prism || "");
+                                  setTempPrismBase((currentMedicalRecord.glassesOrder?.os?.base || "") as any);
+                                  setIsPrismModalOpen(true);
+                                }}
+                                className="mt-2 pt-1.5 border-t border-emerald-100 dark:border-emerald-900/40 flex items-center justify-between px-1 gap-1.5 cursor-pointer group"
+                                title="Click pentru a edita prisma OS"
+                              >
                                 <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
                                   <Triangle className="w-2.5 h-2.5 fill-current shrink-0" />
                                   Prismă: {currentMedicalRecord.glassesOrder.os.prism} pdpt
                                 </span>
-                                {currentMedicalRecord.glassesOrder.os.base && (
-                                  <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300">
-                                    Baza {currentMedicalRecord.glassesOrder.os.base}
-                                  </span>
-                                )}
+                                <div className="flex items-center gap-1">
+                                  {currentMedicalRecord.glassesOrder.os.base && (
+                                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300">
+                                      Baza {currentMedicalRecord.glassesOrder.os.base}
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      updateOrder({
+                                        "os.prism": "",
+                                        "os.base": "",
+                                      });
+                                    }}
+                                    className="p-0.5 rounded-md text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/50 transition-colors cursor-pointer"
+                                    title="Șterge prisma OS"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </div>
                             )}
                           </div>
@@ -3089,19 +3143,110 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                         {currentMedicalRecord.glassesOrder?.status !== "completed" && (
                           <button
                             type="button"
-                            onClick={() => {
+                            disabled={loading}
+                            onClick={async () => {
+                              if (!currentMedicalRecord.glassesOrder) return;
                               const nowIso = new Date().toISOString();
-                              const totalVal = currentMedicalRecord.glassesOrder?.total || 0;
-                              updateOrder({
+                              const handlerName = profile?.displayName || (profile as any)?.name || "Recepție";
+                              const totalVal = Number(currentMedicalRecord.glassesOrder.total || 0);
+                              const prevAdvance = Number(currentMedicalRecord.glassesOrder.advance || 0);
+                              const restToCollect = Math.max(0, totalVal - prevAdvance);
+
+                              let completedOrder: GlassesOrder = {
+                                ...currentMedicalRecord.glassesOrder,
                                 status: "completed",
                                 advance: totalVal,
                                 balance: 0,
                                 deliveredAt: nowIso,
-                                deliveredBy: profile?.displayName || (profile as any)?.name || "Recepție",
-                              });
+                                deliveredBy: handlerName,
+                                ...(restToCollect > 0
+                                  ? {
+                                      balanceCollectedAt: currentMedicalRecord.glassesOrder.balanceCollectedAt || nowIso,
+                                      balanceCollectedAmount: currentMedicalRecord.glassesOrder.balanceCollectedAmount ?? restToCollect,
+                                      balanceCollectedBy: currentMedicalRecord.glassesOrder.balanceCollectedBy || handlerName,
+                                    }
+                                  : {}),
+                              };
+
+                              setLoading(true);
+                              try {
+                                if (syncOrderFrameStock) {
+                                  completedOrder = await syncOrderFrameStock(completedOrder);
+                                }
+
+                                let newHistory = [...(currentMedicalRecord.orderHistory || [])];
+                                if (activeOrderIndex !== null && newHistory[activeOrderIndex]) {
+                                  newHistory[activeOrderIndex] = completedOrder;
+                                } else {
+                                  const matchIdx = newHistory.findIndex(
+                                    (o) => o.orderNumber === completedOrder.orderNumber,
+                                  );
+                                  if (matchIdx !== -1) {
+                                    newHistory[matchIdx] = completedOrder;
+                                  } else {
+                                    newHistory = [completedOrder, ...newHistory];
+                                  }
+                                }
+
+                                const updatedRecord = {
+                                  ...currentMedicalRecord,
+                                  glassesOrder: completedOrder,
+                                  orderHistory: newHistory,
+                                  updatedAt: nowIso,
+                                };
+
+                                await setDoc(
+                                  doc(db, "medicalRecords", currentMedicalRecord.id),
+                                  removeUndefined(updatedRecord),
+                                  { merge: true },
+                                );
+
+                                try {
+                                  if (await hasLegacyGlassesOrders(db)) {
+                                    const qStandalone = query(
+                                      collection(db, "glasses_orders"),
+                                      where("orderNumber", "==", completedOrder.orderNumber),
+                                    );
+                                    const snapStandalone = await getDocs(qStandalone);
+                                    if (!snapStandalone.empty) {
+                                      const batch = writeBatch(db);
+                                      snapStandalone.docs.forEach((d) => {
+                                        batch.update(d.ref, removeUndefined({
+                                          status: "completed",
+                                          advance: totalVal,
+                                          balance: 0,
+                                          deliveredAt: completedOrder.deliveredAt,
+                                          deliveredBy: completedOrder.deliveredBy,
+                                          balanceCollectedAt: completedOrder.balanceCollectedAt,
+                                          balanceCollectedAmount: completedOrder.balanceCollectedAmount,
+                                          balanceCollectedBy: completedOrder.balanceCollectedBy,
+                                          stockDeducted: completedOrder.stockDeducted,
+                                          stockDeductedFrames: completedOrder.stockDeductedFrames,
+                                          updatedAt: nowIso,
+                                        }));
+                                      });
+                                      await batch.commit();
+                                    }
+                                  }
+                                } catch (standaloneErr) {
+                                  console.warn("Could not sync standalone glasses_orders:", standaloneErr);
+                                }
+
+                                setMedicalRecords?.((prev) =>
+                                  prev.some((r) => r.id === updatedRecord.id)
+                                    ? prev.map((r) => (r.id === updatedRecord.id ? updatedRecord : r))
+                                    : [updatedRecord, ...prev],
+                                );
+                                setCurrentMedicalRecord(updatedRecord);
+                              } catch (err) {
+                                console.error("Error in handover & collect shortcut:", err);
+                                alert("Eroare la salvarea predării comenzii.");
+                              } finally {
+                                setLoading(false);
+                              }
                             }}
-                            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-600/30 flex items-center gap-1.5 cursor-pointer"
-                            title="1-Click: Încasează restul automat (sold 0) și marchează comanda ca Finalizată / Predată"
+                            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-600/30 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                            title="1-Click: Încasează restul automat (sold 0), scade stocul și salvează comanda ca Finalizată / Predată"
                           >
                             <CheckCircle2 className="w-3.5 h-3.5 text-white" />
                             <span>Predat & Încasat Restul {(currentMedicalRecord.glassesOrder?.balance || 0) > 0 ? `(${currentMedicalRecord.glassesOrder?.balance} lei)` : ""}</span>
@@ -3241,46 +3386,58 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                             if (!currentMedicalRecord.glassesOrder) return;
                             const nowIso = new Date().toISOString();
                             const handlerName = profile?.displayName || (profile as any)?.name || "Recepție";
-                            const total =
-                              currentMedicalRecord?.glassesOrder?.total || 0;
+                            const total = Number(currentMedicalRecord?.glassesOrder?.total || 0);
+                            const prevAdvance = Number(currentMedicalRecord?.glassesOrder?.advance || 0);
+                            const restToCollect = Math.max(0, total - prevAdvance);
 
-                            const updatedOrder = {
+                            let updatedOrder: GlassesOrder = {
                               ...currentMedicalRecord.glassesOrder,
                               advance: total,
                               balance: 0,
                               status: "completed" as const,
                               deliveredAt: currentMedicalRecord.glassesOrder.deliveredAt || nowIso,
                               deliveredBy: currentMedicalRecord.glassesOrder.deliveredBy || handlerName,
-                            };
-
-                            let newHistory = [
-                              ...(currentMedicalRecord.orderHistory || []),
-                            ];
-                            if (
-                              activeOrderIndex !== null &&
-                              newHistory[activeOrderIndex]
-                            ) {
-                              newHistory[activeOrderIndex] = updatedOrder;
-                            } else {
-                              const matchIdx = newHistory.findIndex(
-                                (o) => o.orderNumber === updatedOrder.orderNumber,
-                              );
-                              if (matchIdx !== -1) {
-                                newHistory[matchIdx] = updatedOrder;
-                              } else {
-                                newHistory = [updatedOrder, ...newHistory];
-                              }
-                            }
-
-                            const updatedRecord = {
-                              ...currentMedicalRecord,
-                              glassesOrder: updatedOrder,
-                              orderHistory: newHistory,
-                              updatedAt: nowIso,
+                              ...(restToCollect > 0
+                                ? {
+                                    balanceCollectedAt: currentMedicalRecord.glassesOrder.balanceCollectedAt || nowIso,
+                                    balanceCollectedAmount: currentMedicalRecord.glassesOrder.balanceCollectedAmount ?? restToCollect,
+                                    balanceCollectedBy: currentMedicalRecord.glassesOrder.balanceCollectedBy || handlerName,
+                                  }
+                                : {}),
                             };
 
                             setLoading(true);
                             try {
+                              if (syncOrderFrameStock) {
+                                updatedOrder = await syncOrderFrameStock(updatedOrder);
+                              }
+
+                              let newHistory = [
+                                ...(currentMedicalRecord.orderHistory || []),
+                              ];
+                              if (
+                                activeOrderIndex !== null &&
+                                newHistory[activeOrderIndex]
+                              ) {
+                                newHistory[activeOrderIndex] = updatedOrder;
+                              } else {
+                                const matchIdx = newHistory.findIndex(
+                                  (o) => o.orderNumber === updatedOrder.orderNumber,
+                                );
+                                if (matchIdx !== -1) {
+                                  newHistory[matchIdx] = updatedOrder;
+                                } else {
+                                  newHistory = [updatedOrder, ...newHistory];
+                                }
+                              }
+
+                              const updatedRecord = {
+                                ...currentMedicalRecord,
+                                glassesOrder: updatedOrder,
+                                orderHistory: newHistory,
+                                updatedAt: nowIso,
+                              };
+
                               await setDoc(
                                 doc(
                                   db,
@@ -3301,14 +3458,19 @@ export const GlassesOrderModal: React.FC<GlassesOrderModalProps> = ({
                                   if (!snapStandalone.empty) {
                                     const batch = writeBatch(db);
                                     snapStandalone.docs.forEach((d) => {
-                                      batch.update(d.ref, {
+                                      batch.update(d.ref, removeUndefined({
                                         status: "completed",
                                         advance: total,
                                         balance: 0,
                                         deliveredAt: updatedOrder.deliveredAt,
                                         deliveredBy: updatedOrder.deliveredBy,
+                                        balanceCollectedAt: updatedOrder.balanceCollectedAt,
+                                        balanceCollectedAmount: updatedOrder.balanceCollectedAmount,
+                                        balanceCollectedBy: updatedOrder.balanceCollectedBy,
+                                        stockDeducted: updatedOrder.stockDeducted,
+                                        stockDeductedFrames: updatedOrder.stockDeductedFrames,
                                         updatedAt: nowIso,
-                                      });
+                                      }));
                                     });
                                     await batch.commit();
                                   }

@@ -793,8 +793,13 @@ export const generateReferatPdf = (
     });
     doc.setFont("helvetica", "normal");
 
-    doc.setFontSize(8);
-    doc.text("pag 2/2", pageWidth / 2, pageHeight - 10, { align: "center" });
+    const totalPages = doc.getNumberOfPages();
+    for (let pageIdx = 1; pageIdx <= totalPages; pageIdx++) {
+      doc.setPage(pageIdx);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text(`pag ${pageIdx}/${totalPages}`, pageWidth / 2, pageHeight - 10, { align: "center" });
+    }
 
     triggerPdfPrint(
       doc,
@@ -877,33 +882,55 @@ export const generateRaportMedicalPdf = (
     let y = 44;
     const lineSpacing = 6.5;
 
-    // Rând 1: Nume, Prenume, Vârstă, CNP
+    // Rând 1: Nume, Prenume, Data nașterii, Vârstă, CNP
+    const rawBirthForPdf = (
+      documentForm.patientBirthDate ||
+      documentForm.birthDate ||
+      currentMedicalRecord?.patientBirthDate ||
+      ""
+    ).trim();
+    const formattedBirthForPdf = (() => {
+      if (!rawBirthForPdf) return "";
+      const ymd = rawBirthForPdf.match(/^(\d{4})[-./](\d{2})[-./](\d{2})$/);
+      if (ymd) return `${ymd[3]}.${ymd[2]}.${ymd[1]}`;
+      const dmy = rawBirthForPdf.match(/^(\d{2})[-./](\d{2})[-./](\d{4})$/);
+      if (dmy) return `${dmy[1]}.${dmy[2]}.${dmy[3]}`;
+      return rawBirthForPdf;
+    })();
+
     drawPdfTextWithDiacritics(doc, "Nume:", 14, y);
     if (documentForm.lastName) {
       doc.setFont("helvetica", "bold");
-      drawPdfTextWithDiacritics(doc, documentForm.lastName, 28, y, { maxWidth: 40 });
+      drawPdfTextWithDiacritics(doc, documentForm.lastName, 25, y, { maxWidth: 28 });
       doc.setFont("helvetica", "normal");
     }
 
-    drawPdfTextWithDiacritics(doc, "Prenume:", 70, y);
+    drawPdfTextWithDiacritics(doc, "Prenume:", 55, y);
     if (documentForm.firstName) {
       doc.setFont("helvetica", "bold");
-      drawPdfTextWithDiacritics(doc, documentForm.firstName, 87, y, { maxWidth: 40 });
+      drawPdfTextWithDiacritics(doc, documentForm.firstName, 71, y, { maxWidth: 29 });
       doc.setFont("helvetica", "normal");
     }
 
-    drawPdfTextWithDiacritics(doc, "Vârstă:", 130, y);
+    drawPdfTextWithDiacritics(doc, "Data nașt.:", 102, y);
+    if (formattedBirthForPdf) {
+      doc.setFont("helvetica", "bold");
+      doc.text(formattedBirthForPdf, 120.5, y);
+      doc.setFont("helvetica", "normal");
+    }
+
+    drawPdfTextWithDiacritics(doc, "Vârstă:", 141, y);
     if (documentForm.ageSimple) {
       doc.setFont("helvetica", "bold");
-      doc.text(String(documentForm.ageSimple), 143, y);
+      doc.text(String(documentForm.ageSimple), 153.5, y);
       doc.setFont("helvetica", "normal");
     }
 
-    doc.text(`CNP:`, 159, y);
+    doc.text(`CNP:`, 161, y);
     if (documentForm.patientCnp) {
       doc.setFont("helvetica", "bold");
       doc.setFontSize(8.5);
-      doc.text(cleanStr(documentForm.patientCnp), 169, y);
+      doc.text(cleanStr(documentForm.patientCnp), 170.5, y);
       doc.setFontSize(9.5);
       doc.setFont("helvetica", "normal");
     }
@@ -1066,12 +1093,12 @@ export const generateRaportMedicalPdf = (
       {
         include: !!(documentForm.anteriorSegmentOd || documentForm.anteriorSegmentOs),
         data: documentForm.anteriorSegmentAo ? [
-          { content: "POL ANTERIOR", styles: { fontSize: 10, fontStyle: "bold" as const, lineHeightFactor: 0.2 } as any },
-          { content: documentForm.anteriorSegmentOd || "", colSpan: 2, styles: { fontSize: 10, lineHeightFactor: 0.2 } as any }
+          { content: "POL ANTERIOR", styles: { fontSize: 10, fontStyle: "bold" as const, lineHeightFactor: 0.85 } as any },
+          { content: documentForm.anteriorSegmentOd || "", colSpan: 2, styles: { fontSize: 10, lineHeightFactor: 0.85 } as any }
         ] : [
-          { content: "POL ANTERIOR", styles: { fontSize: 10, fontStyle: "bold" as const, lineHeightFactor: 0.2 } as any },
-          { content: documentForm.anteriorSegmentOd || "", styles: { fontSize: 10, lineHeightFactor: 0.2 } as any },
-          { content: documentForm.anteriorSegmentOs || "", styles: { fontSize: 10, lineHeightFactor: 0.2 } as any },
+          { content: "POL ANTERIOR", styles: { fontSize: 10, fontStyle: "bold" as const, lineHeightFactor: 0.85 } as any },
+          { content: documentForm.anteriorSegmentOd || "", styles: { fontSize: 10, lineHeightFactor: 0.85 } as any },
+          { content: documentForm.anteriorSegmentOs || "", styles: { fontSize: 10, lineHeightFactor: 0.85 } as any },
         ]
       },
       {
@@ -1295,6 +1322,20 @@ export const generateRaportMedicalPdf = (
       doc.addPage("a4", "portrait");
 
       // Effective record for Myopia charts calculation
+      const normalizedPdfBirth = (() => {
+        const raw = (
+          documentForm.patientBirthDate ||
+          documentForm.birthDate ||
+          currentMedicalRecord?.patientBirthDate ||
+          ""
+        ).trim();
+        if (!raw) return "";
+        if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+        const dmy = raw.match(/^(\d{2})[-./](\d{2})[-./](\d{4})$/);
+        if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
+        return "";
+      })();
+
       const effectiveRec: MedicalRecord = {
         ...(currentMedicalRecord || {}),
         id: currentMedicalRecord?.id || "temp_rec",
@@ -1302,10 +1343,10 @@ export const generateRaportMedicalPdf = (
           currentMedicalRecord?.patientName ||
           cleanStr(`${documentForm.lastName || ""} ${documentForm.firstName || ""}`.trim()) ||
           "Pacient",
-        patientBirthDate: currentMedicalRecord?.patientBirthDate || "",
+        patientBirthDate: normalizedPdfBirth || currentMedicalRecord?.patientBirthDate || "",
         patientAge:
+          (documentForm.ageSimple ? parseInt(String(documentForm.ageSimple), 10) : 0) ||
           currentMedicalRecord?.patientAge ||
-          documentForm.ageSimple ||
           (documentForm.ageDetailed ? parseInt(documentForm.ageDetailed, 10) : 0),
         patientSex:
           currentMedicalRecord?.patientSex ||
@@ -1753,14 +1794,14 @@ export const generateCertificatPdf = (
 
     y += lineSpacing;
     drawPdfTextWithDiacritics(doc, "în vârstă de", 10, y);
-    drawDottedLine(30, 45, y);
+    drawDottedLine(30, 56, y);
     doc.setFont("helvetica", "bold");
-    doc.text(documentForm.ageSimple || "", (30 + 45) / 2, y - 2, {
+    drawPdfTextWithDiacritics(doc, String(documentForm.ageSimple || ""), (30 + 56) / 2, y - 2, {
       align: "center",
+      maxWidth: 24,
     });
     doc.setFont("helvetica", "normal");
 
-    y += lineSpacing;
     drawPdfTextWithDiacritics(doc, "sexul", 60, y);
     drawDottedLine(72, 85, y);
     if (documentForm.patientSex) {
@@ -2026,19 +2067,23 @@ export const generateExpertizaPdf = (
     const colWidths = [70, 55, 55];
     const colStarts = [15, 15 + colWidths[0], 15 + colWidths[0] + colWidths[1]];
 
-    doc.setLineWidth(0.2);
-    doc.rect(colStarts[0], y, colWidths[0], 8);
-    doc.rect(colStarts[1], y, colWidths[1], 8);
-    doc.rect(colStarts[2], y, colWidths[2], 8);
+    const drawExpertizaTableHeader = (headerY: number) => {
+      doc.setLineWidth(0.2);
+      doc.rect(colStarts[0], headerY, colWidths[0], 8);
+      doc.rect(colStarts[1], headerY, colWidths[1], 8);
+      doc.rect(colStarts[2], headerY, colWidths[2], 8);
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.text("OD", colStarts[1] + colWidths[1] / 2, y + 5.5, {
-      align: "center",
-    });
-    doc.text("OS", colStarts[2] + colWidths[2] / 2, y + 5.5, {
-      align: "center",
-    });
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("OD", colStarts[1] + colWidths[1] / 2, headerY + 5.5, {
+        align: "center",
+      });
+      doc.text("OS", colStarts[2] + colWidths[2] / 2, headerY + 5.5, {
+        align: "center",
+      });
+    };
+
+    drawExpertizaTableHeader(y);
 
     let currentY = y + 8;
     const tableRows = [
@@ -2089,6 +2134,13 @@ export const generateExpertizaPdf = (
       const linesCount = Math.max(1, wrappedOd.length, wrappedOs.length);
       const rowHeight = Math.max(10, linesCount * 4.5 + 2);
 
+      if (currentY + rowHeight > 276) {
+        doc.addPage("a4", "portrait");
+        currentY = 18;
+        drawExpertizaTableHeader(currentY);
+        currentY += 8;
+      }
+
       doc.rect(colStarts[0], currentY, colWidths[0], rowHeight);
       doc.rect(colStarts[1], currentY, colWidths[1], rowHeight);
       doc.rect(colStarts[2], currentY, colWidths[2], rowHeight);
@@ -2123,6 +2175,11 @@ export const generateExpertizaPdf = (
 
       currentY += rowHeight;
     });
+
+    if (currentY + 40 > 282) {
+      doc.addPage("a4", "portrait");
+      currentY = 10;
+    }
 
     y = currentY + 12;
 

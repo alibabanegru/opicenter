@@ -822,7 +822,7 @@ export const generateGlassesOrderPdf = ({
       styles: { fontSize: 7, cellPadding: 1 },
       headStyles: { fillColor: [6, 182, 212] },
     });
-  } else {
+  } else if (order.orderType !== "near") {
     doc.text(
       order.orderType === "progressive_bifocal"
         ? "DETALII PRESCRIPTIE PROGRESIV / BIFOCAL:"
@@ -831,9 +831,8 @@ export const generateGlassesOrderPdf = ({
       56
     );
 
-    const distRows = [];
-    if (order.orderType !== "near") {
-      distRows.push([
+    const distRows = [
+      [
         "OD (Dist)",
         order.od?.sph || "",
         order.od?.cyl || "",
@@ -841,8 +840,8 @@ export const generateGlassesOrderPdf = ({
         order.od?.add || "",
         order.od?.prism ? `${order.od.prism} ${order.od.base}` : "",
         order.dp || "",
-      ]);
-      distRows.push([
+      ],
+      [
         "OS (Dist)",
         order.os?.sph || "",
         order.os?.cyl || "",
@@ -850,11 +849,8 @@ export const generateGlassesOrderPdf = ({
         order.os?.add || "",
         order.os?.prism ? `${order.os.prism} ${order.os.base}` : "",
         "",
-      ]);
-    } else {
-      distRows.push(["OD (Dist)", "", "", "", "", "", ""]);
-      distRows.push(["OS (Dist)", "", "", "", "", "", ""]);
-    }
+      ],
+    ];
 
     autoTable(doc, {
       startY: 58,
@@ -866,7 +862,10 @@ export const generateGlassesOrderPdf = ({
     });
   }
 
-  let currentY = (doc as any).lastAutoTable.finalY + 4;
+  let currentY =
+    order.orderType === "near"
+      ? 56
+      : (doc as any).lastAutoTable.finalY + 4;
 
   if (order.orderType === "both" || order.orderType === "near") {
     doc.text("DETALII PRESCRIPTIE APROAPE:", 20, currentY);
@@ -911,6 +910,8 @@ export const generateGlassesOrderPdf = ({
     doc.text("DETALII PRODUSE LENTILE CONTACT:", 20, currentY);
   } else if (order.orderType === "progressive_bifocal") {
     doc.text("OCHELARI PROGRESIV / BIFOCAL:", 20, currentY);
+  } else if (order.orderType === "near") {
+    doc.text("OCHELARI APROAPE:", 20, currentY);
   } else {
     doc.text("OCHELARI DISTANTA / PACHET 1:", 20, currentY);
   }
@@ -1042,7 +1043,7 @@ export const generateGlassesOrderPdf = ({
     doc.setFontSize(8);
     doc.setTextColor(70);
     splitNotes = doc.splitTextToSize(normalize(orderNotes), 170);
-    if (notesY + 3.5 + splitNotes.length * 4 > 265) {
+    if (notesY + 3.5 + splitNotes.length * 4 > 258) {
       doc.addPage();
       notesY = 20;
     }
@@ -1100,7 +1101,13 @@ export const generateGlassesOrderPdf = ({
       const DBL_val = parseFloat(order.bridgeSize) || 16;
       const ED_val = Math.sqrt(A_val * A_val + B_val * B_val);
 
-      let row1 = `DISTANTA: `;
+      const primaryFrameLabel =
+        order.orderType === "near"
+          ? "APROAPE"
+          : order.orderType === "progressive_bifocal"
+            ? "PROGRESIV / BIFOCAL"
+            : "DISTANTA";
+      let row1 = `${primaryFrameLabel}: `;
       if (order.frameShape) row1 += `Forma #${order.frameShape}  |  `;
       row1 += `Tip Montură: ${typeMap[frameTypeVal as keyof typeof typeMap] || frameTypeVal}`;
       const distanceDesignMap = { bifocal: "BIFOCAL", progressive: "PROGRESIV", "": "MONOFOCAL" };
@@ -1129,7 +1136,7 @@ export const generateGlassesOrderPdf = ({
       const drawingHeightMm = B_val + 36;
 
       const totalDistanceHeight = lines.length * 4 + drawingHeightMm + 10;
-      if (drawStartY + totalDistanceHeight > 275) {
+      if (drawStartY + totalDistanceHeight > 262) {
         doc.addPage();
         drawStartY = 20;
       }
@@ -1195,7 +1202,7 @@ export const generateGlassesOrderPdf = ({
       const drawingHeightMm = B_val + 36;
 
       const totalNearHeight = lines.length * 4 + drawingHeightMm + 10;
-      if (drawStartY + totalNearHeight > 275) {
+      if (drawStartY + totalNearHeight > 262) {
         doc.addPage();
         drawStartY = 20;
       }
@@ -1212,6 +1219,10 @@ export const generateGlassesOrderPdf = ({
         drawStartY += drawingHeightMm + 5;
       }
     }
+  }
+
+  if (drawStartY > 264) {
+    doc.addPage();
   }
 
   doc.setFontSize(7.5);
@@ -1323,6 +1334,7 @@ export const generateWorkshopTicketPdf = ({
       ]);
     }
     if (order.orderType === "near" || order.orderType === "both") {
+      const isNearOnly = order.orderType === "near";
       rows.push([
         "OD APR",
         order.nearOd?.sph || order.od?.sph || "-",
@@ -1330,8 +1342,12 @@ export const generateWorkshopTicketPdf = ({
         order.nearOd?.axis || order.od?.axis || "-",
         "-",
         "-",
-        order.nearDp_od || order.dpNear || order.dp || "-",
-        order.nearFittingHeight_od || "-",
+        isNearOnly
+          ? order.dp_od || order.nearDp_od || order.dp || "-"
+          : order.nearDp_od || order.dpNear || order.dp || "-",
+        isNearOnly
+          ? order.fittingHeight_od || order.nearFittingHeight_od || "-"
+          : order.nearFittingHeight_od || "-",
       ]);
       rows.push([
         "OS APR",
@@ -1340,8 +1356,12 @@ export const generateWorkshopTicketPdf = ({
         order.nearOs?.axis || order.os?.axis || "-",
         "-",
         "-",
-        order.nearDp_os || "-",
-        order.nearFittingHeight_os || "-",
+        isNearOnly
+          ? order.dp_os || order.nearDp_os || "-"
+          : order.nearDp_os || "-",
+        isNearOnly
+          ? order.fittingHeight_os || order.nearFittingHeight_os || "-"
+          : order.nearFittingHeight_os || "-",
       ]);
     }
 
@@ -1362,21 +1382,42 @@ export const generateWorkshopTicketPdf = ({
   doc.setTextColor(30, 41, 59);
   const frameTypeMap: Record<string, string> = {
     full: "CONTUR INTREG",
+    groove: "PE FIR (NYLON)",
+    drill: "SURUB / CAPSA",
     semi: "PE FIR (NYLON)",
     rimless: "SURUB / CAPSA",
   };
   const details: string[] = [];
+  const isBothPairs = order.orderType === "both";
   if (order.frameCode || order.nearFrameCode) {
-    details.push(`RAMA: ${normalize([order.frameCode, order.nearFrameCode].filter(Boolean).join(" / "))}`);
+    if (isBothPairs && order.frameCode && order.nearFrameCode) {
+      details.push(`RAME: DIST ${normalize(order.frameCode)} | APR ${normalize(order.nearFrameCode)}`);
+    } else {
+      details.push(`RAMA: ${normalize([order.frameCode, order.nearFrameCode].filter(Boolean).join(" / "))}`);
+    }
   }
-  if (order.frameType) {
-    details.push(`TIP MONTURA: ${frameTypeMap[order.frameType] || normalize(order.frameType)}`);
+  if (order.frameType || (isBothPairs && order.nearFrameType)) {
+    const distFt = order.frameType ? (frameTypeMap[order.frameType] || normalize(order.frameType)) : "";
+    const nearFt = isBothPairs && order.nearFrameType ? (frameTypeMap[order.nearFrameType] || normalize(order.nearFrameType)) : "";
+    if (distFt && nearFt && distFt !== nearFt) {
+      details.push(`TIP MONTURA: DIST ${distFt} | APR ${nearFt}`);
+    } else {
+      details.push(`TIP MONTURA: ${distFt || nearFt}`);
+    }
   }
-  if (order.lensWidth || order.lensHeight || order.bridgeSize) {
-    details.push(`CASETAT: ${order.lensWidth || "?"}x${order.lensHeight || "?"} [] ${order.bridgeSize || "?"} mm${order.lensDiameter ? ` | DIA: ${order.lensDiameter}` : ""}`);
+  const hasDistBox = Boolean(order.lensWidth || order.lensHeight || order.bridgeSize);
+  const hasNearBox = Boolean(isBothPairs && (order.nearLensWidth || order.nearLensHeight || order.nearBridgeSize || order.nearLensDiameter));
+  if (hasDistBox) {
+    details.push(`${hasNearBox ? "CASETAT DIST" : "CASETAT"}: ${order.lensWidth || "?"}x${order.lensHeight || "?"} [] ${order.bridgeSize || "?"} mm${order.lensDiameter ? ` | DIA: ${order.lensDiameter}` : ""}`);
+  }
+  if (hasNearBox) {
+    details.push(`CASETAT APR: ${order.nearLensWidth || "?"}x${order.nearLensHeight || "?"} [] ${order.nearBridgeSize || "?"} mm${order.nearLensDiameter ? ` | DIA: ${order.nearLensDiameter}` : ""}`);
   }
   if (order.lensRightName || order.lensLeftName) {
-    details.push(`LENTILE: ${normalize([order.lensRightName, order.lensLeftName !== order.lensRightName ? order.lensLeftName : ""].filter(Boolean).join(" / "))}`);
+    details.push(`${isBothPairs ? "LENTILE DIST" : "LENTILE"}: ${normalize([order.lensRightName, order.lensLeftName !== order.lensRightName ? order.lensLeftName : ""].filter(Boolean).join(" / "))}`);
+  }
+  if (isBothPairs && (order.nearLensRightName || order.nearLensLeftName)) {
+    details.push(`LENTILE APR: ${normalize([order.nearLensRightName, order.nearLensLeftName !== order.nearLensRightName ? order.nearLensLeftName : ""].filter(Boolean).join(" / "))}`);
   }
   if (Array.isArray(order.lensTreatments) && order.lensTreatments.length > 0) {
     details.push(`TRATAMENTE: ${normalize(order.lensTreatments.join(", "))}`);

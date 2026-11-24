@@ -3716,6 +3716,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
 
                                       setCurrentMedicalRecord((prev) => {
                                         if (!prev) return prev;
+                                        const prevIop = prev.iop?.od || "";
                                         const cctVal = prev.pachymetry?.od || "";
                                         let corrected = "";
                                         if (iopVal && cctVal) {
@@ -3728,6 +3729,16 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                             ).toFixed(1);
                                           }
                                         }
+                                        const hadBothPrev = !!(
+                                          prevIop.trim() && cctVal.trim()
+                                        );
+                                        const nextCorrected =
+                                          corrected !== ""
+                                            ? corrected
+                                            : (!iopVal.trim() && hadBothPrev) ||
+                                                (!iopVal.trim() && !cctVal.trim())
+                                              ? ""
+                                              : prev.correctedIop?.od || "";
                                         return {
                                           ...prev,
                                           iop: {
@@ -3742,10 +3753,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                               od: "",
                                               os: "",
                                             }),
-                                            od:
-                                              corrected ||
-                                              prev.correctedIop?.od ||
-                                              "",
+                                            od: nextCorrected,
                                           },
                                         };
                                       });
@@ -3768,6 +3776,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       setCurrentMedicalRecord((prev) => {
                                         if (!prev) return prev;
                                         const iopVal = prev.iop?.od || "";
+                                        const prevCct = prev.pachymetry?.od || "";
                                         let corrected = "";
                                         if (iopVal && cctVal) {
                                           const iop = parseFloat(iopVal);
@@ -3779,6 +3788,16 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                             ).toFixed(1);
                                           }
                                         }
+                                        const hadBothPrev = !!(
+                                          iopVal.trim() && prevCct.trim()
+                                        );
+                                        const nextCorrected =
+                                          corrected !== ""
+                                            ? corrected
+                                            : (!cctVal.trim() && hadBothPrev) ||
+                                                (!iopVal.trim() && !cctVal.trim())
+                                              ? ""
+                                              : prev.correctedIop?.od || "";
                                         return {
                                           ...prev,
                                           pachymetry: {
@@ -3793,10 +3812,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                               od: "",
                                               os: "",
                                             }),
-                                            od:
-                                              corrected ||
-                                              prev.correctedIop?.od ||
-                                              "",
+                                            od: nextCorrected,
                                           },
                                         };
                                       });
@@ -6852,6 +6868,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
 
                                       setCurrentMedicalRecord((prev) => {
                                         if (!prev) return prev;
+                                        const prevIop = prev.iop?.os || "";
                                         const cctVal = prev.pachymetry?.os || "";
                                         let corrected = "";
                                         if (iopVal && cctVal) {
@@ -6864,6 +6881,16 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                             ).toFixed(1);
                                           }
                                         }
+                                        const hadBothPrev = !!(
+                                          prevIop.trim() && cctVal.trim()
+                                        );
+                                        const nextCorrected =
+                                          corrected !== ""
+                                            ? corrected
+                                            : (!iopVal.trim() && hadBothPrev) ||
+                                                (!iopVal.trim() && !cctVal.trim())
+                                              ? ""
+                                              : prev.correctedIop?.os || "";
                                         return {
                                           ...prev,
                                           iop: {
@@ -6878,10 +6905,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                               od: "",
                                               os: "",
                                             }),
-                                            os:
-                                              corrected ||
-                                              prev.correctedIop?.os ||
-                                              "",
+                                            os: nextCorrected,
                                           },
                                         };
                                       });
@@ -6904,6 +6928,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                       setCurrentMedicalRecord((prev) => {
                                         if (!prev) return prev;
                                         const iopVal = prev.iop?.os || "";
+                                        const prevCct = prev.pachymetry?.os || "";
                                         let corrected = "";
                                         if (iopVal && cctVal) {
                                           const iop = parseFloat(iopVal);
@@ -6915,6 +6940,16 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                             ).toFixed(1);
                                           }
                                         }
+                                        const hadBothPrev = !!(
+                                          iopVal.trim() && prevCct.trim()
+                                        );
+                                        const nextCorrected =
+                                          corrected !== ""
+                                            ? corrected
+                                            : (!cctVal.trim() && hadBothPrev) ||
+                                                (!iopVal.trim() && !cctVal.trim())
+                                              ? ""
+                                              : prev.correctedIop?.os || "";
                                         return {
                                           ...prev,
                                           pachymetry: {
@@ -6929,10 +6964,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                                               od: "",
                                               os: "",
                                             }),
-                                            os:
-                                              corrected ||
-                                              prev.correctedIop?.os ||
-                                              "",
+                                            os: nextCorrected,
                                           },
                                         };
                                       });

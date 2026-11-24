@@ -164,25 +164,20 @@ export const OrderTypeSelectionModal: React.FC<OrderTypeSelectionModalProps> = (
                         (safeParseDate(a.date)?.getTime() || 0)
                     );
 
-                    const seenDates = new Set();
+                    const seenDates = new Set<string>();
                     const filteredHistory = allPrescriptions.filter((item) => {
                       const isCyclo = item.cycloplegia?.enabled;
                       if (isCyclo) return false;
                       if (!item.date) return false;
                       const dateObj = safeParseDate(item.date);
                       if (!dateObj) return false;
-                      try {
-                        const dateKey = format(dateObj, "yyyy-MM-dd");
-                        if (seenDates.has(dateKey)) return false;
-                        seenDates.add(dateKey);
-                        return true;
-                      } catch {
-                        return false;
-                      }
+                      if (seenDates.has(item.date)) return false;
+                      seenDates.add(item.date);
+                      return true;
                     });
 
-                    return filteredHistory.map((item) => (
-                      <div key={item.date} className="relative group/item">
+                    return filteredHistory.map((item, idx) => (
+                      <div key={`${item.date}-${idx}`} className="relative group/item">
                         <button
                           onClick={() => {
                             setSelectedHistoricalPrescriptionIndex(
@@ -409,7 +404,50 @@ export const OrderTypeSelectionModal: React.FC<OrderTypeSelectionModalProps> = (
                       icon: <CircleDot className="w-4 h-4" />,
                       color: "cyan",
                     },
-                  ].map((option) => (
+                  ].map((option) => {
+                    const colorStyles: Record<
+                      string,
+                      {
+                        btnDark: string;
+                        btnLight: string;
+                        iconDark: string;
+                        iconLight: string;
+                      }
+                    > = {
+                      blue: {
+                        btnDark: "bg-slate-800/50 border-slate-800 hover:border-blue-500/50",
+                        btnLight: "bg-blue-50/30 border-slate-100 hover:border-blue-500/30",
+                        iconDark: "bg-slate-700 text-blue-400",
+                        iconLight: "bg-white text-blue-600",
+                      },
+                      emerald: {
+                        btnDark: "bg-slate-800/50 border-slate-800 hover:border-emerald-500/50",
+                        btnLight: "bg-emerald-50/30 border-slate-100 hover:border-emerald-500/30",
+                        iconDark: "bg-slate-700 text-emerald-400",
+                        iconLight: "bg-white text-emerald-600",
+                      },
+                      purple: {
+                        btnDark: "bg-slate-800/50 border-slate-800 hover:border-purple-500/50",
+                        btnLight: "bg-purple-50/30 border-slate-100 hover:border-purple-500/30",
+                        iconDark: "bg-slate-700 text-purple-400",
+                        iconLight: "bg-white text-purple-600",
+                      },
+                      amber: {
+                        btnDark: "bg-slate-800/50 border-slate-800 hover:border-amber-500/50",
+                        btnLight: "bg-amber-50/30 border-slate-100 hover:border-amber-500/30",
+                        iconDark: "bg-slate-700 text-amber-400",
+                        iconLight: "bg-white text-amber-600",
+                      },
+                      cyan: {
+                        btnDark: "bg-slate-800/50 border-slate-800 hover:border-cyan-500/50",
+                        btnLight: "bg-cyan-50/30 border-slate-100 hover:border-cyan-500/30",
+                        iconDark: "bg-slate-700 text-cyan-400",
+                        iconLight: "bg-white text-cyan-600",
+                      },
+                    };
+                    const styles = colorStyles[option.color] || colorStyles.blue;
+
+                    return (
                     <button
                       key={option.id}
                       onClick={() => {
@@ -475,17 +513,13 @@ export const OrderTypeSelectionModal: React.FC<OrderTypeSelectionModalProps> = (
                       }}
                       className={cn(
                         "w-full p-4 rounded-2xl border-2 transition-all flex items-center gap-4 text-left group hover:scale-[1.02] active:scale-95",
-                        darkMode
-                          ? `bg-slate-800/50 border-slate-800 hover:border-${option.color}-500/50`
-                          : `bg-${option.color}-50/30 border-slate-100 hover:border-${option.color}-500/30`
+                        darkMode ? styles.btnDark : styles.btnLight
                       )}
                     >
                       <div
                         className={cn(
                           "p-3 rounded-xl shadow-sm transition-colors flex items-center justify-center",
-                          darkMode
-                            ? `bg-slate-700 text-${option.color}-400`
-                            : `bg-white text-${option.color}-600`
+                          darkMode ? styles.iconDark : styles.iconLight
                         )}
                       >
                         {option.icon}
@@ -502,7 +536,8 @@ export const OrderTypeSelectionModal: React.FC<OrderTypeSelectionModalProps> = (
                       </div>
                       <ChevronRight className="w-4 h-4 ml-auto text-slate-400 group-hover:translate-x-1 transition-transform" />
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>

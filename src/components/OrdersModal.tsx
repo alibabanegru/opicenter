@@ -109,6 +109,7 @@ export interface OrdersModalProps {
   onPrintWorkshopTicket?: (order: any, patient: any) => void;
   hasLoadedFullMedicalRecords?: boolean;
   onLoadFullMedicalRecords?: () => Promise<any>;
+  syncOrderFrameStock?: (order: any) => Promise<any>;
   logActivity?: (action: string, details: string) => Promise<void> | void;
 }
 
@@ -156,6 +157,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
   setBulkDeleteMode: propSetBulkDeleteMode,
   hasLoadedFullMedicalRecords,
   onLoadFullMedicalRecords,
+  syncOrderFrameStock,
   logActivity,
 }) => {
   const usersList = availableUsers && availableUsers.length > 0
@@ -641,24 +643,30 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
           (o) => o.orderNumber === order.orderNumber,
         );
 
-        const currentTotal = orderIdx !== -1 ? (history[orderIdx].total || 0) : (order.total || 0);
-        const updatedOrder = orderIdx !== -1 
-          ? {
-              ...history[orderIdx],
-              status: "completed" as const,
-              advance: currentTotal,
-              balance: 0,
-              deliveredAt: nowIso,
-              deliveredBy: handlerName,
-            }
-          : {
-              ...order,
-              status: "completed" as const,
-              advance: currentTotal,
-              balance: 0,
-              deliveredAt: nowIso,
-              deliveredBy: handlerName,
-            };
+        const sourceOrd = orderIdx !== -1 ? history[orderIdx] : order;
+        const currentTotal = Number(sourceOrd.total || 0);
+        const prevAdvance = Number(sourceOrd.advance || 0);
+        const restAmount = Math.max(0, currentTotal - prevAdvance);
+
+        let updatedOrder = {
+          ...sourceOrd,
+          status: "completed" as const,
+          advance: currentTotal,
+          balance: 0,
+          deliveredAt: nowIso,
+          deliveredBy: handlerName,
+          ...(restAmount > 0
+            ? {
+                balanceCollectedAt: sourceOrd.balanceCollectedAt || nowIso,
+                balanceCollectedAmount: sourceOrd.balanceCollectedAmount ?? restAmount,
+                balanceCollectedBy: sourceOrd.balanceCollectedBy || handlerName,
+              }
+            : {}),
+        };
+
+        if (syncOrderFrameStock) {
+          updatedOrder = await syncOrderFrameStock(updatedOrder);
+        }
 
         if (orderIdx !== -1) {
           history[orderIdx] = updatedOrder;
@@ -685,14 +693,19 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
             if (!snapStandalone.empty) {
               const batch = writeBatch(db);
               snapStandalone.docs.forEach((d) => {
-                batch.update(d.ref, {
+                batch.update(d.ref, removeUndefined({
                   status: "completed",
                   advance: currentTotal,
                   balance: 0,
                   deliveredAt: nowIso,
                   deliveredBy: handlerName,
+                  balanceCollectedAt: updatedOrder.balanceCollectedAt,
+                  balanceCollectedAmount: updatedOrder.balanceCollectedAmount,
+                  balanceCollectedBy: updatedOrder.balanceCollectedBy,
+                  stockDeducted: updatedOrder.stockDeducted,
+                  stockDeductedFrames: updatedOrder.stockDeductedFrames,
                   updatedAt: nowIso,
-                });
+                }));
               });
               await batch.commit();
             }
@@ -746,7 +759,14 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
           (r.orderHistory || []).some((o) => o.orderNumber === order.orderNumber),
       );
       const patientDocId = order.patientId || targetRecord?.id;
-      if (!patientDocId) return;
+      if (!patientDocId) {
+        setFeedbackBanner({
+          text: `Nu s-a găsit fișa pacientului pentru comanda #${order.orderNumber || ""}.`,
+          type: "error",
+        });
+        setTimeout(() => setFeedbackBanner(null), 4000);
+        return;
+      }
 
       const docRef = doc(db, "medicalRecords", patientDocId);
       const docSnap = await getDoc(docRef);
@@ -758,29 +778,55 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
         );
         const isMainOrder = data.glassesOrder?.orderNumber === order.orderNumber;
 
-        const applyStatusUpdate = (ord: any) => ({
-          ...ord,
-          status: newStatus as any,
-          ...(newStatus === "completed"
-            ? {
-                advance: ord.total ?? ord.advance ?? 0,
-                balance: 0,
-                deliveredAt: ord.deliveredAt || nowIso,
-                deliveredBy: ord.deliveredBy || handlerName,
-              }
-            : {}),
-        });
+        const applyStatusUpdate = (ord: any) => {
+          const ordTotal = Number(ord.total ?? ord.advance ?? 0);
+          const ordAdvance = Number(ord.advance || 0);
+          const restAmt = Math.max(0, ordTotal - ordAdvance);
+          return {
+            ...ord,
+            status: newStatus as any,
+            ...(newStatus === "completed"
+              ? {
+                  advance: ordTotal,
+                  balance: 0,
+                  deliveredAt: ord.deliveredAt || nowIso,
+                  deliveredBy: ord.deliveredBy || handlerName,
+                  ...(restAmt > 0
+                    ? {
+                        balanceCollectedAt: ord.balanceCollectedAt || nowIso,
+                        balanceCollectedAmount: ord.balanceCollectedAmount ?? restAmt,
+                        balanceCollectedBy: ord.balanceCollectedBy || handlerName,
+                      }
+                    : {}),
+                }
+              : {}),
+          };
+        };
 
         let updatedOrder: any = null;
         if (orderIdx !== -1) {
           updatedOrder = applyStatusUpdate(history[orderIdx]);
-          history[orderIdx] = updatedOrder;
         }
 
         let updatedMainGlasses = data.glassesOrder;
         if (isMainOrder && data.glassesOrder) {
           updatedMainGlasses = applyStatusUpdate(data.glassesOrder);
           if (!updatedOrder) updatedOrder = updatedMainGlasses;
+        }
+
+        if (newStatus === "completed" && syncOrderFrameStock && updatedOrder) {
+          updatedOrder = await syncOrderFrameStock(updatedOrder);
+          if (isMainOrder && updatedMainGlasses) {
+            updatedMainGlasses = {
+              ...updatedMainGlasses,
+              stockDeducted: updatedOrder.stockDeducted,
+              stockDeductedFrames: updatedOrder.stockDeductedFrames,
+            };
+          }
+        }
+
+        if (orderIdx !== -1 && updatedOrder) {
+          history[orderIdx] = updatedOrder;
         }
 
         if (orderIdx !== -1 || isMainOrder) {
@@ -804,16 +850,27 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                 const batch = writeBatch(db);
                 snapStandalone.docs.forEach((d) => {
                   const cur = d.data();
+                  const curTotal = Number(cur.total ?? updatedOrder?.total ?? 0);
+                  const curRest = Math.max(0, curTotal - Number(cur.advance || 0));
                   batch.update(
                     d.ref,
                     removeUndefined({
                       status: newStatus,
                       ...(newStatus === "completed"
                         ? {
-                            advance: cur.total ?? updatedOrder?.total ?? 0,
+                            advance: curTotal,
                             balance: 0,
                             deliveredAt: cur.deliveredAt || nowIso,
                             deliveredBy: cur.deliveredBy || handlerName,
+                            ...(curRest > 0
+                              ? {
+                                  balanceCollectedAt: cur.balanceCollectedAt || nowIso,
+                                  balanceCollectedAmount: cur.balanceCollectedAmount ?? curRest,
+                                  balanceCollectedBy: cur.balanceCollectedBy || handlerName,
+                                }
+                              : {}),
+                            stockDeducted: updatedOrder?.stockDeducted,
+                            stockDeductedFrames: updatedOrder?.stockDeductedFrames,
                           }
                         : {}),
                       updatedAt: nowIso,
@@ -841,10 +898,27 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                 : r,
             ),
           );
+        } else {
+          setFeedbackBanner({
+            text: `Comanda #${order.orderNumber || ""} nu a putut fi localizată în fișa pacientului.`,
+            type: "error",
+          });
+          setTimeout(() => setFeedbackBanner(null), 4000);
         }
+      } else {
+        setFeedbackBanner({
+          text: `Fișa pacientului nu a fost găsită în baza de date pentru comanda #${order.orderNumber || ""}.`,
+          type: "error",
+        });
+        setTimeout(() => setFeedbackBanner(null), 4000);
       }
     } catch (err) {
       console.error("Error setting order status:", err);
+      setFeedbackBanner({
+        text: "A apărut o eroare la actualizarea statusului comenzii.",
+        type: "error",
+      });
+      setTimeout(() => setFeedbackBanner(null), 4000);
     } finally {
       setLoading(false);
     }
@@ -945,6 +1019,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
             advance: currentTotal,
             balance: 0,
             balanceCollectedAt: nowIso,
+            balanceCollectedAmount: restAmount,
             balanceCollectedBy: handlerName,
           };
           history[orderIdx] = updatedOrder;
@@ -958,6 +1033,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
             advance: currentTotal,
             balance: 0,
             balanceCollectedAt: nowIso,
+            balanceCollectedAmount: restAmount,
             balanceCollectedBy: handlerName,
           };
           if (!updatedOrder) updatedOrder = updatedMainGlasses;
@@ -986,6 +1062,7 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                   advance: currentTotal,
                   balance: 0,
                   balanceCollectedAt: nowIso,
+                  balanceCollectedAmount: restAmount,
                   balanceCollectedBy: handlerName,
                   updatedAt: nowIso,
                 });
@@ -1936,15 +2013,54 @@ export const OrdersModal: React.FC<OrdersModalProps> = ({
                             {/* Registru Incasari Azi & Cash vs Card + Export CSV Centralizator */}
                             {(() => {
                               const todayKey = format(new Date(), "yyyy-MM-dd");
-                              const todayOrders = filteredStatsOrders.filter((o) => {
-                                const cDay = (o.createdAt || "").slice(0, 10);
-                                const bDay = (o.balanceCollectedAt || "").slice(0, 10);
+                              const getLocalDayKey = (rawDate?: string) => {
+                                if (!rawDate) return "";
+                                const parsed = safeParseDate(rawDate);
+                                return parsed ? format(parsed, "yyyy-MM-dd") : "";
+                              };
+
+                              const allActiveSellerOrders = (medicalRecords || [])
+                                .flatMap((record) => {
+                                  const history = record.orderHistory || [];
+                                  const current = record.glassesOrder ? [record.glassesOrder] : [];
+                                  const combined = [...history];
+                                  current.forEach((c) => {
+                                    if (!combined.some((h) => h.orderNumber === c.orderNumber)) {
+                                      combined.push(c);
+                                    }
+                                  });
+                                  return combined;
+                                })
+                                .filter((o) => !o.isDeleted)
+                                .filter(
+                                  (o, idx, arr) =>
+                                    (!o.orderNumber || arr.findIndex((x) => x.orderNumber === o.orderNumber) === idx) &&
+                                    (ordersSellerFilter === "all" || o.sellerId === ordersSellerFilter),
+                                );
+
+                              const todayOrders = allActiveSellerOrders.filter((o) => {
+                                const cDay = getLocalDayKey(o.createdAt);
+                                const bDay = getLocalDayKey(o.balanceCollectedAt);
                                 return cDay === todayKey || bDay === todayKey;
                               });
-                              const todayCollected = todayOrders.reduce(
-                                (sum, o) => sum + Number(o.advance || 0),
-                                0,
-                              );
+
+                              const todayCollected = todayOrders.reduce((sum, o) => {
+                                const cDay = getLocalDayKey(o.createdAt);
+                                const bDay = getLocalDayKey(o.balanceCollectedAt);
+                                const adv = Number(o.advance || 0);
+                                const restAmt = o.balanceCollectedAmount !== undefined ? Number(o.balanceCollectedAmount) : null;
+
+                                if (cDay === todayKey && (!bDay || bDay === todayKey)) {
+                                  return sum + adv;
+                                }
+                                if (cDay === todayKey && bDay && bDay !== todayKey) {
+                                  return sum + Math.max(0, adv - (restAmt ?? 0));
+                                }
+                                if (bDay === todayKey && cDay !== todayKey) {
+                                  return sum + (restAmt !== null ? restAmt : adv);
+                                }
+                                return sum;
+                              }, 0);
 
                               const cashSum = filteredStatsOrders
                                 .filter((o) => o.paymentMethod === "numerar")

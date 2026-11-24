@@ -8,8 +8,9 @@
         "uid": { "type": "string" },
         "email": { "type": "string" },
         "displayName": { "type": "string" },
-        "role": { "type": "string", "enum": ["admin", "doctor1", "doctor2", "doctor3", "doctor4", "doctor5", "frontdesk", "seller"] },
-        "color": { "type": "string" }
+        "role": { "type": "string", "enum": ["admin", "doctor1", "doctor2", "doctor3", "doctor4", "doctor5", "frontdesk", "seller", "tv"] },
+        "color": { "type": "string" },
+        "passHash": { "type": "string" }
       },
       "required": ["uid", "email", "role"]
     },
@@ -232,6 +233,22 @@
         "lockedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["doctorId", "slotTime", "lockedByName", "lockedByUid", "lockedAt"]
+    },
+    "MedicalDocument": {
+      "title": "MedicalDocument",
+      "description": "Issued medical document (certificate, referral, report)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "patientName": { "type": "string" },
+        "patientPhone": { "type": "string" },
+        "patientId": { "type": "string" },
+        "documentNumber": { "type": "string" },
+        "date": { "type": "string" },
+        "isDeleted": { "type": "boolean" }
+      },
+      "required": ["type", "patientName", "documentNumber", "date"]
     }
   },
   "firestore": {
@@ -278,6 +295,10 @@
     "/slot_locks/{lockId}": {
       "schema": "SlotLock",
       "description": "Active slot reservations in the scheduler"
+    },
+    "/medicalDocuments/{documentId}": {
+      "schema": "MedicalDocument",
+      "description": "Medical certificates, referrals, and reports registry"
     }
   }
 }

@@ -539,7 +539,7 @@ export function PatientPortal({
             )}
             <div>
               <h1 className={`text-base font-extrabold tracking-tight ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
-                Opticenter Style
+                {clinicConfig?.clinicName || "Opticenter Style"}
               </h1>
               <span className={`text-[9px] font-black uppercase tracking-widest block -mt-1 ${darkMode ? "text-slate-500" : "text-slate-400"}`}>
                 Portal Pacienți
@@ -1058,7 +1058,7 @@ export function PatientPortal({
       {/* Corporate footer */}
       <footer className={`border-t py-6 text-center text-[10px] font-bold ${darkMode ? "bg-slate-950 border-slate-900 text-slate-600" : "bg-slate-50 border-slate-100 text-slate-400"}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p>Copyright © 2026 Opticenter Style . Toate drepturile rezervate.</p>
+          <p>Copyright © 2026 {clinicConfig?.clinicName || "Opticenter Style"}. Toate drepturile rezervate.</p>
           <div className="flex items-center gap-1.5 justify-center">
             <Shield className="w-3.5 h-3.5 text-blue-500/80 shrink-0" />
             <span className="text-[9px] font-black uppercase tracking-wider">Conexiune criptată și securizată SSL</span>

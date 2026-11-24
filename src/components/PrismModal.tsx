@@ -202,48 +202,91 @@ export const PrismModal: React.FC<PrismModalProps> = ({
               ))}
             </div>
           </div>
-          <div className="pt-4 flex gap-3">
-            <button
-              onClick={onClose}
-              className={cn(
-                "flex-1 py-4 rounded-xl font-black uppercase tracking-widest text-xs transition-all border-2",
-                darkMode
-                  ? "bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800"
-                  : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50",
-              )}
-            >
-              Anulează
-            </button>
-            <button
-              disabled={!tempPrismValue || !tempPrismBase}
-              onClick={() => {
-                if (currentMedicalRecord) {
-                  const eyeKey = prismEye.toLowerCase() as "od" | "os";
-                  if (prismTarget === "glassesOrder") {
-                    updateOrder({
-                      [`${eyeKey}.prism`]: tempPrismValue,
-                      [`${eyeKey}.base`]: tempPrismBase,
-                    });
-                  } else {
-                    const updatedEye = {
-                      ...currentMedicalRecord[eyeKey],
-                      prism: tempPrismValue,
-                      base: tempPrismBase as any,
-                    };
-                    setCurrentMedicalRecord({
-                      ...currentMedicalRecord,
-                      [eyeKey]: updatedEye,
-                    });
+          <div className="pt-4 flex flex-col gap-2.5">
+            <div className="flex gap-3">
+              <button
+                onClick={onClose}
+                className={cn(
+                  "flex-1 py-4 rounded-xl font-black uppercase tracking-widest text-xs transition-all border-2 cursor-pointer",
+                  darkMode
+                    ? "bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800"
+                    : "bg-white border-slate-200 text-slate-500 hover:bg-slate-50",
+                )}
+              >
+                Anulează
+              </button>
+              <button
+                disabled={!tempPrismValue || !tempPrismBase}
+                onClick={() => {
+                  if (currentMedicalRecord) {
+                    const eyeKey = prismEye.toLowerCase() as "od" | "os";
+                    if (prismTarget === "glassesOrder") {
+                      updateOrder({
+                        [`${eyeKey}.prism`]: tempPrismValue,
+                        [`${eyeKey}.base`]: tempPrismBase,
+                      });
+                    } else {
+                      const updatedEye = {
+                        ...currentMedicalRecord[eyeKey],
+                        prism: tempPrismValue,
+                        base: tempPrismBase as any,
+                      };
+                      setCurrentMedicalRecord({
+                        ...currentMedicalRecord,
+                        [eyeKey]: updatedEye,
+                      });
+                    }
+                    onClose();
                   }
-                  onClose();
-                }
-              }}
-              className={cn(
-                "flex-1 py-4 bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-xs rounded-xl transition-all shadow-lg shadow-blue-900/20 disabled:opacity-50 disabled:grayscale",
-              )}
-            >
-              Salvează
-            </button>
+                }}
+                className={cn(
+                  "flex-1 py-4 bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-widest text-xs rounded-xl transition-all shadow-lg shadow-blue-900/20 disabled:opacity-50 disabled:grayscale cursor-pointer",
+                )}
+              >
+                Salvează
+              </button>
+            </div>
+            {(tempPrismValue ||
+              tempPrismBase ||
+              (prismTarget === "glassesOrder"
+                ? currentMedicalRecord?.glassesOrder?.[prismEye.toLowerCase() as "od" | "os"]?.prism
+                : currentMedicalRecord?.[prismEye.toLowerCase() as "od" | "os"]?.prism)) && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (currentMedicalRecord) {
+                    const eyeKey = prismEye.toLowerCase() as "od" | "os";
+                    if (prismTarget === "glassesOrder") {
+                      updateOrder({
+                        [`${eyeKey}.prism`]: "",
+                        [`${eyeKey}.base`]: "",
+                      });
+                    } else {
+                      const updatedEye = {
+                        ...currentMedicalRecord[eyeKey],
+                        prism: "",
+                        base: undefined,
+                      };
+                      setCurrentMedicalRecord({
+                        ...currentMedicalRecord,
+                        [eyeKey]: updatedEye,
+                      });
+                    }
+                    setTempPrismValue("");
+                    setTempPrismBase("" as any);
+                    onClose();
+                  }
+                }}
+                className={cn(
+                  "w-full py-2.5 rounded-xl font-black uppercase tracking-widest text-[11px] transition-all border cursor-pointer",
+                  darkMode
+                    ? "bg-rose-950/40 border-rose-800/60 text-rose-400 hover:bg-rose-900/50"
+                    : "bg-rose-50 border-rose-200 text-rose-600 hover:bg-rose-100",
+                )}
+              >
+                Șterge Prismă {prismEye}
+              </button>
+            )}
           </div>
         </div>
       </motion.div>

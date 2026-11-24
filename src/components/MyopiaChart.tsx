@@ -122,7 +122,11 @@ const MyopiaChart: React.FC<MyopiaChartProps> = ({
     .map((d) => ({ ...d, eye: d.eye || ("OS" as const) }))
     .sort((a, b) => a.age - b.age);
 
-  const allPoints = isCombined ? [...sortedOdData, ...sortedOsData] : sortedOdData;
+  const allPoints = isCombined
+    ? [...sortedOdData, ...sortedOsData].sort(
+        (a, b) => a.age - b.age || a.axialLength - b.axialLength,
+      )
+    : sortedOdData;
 
   const minPatientAge = allPoints.length > 0 ? Math.min(...allPoints.map((d) => d.age)) : 6;
   const maxPatientAge = allPoints.length > 0 ? Math.max(...allPoints.map((d) => d.age)) : 21;

@@ -1,7 +1,7 @@
 import React from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { FileText, Printer, X } from "lucide-react";
-import { cn, getSexFromCNP, getBirthDateFromCNP } from "../appConstants";
+import { cn, getSexFromCNP, getBirthDateFromCNP, calculateAge } from "../appConstants";
 
 interface DocumentConfiguratorModalProps {
   activeDocumentModal: string | null;
@@ -1515,9 +1515,9 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                             1. Date Identificare Pacient & Medic
                           </p>
     
-                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-12 gap-2.5">
-                            <div className="md:col-span-3">
-                              <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-[3.5fr_2.8fr_2.5fr_1.2fr] gap-2.5">
+                            <div className="min-w-0">
+                              <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1 whitespace-nowrap truncate">
                                 Nume Familie Pacient
                               </label>
                               <input
@@ -1530,16 +1530,19 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     : "bg-slate-50 border-slate-200 text-slate-900",
                                 )}
                                 value={documentForm.lastName || ""}
-                                onChange={(e) =>
+                                onChange={(e) => {
+                                  const nextLastName = e.target.value;
+                                  const fullName = `${nextLastName} ${documentForm.firstName || ""}`.trim();
                                   setDocumentForm({
                                     ...documentForm,
-                                    lastName: e.target.value,
-                                  })
-                                }
+                                    lastName: nextLastName,
+                                    patientName: fullName,
+                                  });
+                                }}
                               />
                             </div>
-                            <div className="md:col-span-4">
-                              <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1">
+                            <div className="min-w-0">
+                              <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1 whitespace-nowrap truncate">
                                 Prenume Pacient
                               </label>
                               <input
@@ -1552,17 +1555,72 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                     : "bg-slate-50 border-slate-200 text-slate-900",
                                 )}
                                 value={documentForm.firstName || ""}
-                                onChange={(e) =>
+                                onChange={(e) => {
+                                  const nextFirstName = e.target.value;
+                                  const fullName = `${documentForm.lastName || ""} ${nextFirstName}`.trim();
                                   setDocumentForm({
                                     ...documentForm,
-                                    firstName: e.target.value,
-                                  })
-                                }
+                                    firstName: nextFirstName,
+                                    patientName: fullName,
+                                  });
+                                }}
                               />
                             </div>
-                            <div className="md:col-span-2">
-                              <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1">
-                                Vârstă (Simplă)
+                            <div className="min-w-0">
+                              <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1 whitespace-nowrap truncate">
+                                Data Nașterii
+                              </label>
+                              <input
+                                type="text"
+                                maxLength={10}
+                                placeholder="ZZ-LL-AAAA"
+                                className={cn(
+                                  "w-full p-2.5 border rounded-xl text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-mono",
+                                  darkMode
+                                    ? "bg-slate-800 border-slate-700 text-white"
+                                    : "bg-slate-50 border-slate-200 text-slate-900",
+                                )}
+                                value={(() => {
+                                  const raw = documentForm.patientBirthDate || documentForm.birthDate || "";
+                                  if (!raw) return "";
+                                  const parts = raw.split("-");
+                                  if (parts.length === 3 && parts[0].length === 4) {
+                                    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+                                  }
+                                  return raw;
+                                })()}
+                                onChange={(e) => {
+                                  const cleanDigits = e.target.value.replace(/\D/g, "");
+                                  let formatted = "";
+                                  if (cleanDigits.length <= 2) {
+                                    formatted = cleanDigits;
+                                  } else if (cleanDigits.length <= 4) {
+                                    formatted = `${cleanDigits.slice(0, 2)}-${cleanDigits.slice(2, 4)}`;
+                                  } else {
+                                    formatted = `${cleanDigits.slice(0, 2)}-${cleanDigits.slice(2, 4)}-${cleanDigits.slice(4, 8)}`;
+                                  }
+                                  let dbDate = formatted;
+                                  let nextAge: string | undefined;
+                                  if (formatted.length === 10) {
+                                    const parts = formatted.split("-");
+                                    dbDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+                                    const computed = calculateAge(dbDate);
+                                    if (computed !== undefined && computed >= 0 && computed <= 120) {
+                                      nextAge = computed.toString();
+                                    }
+                                  }
+                                  setDocumentForm({
+                                    ...documentForm,
+                                    birthDate: dbDate,
+                                    patientBirthDate: dbDate,
+                                    ...(nextAge !== undefined ? { ageSimple: nextAge } : {}),
+                                  });
+                                }}
+                              />
+                            </div>
+                            <div className="min-w-0">
+                              <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1 whitespace-nowrap truncate">
+                                Vârstă
                               </label>
                               <input
                                 type="text"
@@ -1582,7 +1640,10 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                 }
                               />
                             </div>
-                            <div className="md:col-span-3">
+                          </div>
+    
+                          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
+                            <div className="md:col-span-3 min-w-0">
                               <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1 flex items-center justify-between">
                                 <span>CNP</span>
                                 <span className="text-[9px] font-normal text-slate-400 lowercase tracking-normal">
@@ -1604,10 +1665,8 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                 onBlur={(e) => handleCnpFieldBlur(e.target.value)}
                               />
                             </div>
-                          </div>
-    
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <div>
+
+                            <div className="md:col-span-4 min-w-0">
                               <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1">
                                 Medic Consultant
                               </label>
@@ -1634,10 +1693,10 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                               </select>
                             </div>
     
-                            <div className="flex items-center gap-6 pt-5">
+                            <div className="md:col-span-5 flex flex-wrap items-center gap-x-5 gap-y-2 pt-5 min-w-0">
                               {/* Consult Complet: devine inactiv daca e bifat Revenire sau Gratis */}
                               <label className={cn(
-                                "flex items-center gap-2 font-bold text-xs text-black dark:text-slate-200 select-none transition-all",
+                                "flex items-center gap-2 font-bold text-xs text-black dark:text-slate-200 select-none transition-all whitespace-nowrap",
                                 (documentForm.isControl || documentForm.isGratis)
                                   ? "opacity-35 cursor-not-allowed pointer-events-none"
                                   : "cursor-pointer"
@@ -1661,7 +1720,7 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
     
                               {/* Revenire / Control: devine inactiv daca e bifat Consult Complet sau Gratis */}
                               <label className={cn(
-                                "flex items-center gap-2 font-bold text-xs text-black dark:text-slate-200 select-none transition-all",
+                                "flex items-center gap-2 font-bold text-xs text-black dark:text-slate-200 select-none transition-all whitespace-nowrap",
                                 (documentForm.isConsultComplet || documentForm.isGratis)
                                   ? "opacity-35 cursor-not-allowed pointer-events-none"
                                   : "cursor-pointer"
@@ -1685,7 +1744,7 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
     
                               {/* Gratis: devine inactiv daca e bifat Consult Complet sau Revenire */}
                               <label className={cn(
-                                "flex items-center gap-2 font-bold text-xs text-black dark:text-slate-200 select-none transition-all",
+                                "flex items-center gap-2 font-bold text-xs text-black dark:text-slate-200 select-none transition-all whitespace-nowrap",
                                 (documentForm.isConsultComplet || documentForm.isControl)
                                   ? "opacity-35 cursor-not-allowed pointer-events-none"
                                   : "cursor-pointer"
@@ -2709,11 +2768,11 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                             </div>
                             <div className="md:col-span-2">
                               <label className="block text-[10px] font-black text-black dark:text-slate-200 uppercase mb-1">
-                                Vârstă (Detaliat)
+                                Vârstă (ani)
                               </label>
                               <input
                                 type="text"
-                                placeholder="Ex: 45 de ani, 6 luni și 12 zile"
+                                placeholder="Ex: 45"
                                 className={cn(
                                   "w-full p-2.5 border rounded-xl text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-500/20 transition-all",
                                   darkMode

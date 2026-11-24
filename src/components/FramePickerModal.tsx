@@ -123,7 +123,7 @@ export const FramePickerModal: React.FC<FramePickerModalProps> = React.memo(({
                 >
                   <option value="Toate">Toate Categoriile</option>
                   <option value="Bărbați">Bărbați</option>
-                  <option value="Dame">Dame</option>
+                  <option value="Femei">Femei</option>
                   <option value="Copii">Copii</option>
                   <option value="Unisex">Unisex</option>
                 </select>

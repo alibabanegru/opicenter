@@ -227,15 +227,17 @@ export const ContactLensModal: React.FC<ContactLensModalProps> = ({
 
   // Recalculate vertex compensation from spectacle and recalculate toric cylinder
   const handleRecalculateVertex = () => {
-    const updates: Partial<ContactLensPrescription> = {};
-    if (spectacleEye?.sph) {
-      updates.sph = vertexCompensation(spectacleEye.sph);
-    }
-    if (spectacleEye?.cyl) {
+    const updates: Partial<ContactLensPrescription> = {
+      sph: spectacleEye?.sph ? vertexCompensation(spectacleEye.sph) : "",
+    };
+    if (spectacleEye?.cyl && spectacleEye.cyl.trim() !== "") {
       updates.cyl = recalculateContactLensCylinder(spectacleEye.cyl);
-    }
-    if (spectacleEye?.axis && !activeCl.axis) {
-      updates.axis = spectacleEye.axis;
+      if (spectacleEye.axis && !activeCl.axis) {
+        updates.axis = spectacleEye.axis;
+      }
+    } else {
+      updates.cyl = "";
+      updates.axis = "";
     }
     updateActiveCl(updates);
   };

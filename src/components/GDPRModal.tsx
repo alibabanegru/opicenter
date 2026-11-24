@@ -107,9 +107,11 @@ export const GDPRModal = React.memo(function GDPRModal({ isOpen, onClose, patien
   const [localPhone, setLocalPhone] = useState(patientPhone || "");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isConfirmingRevoke, setIsConfirmingRevoke] = useState(false);
+  const [hasPreservedSignature, setHasPreservedSignature] = useState(Boolean(initialSignature));
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const signaturePadRef = useRef<SignaturePad | null>(null);
   const channelRef = useRef<BroadcastChannel | null>(null);
+  const wacomSignatureRef = useRef<string | null>(null);
 
   const birthDateDetails = getBirthDateDetailsFromCNP(localCnp) || parseBirthDateString(patientBirthDate);
 
@@ -134,11 +136,17 @@ export const GDPRModal = React.memo(function GDPRModal({ isOpen, onClose, patien
         });
       } else if (type === "signature_saved") {
         const signature = data?.signature;
-        if (signature && signaturePadRef.current) {
-          signaturePadRef.current.fromDataURL(signature);
+        if (signature) {
+          wacomSignatureRef.current = signature;
+          setHasPreservedSignature(true);
+          if (signaturePadRef.current) {
+            signaturePadRef.current.fromDataURL(signature);
+          }
         }
       } else if (type === "clear") {
         signaturePadRef.current?.clear();
+        wacomSignatureRef.current = null;
+        setHasPreservedSignature(false);
       }
     };
 
@@ -183,9 +191,12 @@ export const GDPRModal = React.memo(function GDPRModal({ isOpen, onClose, patien
     if (isOpen) {
       setLocalCnp(patientCnp || "");
       setLocalPhone(patientPhone || "");
+      setHasPreservedSignature(Boolean(initialSignature));
+      wacomSignatureRef.current = null;
+      setIsConfirmingRevoke(false);
       setErrorMsg(null);
     }
-  }, [isOpen, patientCnp, patientPhone]);
+  }, [isOpen, patientCnp, patientPhone, initialSignature]);
 
   useEffect(() => {
     setErrorMsg(null);
@@ -252,13 +263,25 @@ export const GDPRModal = React.memo(function GDPRModal({ isOpen, onClose, patien
 
   const clearSignature = () => {
     signaturePadRef.current?.clear();
+    wacomSignatureRef.current = null;
+    setHasPreservedSignature(false);
   };
 
   const handleSave = async () => {
     setErrorMsg(null);
     const canvas = canvasRef.current;
-    const isPadEmpty = signaturePadRef.current?.isEmpty();
-    const signature = isPadEmpty ? "" : compressSignatureCanvas(canvas, isPadEmpty) || "";
+    const isPadEmpty = signaturePadRef.current?.isEmpty() ?? true;
+    let signature = "";
+    if (!isPadEmpty) {
+      signature =
+        compressSignatureCanvas(canvas, false) ||
+        wacomSignatureRef.current ||
+        (hasPreservedSignature ? initialSignature || "" : "");
+    } else if (wacomSignatureRef.current) {
+      signature = wacomSignatureRef.current;
+    } else if (hasPreservedSignature && initialSignature) {
+      signature = initialSignature;
+    }
     if (onSave) {
       const res = await onSave(localCnp, signature, localPhone);
       if (res) {
@@ -340,12 +363,14 @@ export const GDPRModal = React.memo(function GDPRModal({ isOpen, onClose, patien
     doc.text(normalizeForPDF(`Data: ${signatureDate}`), 20, currentY);
     doc.text(normalizeForPDF(`Semnătura pacientului:`), 110, currentY);
 
-    if (signaturePadRef.current && !signaturePadRef.current.isEmpty()) {
-      const canvas = canvasRef.current;
-      const signatureDataUrl = compressSignatureCanvas(canvas, false);
-      if (signatureDataUrl) {
-        doc.addImage(signatureDataUrl, "PNG", 110, currentY + 5, 60, 20);
-      }
+    const isPadEmpty = signaturePadRef.current?.isEmpty() ?? true;
+    const signatureDataUrl = !isPadEmpty
+      ? compressSignatureCanvas(canvasRef.current, false) ||
+        wacomSignatureRef.current ||
+        (hasPreservedSignature ? initialSignature : "")
+      : wacomSignatureRef.current || (hasPreservedSignature ? initialSignature : "");
+    if (signatureDataUrl) {
+      doc.addImage(signatureDataUrl, "PNG", 110, currentY + 5, 60, 20);
     }
 
     // Clean filename for download
@@ -458,6 +483,9 @@ export const GDPRModal = React.memo(function GDPRModal({ isOpen, onClose, patien
             <div className="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 overflow-hidden h-40">
               <canvas
                 ref={canvasRef}
+                onPointerDown={() => {
+                  wacomSignatureRef.current = null;
+                }}
                 className="w-full h-full cursor-crosshair touch-none"
               />
             </div>

@@ -159,16 +159,18 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
       }
     });
 
-    for (const record of medicalRecords) {
-      // If already dismissed, skip
-      if (record.recallDismissed) continue;
+    // Group/deduplicate medicalRecords by patient (normalized phone or normalized lowercase name),
+    // keeping only the most recent record per patient so older duplicates don't resurface or ignore recallDismissed.
+    const latestRecordByPatient = new Map<string, { record: MedicalRecord; lastVisit: Date; sortScore: number }>();
 
+    for (const record of medicalRecords) {
       const pName = (record.patientName || "").trim();
       const pPhone = (record.patientPhone || "").trim();
       if (!pName) continue;
 
       const nameLower = pName.toLowerCase();
       const phoneDigits = pPhone.replace(/\D/g, "");
+      const patientKey = phoneDigits.length >= 6 ? `tel:${phoneDigits}` : `name:${nameLower}`;
 
       // Determine most accurate latest visit date
       let lastVisit: Date | null = null;
@@ -193,8 +195,36 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
         }
       }
 
-      // If no valid visit date can be inferred, skip
       if (!lastVisit || isNaN(lastVisit.getTime())) continue;
+
+      let updatedTime = lastVisit.getTime();
+      if (record.updatedAt) {
+        try {
+          const parsedUpd = parseISO(record.updatedAt);
+          if (!isNaN(parsedUpd.getTime())) {
+            updatedTime = Math.max(updatedTime, parsedUpd.getTime());
+          }
+        } catch {}
+      }
+
+      const existing = latestRecordByPatient.get(patientKey);
+      if (!existing || updatedTime > existing.sortScore) {
+        latestRecordByPatient.set(patientKey, {
+          record,
+          lastVisit,
+          sortScore: updatedTime,
+        });
+      }
+    }
+
+    for (const { record, lastVisit } of latestRecordByPatient.values()) {
+      // If the patient's latest record is dismissed, skip
+      if (record.recallDismissed) continue;
+
+      const pName = (record.patientName || "").trim();
+      const pPhone = (record.patientPhone || "").trim();
+      const nameLower = pName.toLowerCase();
+      const phoneDigits = pPhone.replace(/\D/g, "");
 
       const hasUpcomingAppointment = Boolean(
         (phoneDigits && futureAppointmentMap.has(phoneDigits)) ||
@@ -210,14 +240,14 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
       `.toLowerCase();
 
       // Detection A: Check Periodic Control / Revenire (6 luni, 1-2 ani, 2 ani, 1 an, 3 luni)
+      // Use boundary-safe regexes so frame codes ("6l") or patient ages ("12 ani", "21 ani") do not false-positive
       let periodicDetected = false;
       let recommendedInterval = "";
       let monthsToAdd = 0;
       let recallReason = "";
 
       if (
-        combinedText.includes("6 luni") ||
-        combinedText.includes("6l") ||
+        /(?:^|[^0-9a-zA-Zăâîșț])6\s*l(?:uni)?(?:[^0-9a-zA-Zăâîșț]|$)/i.test(combinedText) ||
         /(?:reevaluare|revenire|control)\s*(?:la|peste)?\s*6\s*luni/i.test(combinedText)
       ) {
         periodicDetected = true;
@@ -225,8 +255,7 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
         monthsToAdd = 6;
         recallReason = "Revenire recomandată la 6 luni";
       } else if (
-        combinedText.includes("1-2 ani") ||
-        combinedText.includes("1 - 2 ani") ||
+        /(?:^|[^0-9])1\s*-\s*2\s*ani(?:[^0-9a-zA-Zăâîșț]|$)/i.test(combinedText) ||
         /(?:reevaluare|revenire|control)\s*(?:la|peste)?\s*1\s*-\s*2\s*ani/i.test(combinedText)
       ) {
         periodicDetected = true;
@@ -234,7 +263,7 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
         monthsToAdd = 18;
         recallReason = "Revenire recomandată la 1-2 ani";
       } else if (
-        combinedText.includes("2 ani") ||
+        /(?:^|[^0-9])2\s*ani(?:[^0-9a-zA-Zăâîșț]|$)/i.test(combinedText) ||
         /(?:reevaluare|revenire|control)\s*(?:la|peste)?\s*2\s*ani/i.test(combinedText)
       ) {
         periodicDetected = true;
@@ -242,15 +271,15 @@ export const PatientRecallPanel: React.FC<PatientRecallPanelProps> = ({
         monthsToAdd = 24;
         recallReason = "Revenire recomandată la 2 ani";
       } else if (
-        combinedText.includes("1 an") ||
-        /(?:reevaluare|revenire|control)\s*(?:la|peste)?\s*1\s*an/i.test(combinedText)
+        /(?:^|[^0-9])1\s*an(?:[^0-9a-zA-Zăâîșț]|$)/i.test(combinedText) ||
+        /(?:reevaluare|revenire|control)\s*(?:la|peste)?\s*1\s*an\b/i.test(combinedText)
       ) {
         periodicDetected = true;
         recommendedInterval = "1 an";
         monthsToAdd = 12;
         recallReason = "Revenire recomandată la 1 an";
       } else if (
-        combinedText.includes("3 luni") ||
+        /(?:^|[^0-9])3\s*luni(?:[^0-9a-zA-Zăâîșț]|$)/i.test(combinedText) ||
         /(?:reevaluare|revenire|control)\s*(?:la|peste)?\s*3\s*luni/i.test(combinedText)
       ) {
         periodicDetected = true;
