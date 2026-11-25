@@ -1,4 +1,4 @@
-const CACHE_NAME = "opticenter-shell-v1";
+const CACHE_NAME = "opticenter-shell-v2";
 const PRECACHE_ASSETS = [
   "/manifest.json",
   "/icon.svg",
@@ -38,9 +38,17 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Only handle same-origin http(s) requests; never intercept Firebase/Google/external APIs
+  // Only handle same-origin http(s) requests; never intercept Firebase/Google/external APIs or Vite dev modules
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith("/api/")) return;
+  if (
+    url.pathname.startsWith("/api/") ||
+    url.pathname.startsWith("/src/") ||
+    url.pathname.startsWith("/node_modules/") ||
+    url.pathname.startsWith("/@") ||
+    url.pathname === "/sw.js"
+  ) {
+    return;
+  }
 
   // Network-first for HTML navigations so deploys are always fresh
   if (request.mode === "navigate" || request.destination === "document") {
@@ -53,11 +61,11 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Cache-first with background revalidation for static assets/icons
+  // Cache-first with background revalidation for production static assets/icons only
   if (
     url.pathname.startsWith("/assets/") ||
     PRECACHE_ASSETS.includes(url.pathname) ||
-    /\.(?:png|jpg|jpeg|svg|webp|ico|woff2?|css|js)$/i.test(url.pathname)
+    /\.(?:png|jpg|jpeg|svg|webp|ico|woff2?)$/i.test(url.pathname)
   ) {
     event.respondWith(
       caches.open(CACHE_NAME).then(async (cache) => {

@@ -159,6 +159,7 @@ const PatientBirthdayModal = React.lazy(() => import("./components/PatientBirthd
 const ContactLensModal = React.lazy(() => import("./components/ContactLensModal").then(m => ({ default: m.ContactLensModal })));
 const ExportModal = React.lazy(() => import("./components/ExportModal").then(m => ({ default: m.ExportModal })));
 const BNRModal = React.lazy(() => import("./components/BNRModal"));
+const CNASCodesModal = React.lazy(() => import("./components/CNASCodesModal"));
 const AppointmentHistoryModal = React.lazy(() => import("./components/AppointmentHistoryModal"));
 const InventoryView = React.lazy(() => import("./components/InventoryView").then(m => ({ default: m.InventoryView })));
 const GlassesOrderModal = React.lazy(() => import("./components/GlassesOrderModal").then(m => ({ default: m.GlassesOrderModal })));
@@ -1831,6 +1832,7 @@ export default function App() {
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState<string | null>(null);
   const [isBNRModalOpen, setIsBNRModalOpen] = useState(false);
+  const [isCNASModalOpen, setIsCNASModalOpen] = useState(false);
   const [showAdminAppointments, setShowAdminAppointments] = useState(false);
 
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
@@ -3694,6 +3696,15 @@ export default function App() {
   const [clModalError, setClModalError] = useState<string | null>(null);
   const [forceShowAddition, setForceShowAddition] = useState(false);
   const [medicalDocuments, setMedicalDocuments] = useState<any[]>([]);
+  useEffect(() => {
+    const maxNum = Math.max(
+      medicalDocuments.length,
+      extractMaxDocSuffix(medicalDocuments),
+    );
+    if (maxNum > 0) {
+      setKnownGlobalDocCount((prev) => (maxNum > prev ? maxNum : prev));
+    }
+  }, [medicalDocuments]);
   const [isRegistryModalOpen, setIsRegistryModalOpen] = useState(false);
   const [editingMedicalDocId, setEditingMedicalDocId] = useState<string | null>(
     null,
@@ -8402,12 +8413,7 @@ export default function App() {
             const preservedOlder = prev.filter(
               (d: any) => !freshIds.has(d.id)
             );
-            const mergedDocs = [...fresh, ...preservedOlder];
-            const maxNum = Math.max(mergedDocs.length, extractMaxDocSuffix(mergedDocs));
-            if (maxNum > 0) {
-              setKnownGlobalDocCount((k) => Math.max(k, maxNum));
-            }
-            return mergedDocs;
+            return [...fresh, ...preservedOlder];
           });
         },
         (error) => {
@@ -27307,6 +27313,12 @@ export default function App() {
           darkMode={darkMode}
         />
 
+        <CNASCodesModal
+          isOpen={isCNASModalOpen}
+          onClose={() => setIsCNASModalOpen(false)}
+          darkMode={darkMode}
+        />
+
       {/* Phone Edit Modal */}
       <PhoneEditModal
         isOpen={isPhoneEditModalOpen}
@@ -27408,6 +27420,23 @@ export default function App() {
               <span>
                 Restabilește Pacienți ({deletedPatientsBackup.length})
               </span>
+            </button>
+          )}
+
+          {/* CNAS Codes Button (Doctors Only) */}
+          {isDoctor && (
+            <button
+              type="button"
+              onClick={() => setIsCNASModalOpen(true)}
+              className={cn(
+                "w-12 h-12 rounded-full border shadow-sm flex items-center justify-center text-[11px] font-black uppercase tracking-wider cursor-pointer transition-colors shrink-0",
+                darkMode
+                  ? "bg-blue-950/60 border-blue-800/70 hover:bg-blue-900/70 text-blue-300"
+                  : "bg-blue-50 border-blue-200 hover:bg-blue-100 text-blue-700",
+              )}
+              title="Coduri CNAS Oftalmologie"
+            >
+              CNAS
             </button>
           )}
 

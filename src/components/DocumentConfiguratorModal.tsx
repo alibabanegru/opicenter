@@ -2063,82 +2063,6 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                 />
                               </div>
     
-                              <div>
-                                <div className="flex justify-between items-center mb-0.5">
-                                  <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase">
-                                    {documentForm.anteriorSegmentAo ? "Pol Anterior AO" : "Pol Anterior OD"}
-                                  </label>
-                                  <label className="flex items-center gap-1 cursor-pointer select-none">
-                                    <input
-                                      type="checkbox"
-                                      checked={!!documentForm.anteriorSegmentAo}
-                                      onChange={(e) => {
-                                        const isAo = e.target.checked;
-                                        const currentOd = documentForm.anteriorSegmentOd || "";
-                                        setDocumentForm({
-                                          ...documentForm,
-                                          anteriorSegmentAo: isAo,
-                                          anteriorSegmentOd: currentOd,
-                                          anteriorSegmentOs: isAo ? currentOd : (documentForm.anteriorSegmentOs || ""),
-                                        });
-                                      }}
-                                      className="w-3 h-3 accent-amber-500 rounded"
-                                    />
-                                    <span className="text-[7.5px] font-black text-amber-500 select-none">AO</span>
-                                  </label>
-                                </div>
-                                <input
-                                  type="text"
-                                  className="w-full p-2 text-xs border rounded-lg font-bold"
-                                  value={documentForm.anteriorSegmentOd || ""}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setDocumentForm({
-                                      ...documentForm,
-                                      anteriorSegmentOd: val,
-                                      anteriorSegmentOs: documentForm.anteriorSegmentAo ? val : documentForm.anteriorSegmentOs,
-                                    });
-                                  }}
-                                />
-                              </div>
-                              <div>
-                                <div className="flex justify-between items-center mb-0.5">
-                                  <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase">
-                                    {documentForm.posteriorSegmentAo ? "Pol Posterior AO" : "Pol Posterior OD"}
-                                  </label>
-                                  <label className="flex items-center gap-1 cursor-pointer select-none">
-                                    <input
-                                      type="checkbox"
-                                      checked={!!documentForm.posteriorSegmentAo}
-                                      onChange={(e) => {
-                                        const isAo = e.target.checked;
-                                        const currentOd = documentForm.posteriorSegmentOd || "";
-                                        setDocumentForm({
-                                          ...documentForm,
-                                          posteriorSegmentAo: isAo,
-                                          posteriorSegmentOd: currentOd,
-                                          posteriorSegmentOs: isAo ? currentOd : (documentForm.posteriorSegmentOs || ""),
-                                        });
-                                      }}
-                                      className="w-3 h-3 accent-amber-500 rounded"
-                                    />
-                                    <span className="text-[7.5px] font-black text-amber-500 select-none">AO</span>
-                                  </label>
-                                </div>
-                                <input
-                                  type="text"
-                                  className="w-full p-2 text-xs border rounded-lg font-bold"
-                                  value={documentForm.posteriorSegmentOd || ""}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setDocumentForm({
-                                      ...documentForm,
-                                      posteriorSegmentOd: val,
-                                      posteriorSegmentOs: documentForm.posteriorSegmentAo ? val : documentForm.posteriorSegmentOs,
-                                    });
-                                  }}
-                                />
-                              </div>
                             </div>
     
                             {/* OCHIUL STANG */}
@@ -2330,71 +2254,203 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                 />
                               </div>
     
-                              <div>
-                                {documentForm.anteriorSegmentAo ? (
-                                  <div className="opacity-60">
-                                    <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase mb-0.5">
-                                      Pol Anterior OS (Sincronizat AO)
-                                    </label>
-                                    <input
-                                      type="text"
-                                      disabled
-                                      className="w-full p-2 text-xs border rounded-lg font-bold bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 cursor-not-allowed text-slate-500 dark:text-slate-400"
-                                      value={documentForm.anteriorSegmentOd || ""}
-                                    />
-                                  </div>
-                                ) : (
-                                  <div>
-                                    <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase mb-0.5">
-                                      Pol Anterior OS
-                                    </label>
-                                    <input
-                                      type="text"
-                                      className="w-full p-2 text-xs border rounded-lg font-bold"
-                                      value={documentForm.anteriorSegmentOs || ""}
-                                      onChange={(e) =>
-                                        setDocumentForm({
-                                          ...documentForm,
-                                          anteriorSegmentOs: e.target.value,
-                                        })
-                                      }
-                                    />
-                                  </div>
-                                )}
-                              </div>
-                              <div>
-                                {documentForm.posteriorSegmentAo ? (
-                                  <div className="opacity-60">
-                                    <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase mb-0.5">
-                                      Pol Posterior OS (Sincronizat AO)
-                                    </label>
-                                    <input
-                                      type="text"
-                                      disabled
-                                      className="w-full p-2 text-xs border rounded-lg font-bold bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 cursor-not-allowed text-slate-500 dark:text-slate-400"
-                                      value={documentForm.posteriorSegmentOd || ""}
-                                    />
-                                  </div>
-                                ) : (
-                                  <div>
-                                    <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase mb-0.5">
-                                      Pol Posterior OS
-                                    </label>
-                                    <input
-                                      type="text"
-                                      className="w-full p-2 text-xs border rounded-lg font-bold"
-                                      value={documentForm.posteriorSegmentOs || ""}
-                                      onChange={(e) =>
-                                        setDocumentForm({
-                                          ...documentForm,
-                                          posteriorSegmentOs: e.target.value,
-                                        })
-                                      }
-                                    />
-                                  </div>
-                                )}
-                              </div>
                             </div>
+
+                            {/* POL ANTERIOR (OD / OS sau extins AO) */}
+                            {documentForm.anteriorSegmentAo ? (
+                              <div className="md:col-span-2 bg-blue-500/5 dark:bg-blue-500/10 p-3.5 rounded-2xl border border-blue-500/10">
+                                <div className="flex justify-between items-center mb-0.5">
+                                  <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase">
+                                    Pol Anterior AO
+                                  </label>
+                                  <label className="flex items-center gap-1 cursor-pointer select-none">
+                                    <input
+                                      type="checkbox"
+                                      checked={!!documentForm.anteriorSegmentAo}
+                                      onChange={(e) => {
+                                        const isAo = e.target.checked;
+                                        const currentOd = documentForm.anteriorSegmentOd || "";
+                                        setDocumentForm({
+                                          ...documentForm,
+                                          anteriorSegmentAo: isAo,
+                                          anteriorSegmentOd: currentOd,
+                                          anteriorSegmentOs: isAo ? currentOd : (documentForm.anteriorSegmentOs || ""),
+                                        });
+                                      }}
+                                      className="w-3 h-3 accent-amber-500 rounded"
+                                    />
+                                    <span className="text-[7.5px] font-black text-amber-500 select-none">AO</span>
+                                  </label>
+                                </div>
+                                <input
+                                  type="text"
+                                  className="w-full p-2 text-xs border rounded-lg font-bold"
+                                  value={documentForm.anteriorSegmentOd || ""}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setDocumentForm({
+                                      ...documentForm,
+                                      anteriorSegmentOd: val,
+                                      anteriorSegmentOs: val,
+                                    });
+                                  }}
+                                />
+                              </div>
+                            ) : (
+                              <>
+                                <div className="bg-blue-500/5 dark:bg-blue-500/10 p-3.5 rounded-2xl border border-blue-500/10">
+                                  <div className="flex justify-between items-center mb-0.5">
+                                    <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase">
+                                      Pol Anterior OD
+                                    </label>
+                                    <label className="flex items-center gap-1 cursor-pointer select-none">
+                                      <input
+                                        type="checkbox"
+                                        checked={!!documentForm.anteriorSegmentAo}
+                                        onChange={(e) => {
+                                          const isAo = e.target.checked;
+                                          const currentOd = documentForm.anteriorSegmentOd || "";
+                                          setDocumentForm({
+                                            ...documentForm,
+                                            anteriorSegmentAo: isAo,
+                                            anteriorSegmentOd: currentOd,
+                                            anteriorSegmentOs: isAo ? currentOd : (documentForm.anteriorSegmentOs || ""),
+                                          });
+                                        }}
+                                        className="w-3 h-3 accent-amber-500 rounded"
+                                      />
+                                      <span className="text-[7.5px] font-black text-amber-500 select-none">AO</span>
+                                    </label>
+                                  </div>
+                                  <input
+                                    type="text"
+                                    className="w-full p-2 text-xs border rounded-lg font-bold"
+                                    value={documentForm.anteriorSegmentOd || ""}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setDocumentForm({
+                                        ...documentForm,
+                                        anteriorSegmentOd: val,
+                                      });
+                                    }}
+                                  />
+                                </div>
+                                <div className="bg-emerald-500/5 dark:bg-emerald-500/10 p-3.5 rounded-2xl border border-emerald-500/10">
+                                  <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase mb-0.5">
+                                    Pol Anterior OS
+                                  </label>
+                                  <input
+                                    type="text"
+                                    className="w-full p-2 text-xs border rounded-lg font-bold"
+                                    value={documentForm.anteriorSegmentOs || ""}
+                                    onChange={(e) =>
+                                      setDocumentForm({
+                                        ...documentForm,
+                                        anteriorSegmentOs: e.target.value,
+                                      })
+                                    }
+                                  />
+                                </div>
+                              </>
+                            )}
+
+                            {/* POL POSTERIOR (OD / OS sau extins AO) */}
+                            {documentForm.posteriorSegmentAo ? (
+                              <div className="md:col-span-2 bg-blue-500/5 dark:bg-blue-500/10 p-3.5 rounded-2xl border border-blue-500/10">
+                                <div className="flex justify-between items-center mb-0.5">
+                                  <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase">
+                                    Pol Posterior AO
+                                  </label>
+                                  <label className="flex items-center gap-1 cursor-pointer select-none">
+                                    <input
+                                      type="checkbox"
+                                      checked={!!documentForm.posteriorSegmentAo}
+                                      onChange={(e) => {
+                                        const isAo = e.target.checked;
+                                        const currentOd = documentForm.posteriorSegmentOd || "";
+                                        setDocumentForm({
+                                          ...documentForm,
+                                          posteriorSegmentAo: isAo,
+                                          posteriorSegmentOd: currentOd,
+                                          posteriorSegmentOs: isAo ? currentOd : (documentForm.posteriorSegmentOs || ""),
+                                        });
+                                      }}
+                                      className="w-3 h-3 accent-amber-500 rounded"
+                                    />
+                                    <span className="text-[7.5px] font-black text-amber-500 select-none">AO</span>
+                                  </label>
+                                </div>
+                                <input
+                                  type="text"
+                                  className="w-full p-2 text-xs border rounded-lg font-bold"
+                                  value={documentForm.posteriorSegmentOd || ""}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setDocumentForm({
+                                      ...documentForm,
+                                      posteriorSegmentOd: val,
+                                      posteriorSegmentOs: val,
+                                    });
+                                  }}
+                                />
+                              </div>
+                            ) : (
+                              <>
+                                <div className="bg-blue-500/5 dark:bg-blue-500/10 p-3.5 rounded-2xl border border-blue-500/10">
+                                  <div className="flex justify-between items-center mb-0.5">
+                                    <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase">
+                                      Pol Posterior OD
+                                    </label>
+                                    <label className="flex items-center gap-1 cursor-pointer select-none">
+                                      <input
+                                        type="checkbox"
+                                        checked={!!documentForm.posteriorSegmentAo}
+                                        onChange={(e) => {
+                                          const isAo = e.target.checked;
+                                          const currentOd = documentForm.posteriorSegmentOd || "";
+                                          setDocumentForm({
+                                            ...documentForm,
+                                            posteriorSegmentAo: isAo,
+                                            posteriorSegmentOd: currentOd,
+                                            posteriorSegmentOs: isAo ? currentOd : (documentForm.posteriorSegmentOs || ""),
+                                          });
+                                        }}
+                                        className="w-3 h-3 accent-amber-500 rounded"
+                                      />
+                                      <span className="text-[7.5px] font-black text-amber-500 select-none">AO</span>
+                                    </label>
+                                  </div>
+                                  <input
+                                    type="text"
+                                    className="w-full p-2 text-xs border rounded-lg font-bold"
+                                    value={documentForm.posteriorSegmentOd || ""}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setDocumentForm({
+                                        ...documentForm,
+                                        posteriorSegmentOd: val,
+                                      });
+                                    }}
+                                  />
+                                </div>
+                                <div className="bg-emerald-500/5 dark:bg-emerald-500/10 p-3.5 rounded-2xl border border-emerald-500/10">
+                                  <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase mb-0.5">
+                                    Pol Posterior OS
+                                  </label>
+                                  <input
+                                    type="text"
+                                    className="w-full p-2 text-xs border rounded-lg font-bold"
+                                    value={documentForm.posteriorSegmentOs || ""}
+                                    onChange={(e) =>
+                                      setDocumentForm({
+                                        ...documentForm,
+                                        posteriorSegmentOs: e.target.value,
+                                      })
+                                    }
+                                  />
+                                </div>
+                              </>
+                            )}
                           </div>
                         </div>
     

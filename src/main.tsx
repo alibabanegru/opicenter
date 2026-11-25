@@ -15,9 +15,29 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
-// PWA Service Worker Registration
-if ("serviceWorker" in navigator && process.env.NODE_ENV !== "test") {
+// PWA Service Worker Registration (production only; unregister stale SW in Vite dev/preview)
+if ("serviceWorker" in navigator) {
+  const isDevOrPreview =
+    Boolean((import.meta as any).env?.DEV) ||
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1" ||
+    window.location.hostname.startsWith("ais-dev-");
+
   window.addEventListener("load", () => {
+    if (isDevOrPreview) {
+      navigator.serviceWorker
+        .getRegistrations()
+        .then((regs) => Promise.all(regs.map((r) => r.unregister())))
+        .catch(() => {});
+      if ("caches" in window) {
+        caches
+          .keys()
+          .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
+          .catch(() => {});
+      }
+      return;
+    }
+
     navigator.serviceWorker
       .register("/sw.js")
       .then((reg) => {

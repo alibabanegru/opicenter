@@ -10,7 +10,7 @@ async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vitePromise = import("vite").then(({ createServer }) =>
       createServer({
-        server: { middlewareMode: true, allowedHosts: true },
+        server: { middlewareMode: true, allowedHosts: true, hmr: false },
         appType: "spa",
       })
     );
