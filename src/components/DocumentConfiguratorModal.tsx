@@ -2259,11 +2259,11 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                             {/* POL ANTERIOR (OD / OS sau extins AO) */}
                             {documentForm.anteriorSegmentAo ? (
                               <div className="md:col-span-2 bg-blue-500/5 dark:bg-blue-500/10 p-3.5 rounded-2xl border border-blue-500/10">
-                                <div className="flex justify-between items-center mb-0.5">
-                                  <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase">
+                                <div className="flex justify-between items-center mb-1">
+                                  <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase !mb-0">
                                     Pol Anterior AO
                                   </label>
-                                  <label className="flex items-center gap-1 cursor-pointer select-none">
+                                  <label className="!flex items-center gap-1.5 !mb-0 cursor-pointer select-none">
                                     <input
                                       type="checkbox"
                                       checked={!!documentForm.anteriorSegmentAo}
@@ -2277,9 +2277,9 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                           anteriorSegmentOs: isAo ? currentOd : (documentForm.anteriorSegmentOs || ""),
                                         });
                                       }}
-                                      className="w-3 h-3 accent-amber-500 rounded"
+                                      className="w-6 h-6 accent-amber-500 rounded cursor-pointer"
                                     />
-                                    <span className="text-[7.5px] font-black text-amber-500 select-none">AO</span>
+                                    <span className="text-xs font-black text-amber-500 select-none">AO</span>
                                   </label>
                                 </div>
                                 <input
@@ -2299,27 +2299,9 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                             ) : (
                               <>
                                 <div className="bg-blue-500/5 dark:bg-blue-500/10 p-3.5 rounded-2xl border border-blue-500/10">
-                                  <div className="flex justify-between items-center mb-0.5">
-                                    <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase">
+                                  <div className="flex justify-between items-center min-h-[24px] mb-1">
+                                    <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase !mb-0">
                                       Pol Anterior OD
-                                    </label>
-                                    <label className="flex items-center gap-1 cursor-pointer select-none">
-                                      <input
-                                        type="checkbox"
-                                        checked={!!documentForm.anteriorSegmentAo}
-                                        onChange={(e) => {
-                                          const isAo = e.target.checked;
-                                          const currentOd = documentForm.anteriorSegmentOd || "";
-                                          setDocumentForm({
-                                            ...documentForm,
-                                            anteriorSegmentAo: isAo,
-                                            anteriorSegmentOd: currentOd,
-                                            anteriorSegmentOs: isAo ? currentOd : (documentForm.anteriorSegmentOs || ""),
-                                          });
-                                        }}
-                                        className="w-3 h-3 accent-amber-500 rounded"
-                                      />
-                                      <span className="text-[7.5px] font-black text-amber-500 select-none">AO</span>
                                     </label>
                                   </div>
                                   <input
@@ -2336,9 +2318,29 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                   />
                                 </div>
                                 <div className="bg-emerald-500/5 dark:bg-emerald-500/10 p-3.5 rounded-2xl border border-emerald-500/10">
-                                  <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase mb-0.5">
-                                    Pol Anterior OS
-                                  </label>
+                                  <div className="flex justify-between items-center min-h-[24px] mb-1">
+                                    <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase !mb-0">
+                                      Pol Anterior OS
+                                    </label>
+                                    <label className="!flex items-center gap-1.5 !mb-0 cursor-pointer select-none">
+                                      <input
+                                        type="checkbox"
+                                        checked={!!documentForm.anteriorSegmentAo}
+                                        onChange={(e) => {
+                                          const isAo = e.target.checked;
+                                          const currentOd = documentForm.anteriorSegmentOd || "";
+                                          setDocumentForm({
+                                            ...documentForm,
+                                            anteriorSegmentAo: isAo,
+                                            anteriorSegmentOd: currentOd,
+                                            anteriorSegmentOs: isAo ? currentOd : (documentForm.anteriorSegmentOs || ""),
+                                          });
+                                        }}
+                                        className="w-6 h-6 accent-amber-500 rounded cursor-pointer"
+                                      />
+                                      <span className="text-xs font-black text-amber-500 select-none">AO</span>
+                                    </label>
+                                  </div>
                                   <input
                                     type="text"
                                     className="w-full p-2 text-xs border rounded-lg font-bold"
@@ -2357,11 +2359,11 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                             {/* POL POSTERIOR (OD / OS sau extins AO) */}
                             {documentForm.posteriorSegmentAo ? (
                               <div className="md:col-span-2 bg-blue-500/5 dark:bg-blue-500/10 p-3.5 rounded-2xl border border-blue-500/10">
-                                <div className="flex justify-between items-center mb-0.5">
-                                  <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase">
+                                <div className="flex justify-between items-center mb-1">
+                                  <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase !mb-0">
                                     Pol Posterior AO
                                   </label>
-                                  <label className="flex items-center gap-1 cursor-pointer select-none">
+                                  <label className="!flex items-center gap-1.5 !mb-0 cursor-pointer select-none">
                                     <input
                                       type="checkbox"
                                       checked={!!documentForm.posteriorSegmentAo}
@@ -2375,9 +2377,9 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                           posteriorSegmentOs: isAo ? currentOd : (documentForm.posteriorSegmentOs || ""),
                                         });
                                       }}
-                                      className="w-3 h-3 accent-amber-500 rounded"
+                                      className="w-6 h-6 accent-amber-500 rounded cursor-pointer"
                                     />
-                                    <span className="text-[7.5px] font-black text-amber-500 select-none">AO</span>
+                                    <span className="text-xs font-black text-amber-500 select-none">AO</span>
                                   </label>
                                 </div>
                                 <input
@@ -2397,27 +2399,9 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                             ) : (
                               <>
                                 <div className="bg-blue-500/5 dark:bg-blue-500/10 p-3.5 rounded-2xl border border-blue-500/10">
-                                  <div className="flex justify-between items-center mb-0.5">
-                                    <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase">
+                                  <div className="flex justify-between items-center min-h-[24px] mb-1">
+                                    <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase !mb-0">
                                       Pol Posterior OD
-                                    </label>
-                                    <label className="flex items-center gap-1 cursor-pointer select-none">
-                                      <input
-                                        type="checkbox"
-                                        checked={!!documentForm.posteriorSegmentAo}
-                                        onChange={(e) => {
-                                          const isAo = e.target.checked;
-                                          const currentOd = documentForm.posteriorSegmentOd || "";
-                                          setDocumentForm({
-                                            ...documentForm,
-                                            posteriorSegmentAo: isAo,
-                                            posteriorSegmentOd: currentOd,
-                                            posteriorSegmentOs: isAo ? currentOd : (documentForm.posteriorSegmentOs || ""),
-                                          });
-                                        }}
-                                        className="w-3 h-3 accent-amber-500 rounded"
-                                      />
-                                      <span className="text-[7.5px] font-black text-amber-500 select-none">AO</span>
                                     </label>
                                   </div>
                                   <input
@@ -2434,9 +2418,29 @@ const DocumentConfiguratorModal = React.memo(function DocumentConfiguratorModal(
                                   />
                                 </div>
                                 <div className="bg-emerald-500/5 dark:bg-emerald-500/10 p-3.5 rounded-2xl border border-emerald-500/10">
-                                  <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase mb-0.5">
-                                    Pol Posterior OS
-                                  </label>
+                                  <div className="flex justify-between items-center min-h-[24px] mb-1">
+                                    <label className="block text-[8px] font-black text-black dark:text-slate-200 uppercase !mb-0">
+                                      Pol Posterior OS
+                                    </label>
+                                    <label className="!flex items-center gap-1.5 !mb-0 cursor-pointer select-none">
+                                      <input
+                                        type="checkbox"
+                                        checked={!!documentForm.posteriorSegmentAo}
+                                        onChange={(e) => {
+                                          const isAo = e.target.checked;
+                                          const currentOd = documentForm.posteriorSegmentOd || "";
+                                          setDocumentForm({
+                                            ...documentForm,
+                                            posteriorSegmentAo: isAo,
+                                            posteriorSegmentOd: currentOd,
+                                            posteriorSegmentOs: isAo ? currentOd : (documentForm.posteriorSegmentOs || ""),
+                                          });
+                                        }}
+                                        className="w-6 h-6 accent-amber-500 rounded cursor-pointer"
+                                      />
+                                      <span className="text-xs font-black text-amber-500 select-none">AO</span>
+                                    </label>
+                                  </div>
                                   <input
                                     type="text"
                                     className="w-full p-2 text-xs border rounded-lg font-bold"
