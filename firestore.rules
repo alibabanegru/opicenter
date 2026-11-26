@@ -124,6 +124,21 @@ service cloud.firestore {
              isNonEmptyString(data.lockedByUid, 120);
     }
 
+    function isValidNonGrataPatient(data) {
+      return data is map &&
+             data.keys().size() <= 15 &&
+             isNonEmptyString(data.patientName, 200) &&
+             (!('normalizedName' in data) || (data.normalizedName is string && data.normalizedName.size() <= 200)) &&
+             (!('patientPhone' in data) || (data.patientPhone is string && data.patientPhone.size() <= 40)) &&
+             (!('normalizedPhone' in data) || (data.normalizedPhone is string && data.normalizedPhone.size() <= 40)) &&
+             (!('patientCnp' in data) || (data.patientCnp is string && data.patientCnp.size() <= 30)) &&
+             isNonEmptyString(data.reason, 1000) &&
+             isNonEmptyString(data.addedBy, 120) &&
+             (!('addedByRole' in data) || (data.addedByRole is string && data.addedByRole.size() <= 60)) &&
+             (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 60)) &&
+             (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 60));
+    }
+
     // Appointments Collection
     match /appointments/{appointmentId} {
       allow read: if true;
@@ -226,6 +241,13 @@ service cloud.firestore {
     match /slot_locks/{lockId} {
       allow read: if true;
       allow create, update: if isValidSlotLock(request.resource.data);
+      allow delete: if true;
+    }
+
+    // Persoană Non Grata Collection (Staff-only registry, never shown on TV or Patient Portal)
+    match /non_grata_patients/{entryId} {
+      allow read: if true;
+      allow create, update: if isValidNonGrataPatient(request.resource.data);
       allow delete: if true;
     }
   }

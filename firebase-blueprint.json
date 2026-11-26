@@ -249,6 +249,25 @@
         "isDeleted": { "type": "boolean" }
       },
       "required": ["type", "patientName", "documentNumber", "date"]
+    },
+    "NonGrataPatient": {
+      "title": "NonGrataPatient",
+      "description": "Shared clinic registry of unwelcome/problematic patients with mandatory reason",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "patientName": { "type": "string" },
+        "normalizedName": { "type": "string" },
+        "patientPhone": { "type": "string" },
+        "normalizedPhone": { "type": "string" },
+        "patientCnp": { "type": "string" },
+        "reason": { "type": "string" },
+        "addedBy": { "type": "string" },
+        "addedByRole": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["patientName", "reason", "addedBy", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -299,6 +318,10 @@
     "/medicalDocuments/{documentId}": {
       "schema": "MedicalDocument",
       "description": "Medical certificates, referrals, and reports registry"
+    },
+    "/non_grata_patients/{entryId}": {
+      "schema": "NonGrataPatient",
+      "description": "Registry of Persoane Non Grata visible to clinic staff only"
     }
   }
 }

@@ -11,6 +11,13 @@ export {
   safeParseDate,
   safeFormatDate,
 } from "./lib/stringUtils";
+export type { NonGrataPatient, NonGrataLookupInput } from "./lib/nonGrataUtils";
+export {
+  normalizeNonGrataName,
+  normalizeNonGrataPhone,
+  findNonGrataMatch,
+  filterNonGrataByQuery,
+} from "./lib/nonGrataUtils";
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { auth } from "./firebase";
 import { ClassValue, clsx } from "clsx";

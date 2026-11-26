@@ -160,6 +160,7 @@ const ContactLensModal = React.lazy(() => import("./components/ContactLensModal"
 const ExportModal = React.lazy(() => import("./components/ExportModal").then(m => ({ default: m.ExportModal })));
 const BNRModal = React.lazy(() => import("./components/BNRModal"));
 const CNASCodesModal = React.lazy(() => import("./components/CNASCodesModal"));
+const NonGrataModal = React.lazy(() => import("./components/NonGrataModal").then(m => ({ default: m.NonGrataModal })));
 const AppointmentHistoryModal = React.lazy(() => import("./components/AppointmentHistoryModal"));
 const InventoryView = React.lazy(() => import("./components/InventoryView").then(m => ({ default: m.InventoryView })));
 const GlassesOrderModal = React.lazy(() => import("./components/GlassesOrderModal").then(m => ({ default: m.GlassesOrderModal })));
@@ -252,6 +253,9 @@ import {
   safeFormatDate,
   hashPassword,
   verifyPassword,
+  NonGrataPatient,
+  findNonGrataMatch,
+  filterNonGrataByQuery,
 } from "./appConstants";
 import { hasLegacyGlassesOrders, markLegacyGlassesOrdersStatus } from "./utils/legacyOrdersFlag";
 import {
@@ -1971,6 +1975,22 @@ export default function App() {
   const searchedRegistryQueriesRef = useRef<Set<string>>(new Set());
   const isSavingMedicalRecordRef = useRef<boolean>(false);
   const inFlightSavePromiseRef = useRef<Promise<boolean> | null>(null);
+  const [nonGrataPatients, setNonGrataPatients] = useState<NonGrataPatient[]>([]);
+  const [isNonGrataModalOpen, setIsNonGrataModalOpen] = useState(false);
+  const [nonGrataInitialTarget, setNonGrataInitialTarget] = useState<{
+    patientName: string;
+    patientPhone?: string;
+    patientCnp?: string;
+  } | null>(null);
+
+  const openNonGrataModal = useCallback(
+    (target?: { patientName: string; patientPhone?: string; patientCnp?: string } | null) => {
+      if ((profile?.role as Role) === "tv" || (profile?.role as Role) === "patient") return;
+      setNonGrataInitialTarget(target || null);
+      setIsNonGrataModalOpen(true);
+    },
+    [profile?.role],
+  );
 
   const omniboxMatches = useMemo(() => {
     const q = deferredUniversalSearchQuery.trim();
@@ -2173,6 +2193,39 @@ export default function App() {
       };
     });
   }, [deferredUniversalSearchQuery, appointments, medicalRecords]);
+
+  const omniboxNonGrataMatches = useMemo(() => {
+    if (!profile?.role || profile.role === "tv" || profile.role === "patient") return [];
+    return filterNonGrataByQuery(nonGrataPatients, deferredUniversalSearchQuery);
+  }, [nonGrataPatients, deferredUniversalSearchQuery, profile?.role]);
+
+  const existingPatientsForNonGrata = useMemo(() => {
+    if (!isNonGrataModalOpen || profile?.role === "tv" || profile?.role === "patient") return [];
+    const map = new Map<string, { patientName: string; patientPhone?: string; patientCnp?: string }>();
+    for (const rec of medicalRecords) {
+      if (!rec.patientName) continue;
+      const k = `${rec.patientName.trim().toLowerCase()}_${(rec.patientPhone || "").replace(/\D/g, "")}`;
+      if (!map.has(k)) {
+        map.set(k, {
+          patientName: rec.patientName,
+          patientPhone: rec.patientPhone || "",
+          patientCnp: rec.patientCnp || "",
+        });
+      }
+    }
+    for (const app of appointments) {
+      if (!app.patientName) continue;
+      const k = `${app.patientName.trim().toLowerCase()}_${(app.patientPhone || "").replace(/\D/g, "")}`;
+      if (!map.has(k)) {
+        map.set(k, {
+          patientName: app.patientName,
+          patientPhone: app.patientPhone || "",
+          patientCnp: app.patientCnp || "",
+        });
+      }
+    }
+    return Array.from(map.values());
+  }, [isNonGrataModalOpen, medicalRecords, appointments, profile?.role]);
 
   const handleUniversalSearch = (queryStr: string) => {
     const q = queryStr.trim();
@@ -8274,6 +8327,7 @@ export default function App() {
       setConfigs([]);
       setMedicalRecords([]);
       setMedicalDocuments([]);
+      setNonGrataPatients([]);
       return;
     }
 
@@ -8342,6 +8396,7 @@ export default function App() {
     if (!profile) {
       setMedicalRecords([]);
       setMedicalDocuments([]);
+      setNonGrataPatients([]);
       return () => {
         unsubAppointments();
         unsubConfigs();
@@ -8452,12 +8507,38 @@ export default function App() {
           )
         : () => {};
 
+    // 7. Persoană Non Grata (exclusively for clinic staff, NEVER loaded on TV or Patient Portal)
+    let unsubNonGrata: () => void = () => {};
+    if (
+      profile?.role &&
+      profile.role !== "tv" &&
+      profile.role !== "patient" &&
+      !standalonePortalBypass
+    ) {
+      unsubNonGrata = onSnapshot(
+        collection(db, "non_grata_patients"),
+        (snapshot) => {
+          setNonGrataPatients(
+            snapshot.docs.map(
+              (docSnap) => ({ id: docSnap.id, ...docSnap.data() }) as NonGrataPatient,
+            ),
+          );
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, "non_grata_patients");
+        },
+      );
+    } else {
+      setNonGrataPatients([]);
+    }
+
     return () => {
       unsubAppointments();
       unsubConfigs();
       unsubMedicalRecords();
       unsubMedicalDocuments();
       unsubFrameStock();
+      unsubNonGrata();
     };
   }, [profile?.uid, profile?.role, standalonePortalBypass]);
 
@@ -22677,15 +22758,30 @@ export default function App() {
           </div>
         )}
         {quickBookingPatient && (
-          <div className="bg-emerald-600 text-white px-4 py-2 text-center text-xs font-bold flex items-center justify-center gap-3">
-            <CalendarPlus className="w-4 h-4" />
+          <div className="bg-emerald-600 text-white px-4 py-2 text-center text-xs font-bold flex items-center justify-center gap-3 flex-wrap">
+            <CalendarPlus className="w-4 h-4 shrink-0" />
             <span>
               MOD PROGRAMARE NOUĂ: Selectați un interval orar pentru{" "}
               {quickBookingPatient.name}
             </span>
+            {(() => {
+              if (profile?.role === "tv") return null;
+              const ngMatch = findNonGrataMatch(nonGrataPatients, {
+                patientName: quickBookingPatient.name,
+                patientPhone: quickBookingPatient.phone,
+                patientCnp: quickBookingPatient.cnp,
+              });
+              if (!ngMatch) return null;
+              return (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-rose-700 border border-rose-300/60 text-white font-black uppercase tracking-wider text-[10px]">
+                  <Ban className="w-3 h-3 shrink-0" />
+                  <span>PERSOANĂ NON GRATA: {ngMatch.reason}</span>
+                </span>
+              );
+            })()}
             <button
               onClick={() => setQuickBookingPatient(null)}
-              className="bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded transition-colors"
+              className="bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded transition-colors cursor-pointer"
             >
               Anulează
             </button>
@@ -22809,8 +22905,78 @@ export default function App() {
 
                           {/* List */}
                           <div className="max-h-[420px] overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 custom-scrollbar">
+                            {omniboxNonGrataMatches.length > 0 && (
+                              <div className={cn(
+                                "p-3 space-y-2 border-b-2",
+                                darkMode
+                                  ? "bg-rose-950/50 border-rose-700/60"
+                                  : "bg-rose-50 border-rose-300"
+                              )}>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[10px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 flex items-center gap-1.5">
+                                    <Ban className="w-3.5 h-3.5" />
+                                    Alertă Registru Persoane Non Grata ({omniboxNonGrataMatches.length})
+                                  </span>
+                                </div>
+                                {omniboxNonGrataMatches.map((ng) => (
+                                  <div
+                                    key={`ng_${ng.id}`}
+                                    className={cn(
+                                      "p-2.5 rounded-xl border flex items-start justify-between gap-2.5",
+                                      darkMode
+                                        ? "bg-rose-950/70 border-rose-700/70 text-rose-100"
+                                        : "bg-white border-rose-300 text-rose-950"
+                                    )}
+                                  >
+                                    <div className="min-w-0 flex-1 space-y-0.5">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-black uppercase tracking-wider">
+                                          PERSOANĂ NON GRATA
+                                        </span>
+                                        <span className="font-black text-xs uppercase">
+                                          {ng.patientName}
+                                        </span>
+                                        {ng.patientPhone && (
+                                          <span className="text-[11px] font-semibold opacity-80">
+                                            • {formatPhoneNumber(ng.patientPhone)}
+                                          </span>
+                                        )}
+                                        {ng.patientCnp && (
+                                          <span className="text-[10px] font-mono opacity-75">
+                                            • CNP {ng.patientCnp}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-xs font-bold text-rose-700 dark:text-rose-300 leading-snug">
+                                        Detaliu: {ng.reason}
+                                      </p>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setIsOmniboxOpen(false);
+                                        openNonGrataModal({
+                                          patientName: ng.patientName,
+                                          patientPhone: ng.patientPhone,
+                                          patientCnp: ng.patientCnp,
+                                        });
+                                      }}
+                                      className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase tracking-wider shrink-0 cursor-pointer"
+                                    >
+                                      Vezi / Editează
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
                             {omniboxMatches.length > 0 ? (
                               omniboxMatches.map((item) => {
+                                const ngMatch = findNonGrataMatch(nonGrataPatients, {
+                                  patientName: item.patientName,
+                                  patientPhone: item.patientPhone,
+                                  patientCnp: item.patientCnp,
+                                });
                                 const syntheticApp: Appointment = item.rawAppointment || ({
                                   id: item.rawRecord?.id || `med_${item.id}`,
                                   patientName: item.patientName,
@@ -22831,7 +22997,11 @@ export default function App() {
                                     key={item.id}
                                     className={cn(
                                       "p-3 flex flex-col gap-2.5 group",
-                                      darkMode ? "hover:bg-slate-800/50" : "hover:bg-blue-50/40"
+                                      ngMatch
+                                        ? darkMode
+                                          ? "bg-rose-950/25 hover:bg-rose-950/40"
+                                          : "bg-rose-50/70 hover:bg-rose-50"
+                                        : darkMode ? "hover:bg-slate-800/50" : "hover:bg-blue-50/40"
                                     )}
                                   >
                                     {/* Top Row: Patient Info + Quick Action Buttons */}
@@ -22842,6 +23012,15 @@ export default function App() {
                                           <span className="font-bold text-xs uppercase tracking-tight text-slate-900 dark:text-slate-100">
                                             {item.patientName}
                                           </span>
+                                          {ngMatch && (
+                                            <span
+                                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-black uppercase tracking-wider shrink-0"
+                                              title={`PERSOANĂ NON GRATA: ${ngMatch.reason}`}
+                                            >
+                                              <Ban className="w-2.5 h-2.5" />
+                                              NON GRATA
+                                            </span>
+                                          )}
                                           {item.patientAge && (
                                             <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
                                               {item.patientAge} ani
@@ -22970,8 +23149,46 @@ export default function App() {
                                             <span className="hidden sm:inline">Șterge</span>
                                           </button>
                                         )}
+
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setIsOmniboxOpen(false);
+                                            openNonGrataModal({
+                                              patientName: item.patientName,
+                                              patientPhone: item.patientPhone,
+                                              patientCnp: item.patientCnp,
+                                            });
+                                          }}
+                                          className={cn(
+                                            "flex items-center gap-1 p-1.5 sm:px-2 sm:py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider border cursor-pointer",
+                                            ngMatch
+                                              ? "bg-rose-600 border-rose-700 text-white hover:bg-rose-700"
+                                              : darkMode
+                                                ? "bg-rose-950/30 border-rose-800/60 text-rose-300 hover:bg-rose-950/50"
+                                                : "bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100"
+                                          )}
+                                          title={
+                                            ngMatch
+                                              ? `Persoană Non Grata: ${ngMatch.reason}`
+                                              : "Adaugă în lista Persoană Non Grata"
+                                          }
+                                        >
+                                          <Ban className="w-3 h-3" />
+                                          <span className="hidden xl:inline">Non Grata</span>
+                                        </button>
                                       </div>
                                     </div>
+
+                                    {ngMatch && (
+                                      <div className="px-2.5 py-1.5 rounded-lg bg-rose-600/15 border border-rose-500/40 text-rose-800 dark:text-rose-200 text-[11px] font-bold flex items-center gap-1.5">
+                                        <Ban className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
+                                        <span className="truncate">
+                                          PERSOANĂ NON GRATA — {ngMatch.reason}
+                                        </span>
+                                      </div>
+                                    )}
 
                                     {/* Quick Patient Summary Cards */}
                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
@@ -23159,7 +23376,7 @@ export default function App() {
                                   </div>
                                 );
                               })
-                            ) : (
+                            ) : omniboxNonGrataMatches.length === 0 ? (
                               <div className="p-5 text-center space-y-2">
                                 <p className="text-xs font-semibold text-slate-500">
                                   Niciun pacient găsit în memoria locală pentru „{universalSearchQuery}”.
@@ -23182,9 +23399,27 @@ export default function App() {
                                   >
                                     + Pacient Nou
                                   </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setIsOmniboxOpen(false);
+                                      openNonGrataModal({
+                                        patientName: universalSearchQuery.trim(),
+                                      });
+                                    }}
+                                    className={cn(
+                                      "px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer flex items-center gap-1",
+                                      darkMode
+                                        ? "bg-rose-950/40 border-rose-800 text-rose-300 hover:bg-rose-900/50"
+                                        : "bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100"
+                                    )}
+                                  >
+                                    <Ban className="w-3.5 h-3.5" />
+                                    <span>Adaugă Non Grata</span>
+                                  </button>
                                 </div>
                               </div>
-                            )}
+                            ) : null}
                           </div>
 
                           {/* Footer */}
@@ -23279,6 +23514,7 @@ export default function App() {
                       <Download className="w-3.5 h-3.5" />
                     </button>
                   )}
+
                 </div>
               )}
             </div>
@@ -24817,6 +25053,24 @@ export default function App() {
                                          ) : null;
                                        })()}
                                        {(() => {
+                                         if (profile?.role === "tv") return null;
+                                         const appNgMatch = findNonGrataMatch(nonGrataPatients, {
+                                           patientName: appointment.patientName,
+                                           patientPhone: appointment.patientPhone,
+                                           patientCnp: (appointment as any).patientCnp,
+                                         });
+                                         if (!appNgMatch) return null;
+                                         return (
+                                           <span
+                                             className="ml-1.5 inline-flex items-center gap-0.5 px-1.5 py-px rounded text-[9px] font-black uppercase tracking-wider bg-rose-600 text-white align-middle shrink-0"
+                                             title={`PERSOANĂ NON GRATA: ${appNgMatch.reason}`}
+                                           >
+                                             <Ban className="w-2.5 h-2.5 shrink-0" />
+                                             <span>NON GRATA</span>
+                                           </span>
+                                         );
+                                       })()}
+                                       {(() => {
                                          const noShowCount = getPatientNoShowCount(appointment.patientName, appointment.patientPhone);
                                          if (noShowCount >= 2) {
                                            return (
@@ -24841,6 +25095,23 @@ export default function App() {
                                          </span>
                                        )}
                                      </p>
+                                     {(() => {
+                                       if (profile?.role === "tv") return null;
+                                       const appNgMatch = findNonGrataMatch(nonGrataPatients, {
+                                         patientName: appointment.patientName,
+                                         patientPhone: appointment.patientPhone,
+                                         patientCnp: (appointment as any).patientCnp,
+                                       });
+                                       if (!appNgMatch) return null;
+                                       return (
+                                         <div
+                                           className="px-1.5 py-0.5 rounded bg-rose-600/15 border border-rose-500/40 text-rose-800 dark:text-rose-200 text-[9.5px] font-bold truncate"
+                                           title={`PERSOANĂ NON GRATA: ${appNgMatch.reason}`}
+                                         >
+                                           Non Grata: {appNgMatch.reason}
+                                         </div>
+                                       );
+                                     })()}
                                      {!isDoctor && appointment.patientPhone && (
                                        <div className="flex items-center justify-between gap-1.5">
                                          <span className={cn(
@@ -25043,6 +25314,49 @@ export default function App() {
 
               <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
                 {(() => {
+                  const searchQueryForNg = (searchName.trim() || searchPhone.trim());
+                  const directNgMatches =
+                    profile?.role !== "tv" && searchQueryForNg.length >= 2
+                      ? filterNonGrataByQuery(nonGrataPatients, searchQueryForNg)
+                      : [];
+                  if (directNgMatches.length === 0) return null;
+                  return (
+                    <div className={cn(
+                      "p-3.5 rounded-2xl border-2 space-y-2",
+                      darkMode
+                        ? "bg-rose-950/40 border-rose-600/60 text-rose-100"
+                        : "bg-rose-50 border-rose-400 text-rose-950"
+                    )}>
+                      <div className="text-xs font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 flex items-center gap-1.5">
+                        <Ban className="w-4 h-4 shrink-0" />
+                        <span>ATENȚIE: PERSOANĂ NON GRATA GĂSITĂ ({directNgMatches.length})</span>
+                      </div>
+                      {directNgMatches.map((ng) => (
+                        <div key={`search_ng_${ng.id}`} className="flex items-start justify-between gap-3 text-xs border-t border-rose-500/20 pt-2 first:border-0 first:pt-0">
+                          <div>
+                            <p className="font-black uppercase">{ng.patientName} {ng.patientPhone ? `• ${formatPhoneNumber(ng.patientPhone)}` : ""}</p>
+                            <p className="font-semibold text-rose-700 dark:text-rose-300 mt-0.5">Detaliu / Motiv: {ng.reason}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openNonGrataModal({
+                                patientName: ng.patientName,
+                                patientPhone: ng.patientPhone,
+                                patientCnp: ng.patientCnp,
+                              })
+                            }
+                            className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase shrink-0 cursor-pointer"
+                          >
+                            Vezi / Editează
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {(() => {
                   const filtered = searchResults.filter((app) => {
                     const parsedAppTime = safeParseDate(app.startTime);
                     const isPast = parsedAppTime
@@ -25211,6 +25525,24 @@ export default function App() {
                                 )}
                                 <span>{app.patientName}</span>
                                 {(() => {
+                                  if (profile?.role === "tv") return null;
+                                  const ngMatch = findNonGrataMatch(nonGrataPatients, {
+                                    patientName: app.patientName,
+                                    patientPhone: app.patientPhone,
+                                    patientCnp: (app as any).patientCnp,
+                                  });
+                                  if (!ngMatch) return null;
+                                  return (
+                                    <span
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-600 text-white shadow-xs"
+                                      title={`PERSOANĂ NON GRATA: ${ngMatch.reason}`}
+                                    >
+                                      <Ban className="w-3 h-3" />
+                                      <span>NON GRATA</span>
+                                    </span>
+                                  );
+                                })()}
+                                {(() => {
                                   const noShowCount = getPatientNoShowCount(app.patientName, app.patientPhone);
                                   if (noShowCount >= 2) {
                                     return (
@@ -25346,6 +25678,31 @@ export default function App() {
                                   <span>Fișă</span>
                                 </button>
                               )}
+
+                              {profile?.role &&
+                                profile.role !== "tv" &&
+                                profile.role !== "patient" && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      openNonGrataModal({
+                                        patientName: app.patientName,
+                                        patientPhone: app.patientPhone,
+                                        patientCnp: (app as any).patientCnp,
+                                      });
+                                    }}
+                                    className={cn(
+                                      "flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border cursor-pointer",
+                                      darkMode
+                                        ? "bg-rose-950/40 border-rose-800/60 text-rose-300 hover:bg-rose-900/50"
+                                        : "bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100"
+                                    )}
+                                    title="Marchează / Editează Persoană Non Grata"
+                                  >
+                                    <Ban className="w-4 h-4" />
+                                    <span>Non Grata</span>
+                                  </button>
+                                )}
                             </div>
 
                             {(profile?.role === "admin" ||
@@ -26065,6 +26422,32 @@ export default function App() {
                   />
                 </div>
 
+                {(() => {
+                  if (profile?.role === "tv") return null;
+                  const newPatNgMatch = findNonGrataMatch(nonGrataPatients, {
+                    patientName,
+                    patientPhone: faraTelefon ? "" : patientPhone,
+                    patientCnp,
+                  });
+                  if (!newPatNgMatch) return null;
+                  return (
+                    <div className="bg-rose-600/15 border-2 border-rose-500/60 p-3.5 rounded-2xl flex items-start gap-2.5 text-rose-800 dark:text-rose-200">
+                      <Ban className="w-5 h-5 shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
+                      <div className="text-xs leading-relaxed">
+                        <p className="font-black uppercase tracking-wide">
+                          ATENȚIE: PERSOANĂ NON GRATA ({newPatNgMatch.patientName})
+                        </p>
+                        <p className="font-semibold mt-0.5">
+                          Motiv: {newPatNgMatch.reason}
+                        </p>
+                        <p className="text-[11px] opacity-80 mt-0.5">
+                          Programarea nu este blocată — puteți continua dacă doriți.
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {bookingError && (
                   <div className="bg-red-900/20 border border-red-900/30 p-3 rounded-xl flex items-center gap-2 text-red-400">
                     <AlertCircle className="w-5 h-5 shrink-0" />
@@ -26216,6 +26599,33 @@ export default function App() {
                   )}
                 </div>
               </div>
+
+              {/* Persoană Non Grata Warning */}
+              {(() => {
+                if (profile?.role === "tv") return null;
+                const confirmNgMatch = findNonGrataMatch(nonGrataPatients, {
+                  patientName: patientForNewAppointment.patientName,
+                  patientPhone: patientForNewAppointment.patientPhone,
+                  patientCnp: (patientForNewAppointment as any).patientCnp,
+                });
+                if (!confirmNgMatch) return null;
+                return (
+                  <div className="mb-4 bg-rose-600/15 border-2 border-rose-500/60 p-3.5 rounded-2xl flex items-start gap-2.5 text-rose-800 dark:text-rose-200">
+                    <Ban className="w-5 h-5 shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
+                    <div className="text-xs leading-relaxed">
+                      <p className="font-black uppercase tracking-wide">
+                        ATENȚIE: PERSOANĂ NON GRATA
+                      </p>
+                      <p className="font-semibold mt-0.5">
+                        Motiv: {confirmNgMatch.reason}
+                      </p>
+                      <p className="text-[11px] opacity-80 mt-0.5">
+                        Programarea nu este blocată — puteți continua dacă doriți.
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Actions */}
               <div className="flex flex-col gap-2.5">
@@ -26682,28 +27092,43 @@ export default function App() {
                           : "bg-white border-slate-200",
                       )}
                     >
-                      {modalSearchResults.map((patient) => (
-                        <button
-                          key={patient.id}
-                          onClick={() => selectPatientFromSearch(patient)}
-                          className={cn(
-                            "w-full p-3 text-left hover:bg-blue-600 hover:text-white transition-colors border-b last:border-0",
-                            darkMode
-                              ? "border-slate-700 text-slate-200"
-                              : "border-slate-100 text-slate-700",
-                          )}
-                        >
-                          <div className="font-bold text-sm">
-                            {patient.patientName}
-                          </div>
-                          <div className="text-xs opacity-70">
-                            {!isDoctor && `${patient.patientPhone} • `}
-                            {calculateDetailedAge(
-                              patient.patientBirthDate || "",
-                            ) || patient.patientAge + " ani"}
-                          </div>
-                        </button>
-                      ))}
+                      {modalSearchResults.map((patient) => {
+                        const rowNgMatch =
+                          profile?.role !== "tv"
+                            ? findNonGrataMatch(nonGrataPatients, {
+                                patientName: patient.patientName,
+                                patientPhone: patient.patientPhone,
+                                patientCnp: patient.patientCnp,
+                              })
+                            : null;
+                        return (
+                          <button
+                            key={patient.id}
+                            onClick={() => selectPatientFromSearch(patient)}
+                            className={cn(
+                              "w-full p-3 text-left hover:bg-blue-600 hover:text-white transition-colors border-b last:border-0",
+                              darkMode
+                                ? "border-slate-700 text-slate-200"
+                                : "border-slate-100 text-slate-700",
+                            )}
+                          >
+                            <div className="font-bold text-sm flex items-center justify-between gap-2">
+                              <span>{patient.patientName}</span>
+                              {rowNgMatch && (
+                                <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-black uppercase tracking-wider shrink-0">
+                                  NON GRATA
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs opacity-70">
+                              {!isDoctor && `${patient.patientPhone} • `}
+                              {calculateDetailedAge(
+                                patient.patientBirthDate || "",
+                              ) || patient.patientAge + " ani"}
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -27095,6 +27520,48 @@ export default function App() {
                 return null;
               })()}
 
+              {/* Avertizare Persoană Non Grata (nu blochează programarea) */}
+              {(() => {
+                if (profile?.role === "tv") return null;
+                const bookingNgMatch = findNonGrataMatch(nonGrataPatients, {
+                  patientName,
+                  patientPhone: faraTelefon ? "" : patientPhone,
+                  patientCnp,
+                });
+                if (!bookingNgMatch) return null;
+                return (
+                  <div className="mt-4 bg-rose-600/15 border-2 border-rose-500/60 p-3.5 rounded-2xl flex items-start justify-between gap-2.5 text-rose-800 dark:text-rose-200">
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <Ban className="w-5 h-5 shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
+                      <div className="text-xs leading-relaxed min-w-0">
+                        <p className="font-black uppercase tracking-wide text-rose-700 dark:text-rose-300">
+                          ATENȚIE: PERSOANĂ NON GRATA ({bookingNgMatch.patientName})
+                        </p>
+                        <p className="font-semibold mt-0.5">
+                          Motiv: {bookingNgMatch.reason}
+                        </p>
+                        <p className="text-[11px] opacity-80 mt-0.5">
+                          Programarea nu este blocată — puteți continua dacă doriți.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openNonGrataModal({
+                          patientName: bookingNgMatch.patientName,
+                          patientPhone: bookingNgMatch.patientPhone,
+                          patientCnp: bookingNgMatch.patientCnp,
+                        })
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase shrink-0 cursor-pointer"
+                    >
+                      Vezi
+                    </button>
+                  </div>
+                );
+              })()}
+
               {bookingError && (
                 <div className="mt-4 bg-red-900/20 border border-red-900/30 p-3 rounded-xl flex items-center gap-2 text-red-400">
                   <AlertCircle className="w-5 h-5 shrink-0" />
@@ -27292,8 +27759,21 @@ export default function App() {
             isPatientSummaryModalOpen ||
             isDeletePrescriptionConfirmModalOpen ||
             isPhoneEditModalOpen ||
-            isOrderTypeSelectionModalOpen
+            isOrderTypeSelectionModalOpen ||
+            isNonGrataModalOpen
         )}
+        nonGrataMatch={
+          currentMedicalRecord &&
+          (profile?.role as Role) !== "tv" &&
+          (profile?.role as Role) !== "patient"
+            ? findNonGrataMatch(nonGrataPatients, {
+                patientName: currentMedicalRecord.patientName,
+                patientPhone: currentMedicalRecord.patientPhone,
+                patientCnp: currentMedicalRecord.patientCnp,
+              })
+            : null
+        }
+        onOpenNonGrataModal={openNonGrataModal}
       />
 
         <WeatherModal
@@ -27318,6 +27798,23 @@ export default function App() {
           onClose={() => setIsCNASModalOpen(false)}
           darkMode={darkMode}
         />
+
+        {profile?.role &&
+          (profile.role as Role) !== "tv" &&
+          (profile.role as Role) !== "patient" && (
+            <NonGrataModal
+              isOpen={isNonGrataModalOpen}
+              onClose={() => setIsNonGrataModalOpen(false)}
+              darkMode={darkMode}
+              nonGrataPatients={nonGrataPatients}
+              existingPatients={existingPatientsForNonGrata}
+              initialTarget={nonGrataInitialTarget}
+              currentUserName={profile.displayName || profile.role}
+              currentUserRole={profile.role}
+              onLogActivity={logActivity}
+              onSuccess={(msg) => setSuccessMessage(msg)}
+            />
+          )}
 
       {/* Phone Edit Modal */}
       <PhoneEditModal
@@ -27439,6 +27936,30 @@ export default function App() {
               CNAS
             </button>
           )}
+
+          {/* PNG (Persoană Non Grata) Button */}
+          {profile?.role &&
+            (profile.role as Role) !== "tv" &&
+            (profile.role as Role) !== "patient" && (
+              <button
+                type="button"
+                onClick={() => openNonGrataModal(null)}
+                className={cn(
+                  "w-12 h-12 rounded-full border shadow-sm flex items-center justify-center text-[11px] font-black uppercase tracking-wider cursor-pointer transition-colors shrink-0 relative",
+                  darkMode
+                    ? "bg-orange-600 border-orange-500 hover:bg-orange-500 text-white"
+                    : "bg-orange-500 border-orange-600 hover:bg-orange-600 text-white",
+                )}
+                title="Registru Persoane Non Grata (PNG)"
+              >
+                PNG
+                {nonGrataPatients.length > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-white text-orange-600 border border-orange-600 text-[10px] font-black rounded-full w-5 h-5 flex items-center justify-center shadow-xs">
+                    {nonGrataPatients.length}
+                  </span>
+                )}
+              </button>
+            )}
 
           {/* Back/Restore Button */}
           <button

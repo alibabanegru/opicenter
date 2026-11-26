@@ -4,6 +4,7 @@ import {
   Activity,
   AlertCircle,
   AlertTriangle,
+  Ban,
   Cake,
   Calendar,
   CalendarClock,
@@ -63,6 +64,7 @@ import {
   TREATMENT_SHORTCUTS,
   safeParseDate,
   safeFormatDate,
+  NonGrataPatient,
 } from "../appConstants";
 
 const cleanString = (s: string) =>
@@ -539,6 +541,12 @@ export interface MedicalRecordModalProps {
   saveAndSwitchOrder: (idx: number | null, type?: string) => void;
   setIsMedicalRecordModalOpen?: (val: boolean) => void;
   hasOpenSubModal?: boolean;
+  nonGrataMatch?: NonGrataPatient | null;
+  onOpenNonGrataModal?: (target: {
+    patientName: string;
+    patientPhone?: string;
+    patientCnp?: string;
+  }) => void;
 }
 
 export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => {
@@ -650,6 +658,8 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
     saveAndSwitchOrder,
     setIsMedicalRecordModalOpen = onClose,
     hasOpenSubModal = false,
+    nonGrataMatch = null,
+    onOpenNonGrataModal,
   } = props;
 
   const [isSavingAndPrinting, setIsSavingAndPrinting] = useState(false);
@@ -1702,6 +1712,40 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
 
             </div>
 
+              {/* Persoană Non Grata Warning Banner (ascuns pe TV) */}
+              {nonGrataMatch && profile?.role !== "tv" && profile?.uid !== "tv" && (
+                <div className="mb-2 p-2.5 sm:p-3 rounded-2xl bg-rose-600/15 dark:bg-rose-950/60 border-2 border-rose-500/60 text-rose-950 dark:text-rose-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 text-xs shadow-sm">
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <div className="p-1.5 rounded-xl bg-rose-600 text-white shrink-0 mt-0.5">
+                      <Ban className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <strong className="font-black uppercase tracking-wider block text-[11px] text-rose-700 dark:text-rose-300">
+                        PERSOANĂ NON GRATA
+                      </strong>
+                      <span className="text-xs font-semibold leading-relaxed block">
+                        Motiv: {nonGrataMatch.reason}
+                      </span>
+                    </div>
+                  </div>
+                  {onOpenNonGrataModal && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onOpenNonGrataModal({
+                          patientName: currentMedicalRecord.patientName,
+                          patientPhone: currentMedicalRecord.patientPhone,
+                          patientCnp: currentMedicalRecord.patientCnp,
+                        })
+                      }
+                      className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-[10px] uppercase tracking-wider shrink-0 cursor-pointer"
+                    >
+                      Vezi / Editează
+                    </button>
+                  )}
+                </div>
+              )}
+
               {/* Draft Restored Banner (Protecție anti-pană de curent) */}
               {draftRestoredNotice && (
                 <div className="mb-2 p-2.5 sm:p-3 rounded-2xl bg-amber-500/15 dark:bg-amber-500/20 border border-amber-500/40 text-amber-900 dark:text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 text-xs shadow-xs animate-fade-in">
@@ -1916,6 +1960,35 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                       >
                         <FileText className="w-3 h-3" />
                         Sumar
+                      </button>
+                    )}
+
+                    {profile?.role !== "tv" && profile?.uid !== "tv" && onOpenNonGrataModal && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onOpenNonGrataModal({
+                            patientName: currentMedicalRecord.patientName,
+                            patientPhone: currentMedicalRecord.patientPhone,
+                            patientCnp: currentMedicalRecord.patientCnp,
+                          })
+                        }
+                        className={cn(
+                          "flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all border whitespace-nowrap cursor-pointer",
+                          nonGrataMatch
+                            ? "bg-rose-600 hover:bg-rose-700 border-rose-700 text-white shadow-md shadow-rose-900/25"
+                            : darkMode
+                              ? "bg-rose-950/40 hover:bg-rose-900/50 border-rose-800/70 text-rose-300"
+                              : "bg-rose-50 hover:bg-rose-100 border-rose-200 text-rose-700"
+                        )}
+                        title={
+                          nonGrataMatch
+                            ? `Persoană Non Grata: ${nonGrataMatch.reason}`
+                            : "Marchează pacientul ca Persoană Non Grata"
+                        }
+                      >
+                        <Ban className="w-3 h-3" />
+                        <span>{nonGrataMatch ? "Non Grata (Activ)" : "Non Grata"}</span>
                       </button>
                     )}
                   </div>
