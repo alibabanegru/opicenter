@@ -16,6 +16,7 @@ import { MedicalRegistryModal } from "./components/MedicalRegistryModal";
 import { PhoneEditModal } from "./components/PhoneEditModal";
 import { BufferedPhoneInput } from "./components/BufferedPhoneInput";
 import { compressSignatureDataUrl } from "./lib/signatureUtils";
+import { doesMedicalDocumentBelongToPatient } from "./lib/medicalDocumentUtils";
 import React, {
   useState,
   useEffect,
@@ -2425,6 +2426,188 @@ export default function App() {
     [hasLoadedAllMedicalDocuments]
   );
 
+  const [isLoadingPatientDocs, setIsLoadingPatientDocs] = useState(false);
+  const fetchedPatientDocsKeysRef = useRef<Set<string>>(new Set());
+
+  const fetchPatientMedicalDocuments = useCallback(
+    async (patientTarget: {
+      patientId?: string;
+      patientName?: string;
+      patientPhone?: string;
+      patientCnp?: string;
+    }): Promise<any[]> => {
+      if (hasLoadedAllMedicalDocumentsRef.current) {
+        return [];
+      }
+
+      const cleanId = (patientTarget.patientId || "").trim();
+      const cleanName = (patientTarget.patientName || "").trim();
+      const cleanPhone = (patientTarget.patientPhone || "").trim();
+      const cleanCnp = (patientTarget.patientCnp || "").replace(/\D/g, "").trim();
+
+      const cacheKey = `${cleanId}|${normalizePatientName(cleanName)}|${normalizePhone(cleanPhone)}|${cleanCnp}`;
+      if (!cacheKey.replace(/\|/g, "") || fetchedPatientDocsKeysRef.current.has(cacheKey)) {
+        return [];
+      }
+      fetchedPatientDocsKeysRef.current.add(cacheKey);
+
+      setIsLoadingPatientDocs(true);
+      const foundMap = new Map<string, any>();
+
+      try {
+        const queries: Promise<void>[] = [];
+
+        if (cleanId) {
+          queries.push(
+            getDocs(
+              query(collection(db, "medicalDocuments"), where("patientId", "==", cleanId))
+            )
+              .then((snap) => {
+                snap.forEach((d) => {
+                  const data = d.data() as any;
+                  if (!data.isDeleted) foundMap.set(d.id, { id: d.id, ...data });
+                });
+              })
+              .catch(() => {})
+          );
+        }
+
+        if (cleanCnp.length >= 6) {
+          queries.push(
+            getDocs(
+              query(collection(db, "medicalDocuments"), where("patientCnp", "==", cleanCnp))
+            )
+              .then((snap) => {
+                snap.forEach((d) => {
+                  const data = d.data() as any;
+                  if (!data.isDeleted) foundMap.set(d.id, { id: d.id, ...data });
+                });
+              })
+              .catch(() => {})
+          );
+          queries.push(
+            getDocs(
+              query(
+                collection(db, "medicalDocuments"),
+                where("formValues.patientCnp", "==", cleanCnp)
+              )
+            )
+              .then((snap) => {
+                snap.forEach((d) => {
+                  const data = d.data() as any;
+                  if (!data.isDeleted) foundMap.set(d.id, { id: d.id, ...data });
+                });
+              })
+              .catch(() => {})
+          );
+        }
+
+        if (cleanPhone.length >= 5) {
+          const digitsOnly = normalizePhone(cleanPhone);
+          const phoneVariants = Array.from(
+            new Set([
+              cleanPhone,
+              digitsOnly,
+              digitsOnly.startsWith("0") && digitsOnly.length === 10
+                ? `+4${digitsOnly}`
+                : "",
+            ].filter((p) => p.length >= 5))
+          );
+          phoneVariants.forEach((pVar) => {
+            queries.push(
+              getDocs(
+                query(collection(db, "medicalDocuments"), where("patientPhone", "==", pVar))
+              )
+                .then((snap) => {
+                  snap.forEach((d) => {
+                    const data = d.data() as any;
+                    if (!data.isDeleted) foundMap.set(d.id, { id: d.id, ...data });
+                  });
+                })
+                .catch(() => {})
+            );
+          });
+        }
+
+        if (cleanName.length >= 2) {
+          const nameVariants = Array.from(
+            new Set(
+              [cleanName, capitalizeWords(cleanName), cleanName.toUpperCase()].filter(
+                (v) => v.length >= 2
+              )
+            )
+          );
+          nameVariants.forEach((nVar) => {
+            queries.push(
+              getDocs(
+                query(collection(db, "medicalDocuments"), where("patientName", "==", nVar))
+              )
+                .then((snap) => {
+                  snap.forEach((d) => {
+                    const data = d.data() as any;
+                    if (!data.isDeleted) foundMap.set(d.id, { id: d.id, ...data });
+                  });
+                })
+                .catch(() => {})
+            );
+          });
+
+          const firstWord = cleanName.split(/\s+/)[0] || "";
+          if (firstWord.length >= 3) {
+            const firstPrefixes = Array.from(
+              new Set([capitalizeWords(firstWord), firstWord.toUpperCase()])
+            );
+            firstPrefixes.forEach((prefix) => {
+              queries.push(
+                getDocs(
+                  query(
+                    collection(db, "medicalDocuments"),
+                    where("patientName", ">=", prefix),
+                    where("patientName", "<=", `${prefix}\uf8ff`),
+                    limit(40)
+                  )
+                )
+                  .then((snap) => {
+                    snap.forEach((d) => {
+                      const data = d.data() as any;
+                      if (!data.isDeleted) foundMap.set(d.id, { id: d.id, ...data });
+                    });
+                  })
+                  .catch(() => {})
+              );
+            });
+          }
+        }
+
+        await Promise.all(queries);
+        const fetched = Array.from(foundMap.values());
+        if (fetched.length > 0) {
+          setMedicalDocuments((prev) => {
+            const byId = new Map<string, any>();
+            prev.forEach((item) => {
+              if (item?.id) byId.set(item.id, item);
+            });
+            let changed = false;
+            fetched.forEach((item) => {
+              if (item?.id && !byId.has(item.id)) {
+                byId.set(item.id, item);
+                changed = true;
+              }
+            });
+            return changed ? Array.from(byId.values()) : prev;
+          });
+        }
+        return fetched;
+      } catch (e) {
+        console.warn("Notice fetching patient medical documents:", e);
+        return [];
+      } finally {
+        setIsLoadingPatientDocs(false);
+      }
+    },
+    []
+  );
+
   const ensureFullArchiveLoaded = useCallback(
     async (silent = true): Promise<{ allApps: Appointment[]; allMeds: MedicalRecord[] } | null> => {
       if (hasLoadedAllHistory) {
@@ -3962,6 +4145,38 @@ export default function App() {
   ] = useState(false);
   const [isMyopiaChartOpen, setIsMyopiaChartOpen] = useState(false);
   const [isPatientSummaryModalOpen, setIsPatientSummaryModalOpen] = useState(false);
+
+  useEffect(() => {
+    if (!currentMedicalRecord) return;
+    if (!isMedicalRecordModalOpen && !isPatientSummaryModalOpen) return;
+    fetchPatientMedicalDocuments({
+      patientId: currentMedicalRecord.id,
+      patientName: currentMedicalRecord.patientName,
+      patientPhone: currentMedicalRecord.patientPhone,
+      patientCnp: currentMedicalRecord.patientCnp,
+    });
+  }, [
+    isMedicalRecordModalOpen,
+    isPatientSummaryModalOpen,
+    currentMedicalRecord?.id,
+    currentMedicalRecord?.patientName,
+    currentMedicalRecord?.patientPhone,
+    currentMedicalRecord?.patientCnp,
+    fetchPatientMedicalDocuments,
+  ]);
+
+  const currentPatientDocumentsCount = useMemo(() => {
+    if (!currentMedicalRecord) return 0;
+    return (medicalDocuments || []).filter((docItem) =>
+      doesMedicalDocumentBelongToPatient(docItem, {
+        id: currentMedicalRecord.id,
+        patientName: currentMedicalRecord.patientName,
+        patientPhone: currentMedicalRecord.patientPhone,
+        patientCnp: currentMedicalRecord.patientCnp,
+        patientBirthDate: currentMedicalRecord.patientBirthDate,
+      })
+    ).length;
+  }, [currentMedicalRecord, medicalDocuments]);
   const [newAxialValueOd, setNewAxialValueOd] = useState("");
   const [newAxialDateOd, setNewAxialDateOd] = useState("");
   const [newAxialValueOs, setNewAxialValueOs] = useState("");
@@ -4069,23 +4284,30 @@ export default function App() {
       if (!birthDateStr) return null;
 
       let birthDate: Date;
-      if (birthDateStr.includes("-")) {
-        const parts = birthDateStr.split("-");
-        if (parts[0].length === 4) {
+      const trimmedBirth = birthDateStr.trim();
+      if (
+        trimmedBirth.includes("-") ||
+        trimmedBirth.includes(".") ||
+        trimmedBirth.includes("/")
+      ) {
+        const parts = trimmedBirth.split(/[-./]/);
+        if (parts.length === 3 && parts[0].length === 4) {
           birthDate = new Date(
-            parseInt(parts[0]),
-            parseInt(parts[1]) - 1,
-            parseInt(parts[2]),
+            parseInt(parts[0], 10),
+            parseInt(parts[1], 10) - 1,
+            parseInt(parts[2], 10),
+          );
+        } else if (parts.length === 3 && parts[2].length === 4) {
+          birthDate = new Date(
+            parseInt(parts[2], 10),
+            parseInt(parts[1], 10) - 1,
+            parseInt(parts[0], 10),
           );
         } else {
-          birthDate = new Date(
-            parseInt(parts[2]),
-            parseInt(parts[1]) - 1,
-            parseInt(parts[0]),
-          );
+          birthDate = new Date(trimmedBirth);
         }
       } else {
-        birthDate = new Date(birthDateStr);
+        birthDate = new Date(trimmedBirth);
       }
 
       if (isNaN(birthDate.getTime())) return null;
@@ -4105,19 +4327,25 @@ export default function App() {
         targetBday = nextYearBday;
       }
 
-      const diffTime = targetBday.getTime() - today.getTime();
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      const todayUtc = Date.UTC(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate(),
+      );
+      const targetUtc = Date.UTC(
+        targetBday.getFullYear(),
+        targetBday.getMonth(),
+        targetBday.getDate(),
+      );
+      const diffDays = Math.round((targetUtc - todayUtc) / (1000 * 60 * 60 * 24));
 
       const isToday = isSameDay(thisYearBday, today);
-      const age = today.getFullYear() - birthDate.getFullYear();
+      const upcomingAge = targetBday.getFullYear() - birthDate.getFullYear();
 
       return {
         isToday,
         daysRemaining: isToday ? 0 : diffDays,
-        age: isToday
-          ? age
-          : age -
-            (targetBday.getFullYear() === today.getFullYear() + 1 ? 1 : 0),
+        age: upcomingAge,
         bMonth,
         bDay,
         formattedDate: `${bDay.toString().padStart(2, "0")}.${(bMonth + 1).toString().padStart(2, "0")}`,
@@ -10449,21 +10677,33 @@ export default function App() {
     } catch (err) {
       console.error("Error fetching fresh medical record from Firestore:", err);
     }
-    // 3. Check if there are medicalDocuments for this patient to retrieve basic info / CNP / etc.
-    const patientDocs = (medicalDocuments || []).filter((docItem) => {
+    // 3. Ensure historical medicalDocuments (>30 days) for this patient are loaded and find latest document info
+    const fetchedArchiveDocs = !isManualNew
+      ? await fetchPatientMedicalDocuments({
+          patientId: data?.id || recordId,
+          patientName: data?.patientName || appointment.patientName,
+          patientPhone: data?.patientPhone || appointment.patientPhone,
+          patientCnp: data?.patientCnp || appointment.patientCnp,
+        })
+      : [];
+
+    const combinedDocsMap = new Map<string, any>();
+    (medicalDocuments || []).forEach((d) => {
+      if (d?.id && !d.isDeleted) combinedDocsMap.set(d.id, d);
+    });
+    fetchedArchiveDocs.forEach((d) => {
+      if (d?.id && !d.isDeleted) combinedDocsMap.set(d.id, d);
+    });
+    const patientDocs = Array.from(combinedDocsMap.values()).filter((docItem) => {
       if (!docItem || !docItem.formValues) return false;
       if (isManualNew) return false;
-      const docName = normalizePatientName(docItem.patientName);
-      const appName = normalizePatientName(appointment.patientName);
-      const docPhone = normalizePhone(docItem.patientPhone);
-      const appPhone = normalizePhone(appointment.patientPhone);
-      const docBirth = (docItem.formValues?.birthDate || "").trim();
-      const appBirth = (appointment.patientBirthDate || "").trim();
-      if (appName && docName && appName === docName) {
-        if (appBirth && docBirth && appBirth !== docBirth) return false;
-        if (!appPhone || !docPhone || appPhone === docPhone) return true;
-      }
-      return false;
+      return doesMedicalDocumentBelongToPatient(docItem, {
+        id: data?.id || recordId,
+        patientName: appointment.patientName || data?.patientName,
+        patientPhone: appointment.patientPhone || data?.patientPhone,
+        patientCnp: appointment.patientCnp || data?.patientCnp,
+        patientBirthDate: appointment.patientBirthDate || data?.patientBirthDate,
+      });
     });
 
     const latestDoc = patientDocs.sort(
@@ -20097,7 +20337,7 @@ export default function App() {
       patientBirthDate: resolvedSavedBirthDate,
       birthDate: resolvedSavedBirthDate,
     });
-    if (patientRecord) {
+    if (patientRecord && (!currentMedicalRecord || currentMedicalRecord.id !== patientRecord.id)) {
       setCurrentMedicalRecord(patientRecord);
     }
     setActiveDocumentModal(docRecord.type);
@@ -27774,6 +28014,7 @@ export default function App() {
             : null
         }
         onOpenNonGrataModal={openNonGrataModal}
+        patientDocumentsCount={currentPatientDocumentsCount}
       />
 
         <WeatherModal
@@ -33959,6 +34200,7 @@ export default function App() {
           record={currentMedicalRecord}
           medicalRecords={medicalRecords}
           medicalDocuments={medicalDocuments}
+          isLoadingDocuments={isLoadingPatientDocs}
           darkMode={darkMode}
           userRole={profile?.role}
           clinicLogo={clinicConfig?.logoUrl}

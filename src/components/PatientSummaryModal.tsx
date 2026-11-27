@@ -31,6 +31,10 @@ import {
   getComprehensivePatientAxialData,
   generateBothMyopiaChartsA4Pdf,
 } from "../services/myopiaPdfService";
+import {
+  doesMedicalDocumentBelongToPatient,
+  extractMedicalDocumentSummaryDetails,
+} from "../lib/medicalDocumentUtils";
 
 interface PatientSummaryModalProps {
   isOpen: boolean;
@@ -38,6 +42,7 @@ interface PatientSummaryModalProps {
   record: MedicalRecord;
   medicalRecords?: MedicalRecord[];
   medicalDocuments?: any[];
+  isLoadingDocuments?: boolean;
   darkMode?: boolean;
   userRole?: string;
   clinicLogo?: string;
@@ -124,6 +129,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
   record,
   medicalRecords = [],
   medicalDocuments = [],
+  isLoadingDocuments = false,
   darkMode = false,
   userRole,
   clinicLogo,
@@ -248,6 +254,10 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
         treatment?: string;
         recomandari?: string;
         details?: any;
+        servesTo?: string;
+        recoveryPlan?: string;
+        recoveryPrognosis?: string;
+        exOftalmologic?: string;
         rawDoc?: any;
       }>;
     }> = [];
@@ -331,28 +341,22 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
       }
     }
 
-    // 3. Medical Documents
-    const patientNameLower = (record.patientName || "").trim().toLowerCase();
-    const patientPhoneLower = (record.patientPhone || "").trim().toLowerCase();
-    const patientCnp = (record.patientCnp || "").trim();
-
-    const patientDocs = medicalDocuments.filter((docItem) => {
-      if (!docItem) return false;
-      const docName = (docItem.patientName || "").trim().toLowerCase();
-      const docPhone = (docItem.patientPhone || "").trim().toLowerCase();
-      const docCnp = (docItem.patientCnp || "").trim();
-
-      if (patientCnp && docCnp && patientCnp === docCnp) return true;
-      if (docName && patientNameLower && docName === patientNameLower) {
-        if (!patientPhoneLower || !docPhone || patientPhoneLower === docPhone) return true;
-      }
-      return false;
-    });
+    // 3. Medical Documents (Raport, Adeverință, Referat, Certificat A5, Examen Expertiză)
+    const patientDocs = medicalDocuments.filter((docItem) =>
+      doesMedicalDocumentBelongToPatient(docItem, {
+        id: record.id,
+        patientName: record.patientName,
+        patientPhone: record.patientPhone,
+        patientCnp: record.patientCnp,
+        patientBirthDate: record.patientBirthDate,
+      })
+    );
 
     patientDocs.forEach((docItem) => {
-      const docDate = docItem.date || docItem.createdAt || new Date().toISOString();
-      const parsedDoc = parseDateStr(docDate);
       const fv = docItem.formValues || docItem;
+      const extracted = extractMedicalDocumentSummaryDetails(docItem);
+      const docDate = extracted.docDate;
+      const parsedDoc = parseDateStr(docDate);
 
       const docOd = fv.od || docItem.od;
       const docOs = fv.os || docItem.os;
@@ -361,20 +365,14 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
       const docDp = fv.dp || docItem.dp;
       const docDpOd = fv.dp_od || docItem.dp_od;
       const docDpOs = fv.dp_os || docItem.dp_os;
-      const docTreatment = fv.treatment || docItem.treatment || fv.tratament;
-      const docDiagnostic = fv.diagnostic || docItem.diagnostic || fv.diag || fv.diagOd || fv.diagOs;
-      const docRecomandari = fv.recomandari || docItem.recomandari || fv.recomandare;
+      const docTreatment = extracted.treatment;
+      const docDiagnostic = extracted.diagnostic;
+      const docRecomandari = extracted.recomandari;
       const docSpecialMentions =
         fv.specialMentions ||
         docItem.specialMentions ||
         fv.mentiuni ||
-        fv.observations ||
-        docItem.observations ||
-        fv.concluzii ||
-        docItem.concluzii ||
-        fv.exOftalmologic ||
-        fv.motivTrimitere ||
-        fv.motiveScutire;
+        undefined;
       const docSymptoms = fv.symptoms || docItem.symptoms;
       const docScutire = fv.scutire || docItem.scutire;
 
@@ -403,19 +401,31 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
           os: fv.axialLengthOs || fv.axialLength?.os || docItem.axialLength?.os,
         },
         iop: {
-          od: fv.iopOd || fv.iop?.od || docItem.iop?.od,
-          os: fv.iopOs || fv.iop?.os || docItem.iop?.os,
+          od: fv.iopOd || fv.tioOd || fv.iop?.od || docItem.iop?.od,
+          os: fv.iopOs || fv.tioOs || fv.iop?.os || docItem.iop?.os,
+        },
+        anteriorSegment: {
+          od: fv.anteriorSegmentOd || fv.anteriorSegmentAo || docItem.anteriorSegment?.od,
+          os: fv.anteriorSegmentOs || fv.anteriorSegmentAo || docItem.anteriorSegment?.os,
+        },
+        posteriorSegment: {
+          od: fv.posteriorSegmentOd || fv.posteriorSegmentAo || docItem.posteriorSegment?.od,
+          os: fv.posteriorSegmentOs || fv.posteriorSegmentAo || docItem.posteriorSegment?.os,
         },
         documents: [
           {
             id: docItem.id,
             rawType: docItem.type,
-            docType: docItem.type || "Document Medical",
+            docType: extracted.docTypeLabel,
             docNumber: docItem.documentNumber || docItem.docNumber || "N/A",
             diagnostic: docDiagnostic,
-            concluzii: fv.concluzii || docItem.concluzii || fv.observations || docItem.observations || fv.exOftalmologic,
+            concluzii: extracted.concluzii,
             treatment: docTreatment,
             recomandari: docRecomandari,
+            servesTo: extracted.servesTo,
+            recoveryPlan: extracted.recoveryPlan,
+            recoveryPrognosis: extracted.recoveryPrognosis,
+            exOftalmologic: extracted.exOftalmologic,
             details: fv,
             rawDoc: docItem,
           },
@@ -470,6 +480,10 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
         treatment?: string;
         recomandari?: string;
         details?: any;
+        servesTo?: string;
+        recoveryPlan?: string;
+        recoveryPrognosis?: string;
+        exOftalmologic?: string;
         rawDoc?: any;
       }> = [];
       group.forEach((g) => {
@@ -1151,11 +1165,17 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
               <ClipboardList className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-xl font-black tracking-tight flex items-center gap-2">
+              <h2 className="text-xl font-black tracking-tight flex items-center gap-2 flex-wrap">
                 Istoric Clinic Cronologic
                 <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
                   {timelineEntries.length} vizite
                 </span>
+                {isLoadingDocuments && (
+                  <span className="text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 flex items-center gap-1.5 no-print">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>Se încarcă documente din registru...</span>
+                  </span>
+                )}
               </h2>
             </div>
           </div>
@@ -1267,7 +1287,7 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
             <div className="p-8 text-center rounded-2xl border border-dashed border-slate-300 dark:border-slate-700">
               <FileText className="w-8 h-8 text-slate-400 mx-auto mb-2" />
               <p className="text-sm font-bold text-slate-500">
-                Nu există consultații sau prescripții anterioare înregistrate.
+                Nu există consultații, prescripții sau documente medicale înregistrate.
               </p>
             </div>
           ) : (
@@ -1400,17 +1420,27 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                             )}
                             {docItem.concluzii && (
                               <p className="text-slate-800 dark:text-slate-200 text-xs">
-                                <strong>Concluzii / Detalii:</strong> {docItem.concluzii}
+                                <strong>Concluzii / Interpretare:</strong> {docItem.concluzii}
                               </p>
                             )}
-                            {docItem.details?.exOftalmologic && (
+                            {docItem.exOftalmologic && (
                               <p className="text-slate-800 dark:text-slate-200 text-xs">
-                                <strong>Examen Oftalmologic:</strong> {docItem.details.exOftalmologic}
+                                <strong>Examen Oftalmologic / Evoluție:</strong> {docItem.exOftalmologic}
                               </p>
                             )}
-                            {docItem.details?.motivTrimitere && (
+                            {docItem.servesTo && (
                               <p className="text-slate-800 dark:text-slate-200 text-xs">
-                                <strong>Motiv trimitere / examinare:</strong> {docItem.details.motivTrimitere}
+                                <strong>Îi servește la / Motiv:</strong> {docItem.servesTo}
+                              </p>
+                            )}
+                            {docItem.recoveryPlan && (
+                              <p className="text-slate-800 dark:text-slate-200 text-xs">
+                                <strong>Plan recuperare:</strong> {docItem.recoveryPlan}
+                              </p>
+                            )}
+                            {docItem.recoveryPrognosis && (
+                              <p className="text-slate-800 dark:text-slate-200 text-xs">
+                                <strong>Prognostic:</strong> {docItem.recoveryPrognosis}
                               </p>
                             )}
                           </div>
@@ -1997,7 +2027,8 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                           {doc.diagnostic && <div><strong>Diagnostic:</strong> {doc.diagnostic}</div>}
                           {doc.treatment && <div><strong>Tratament:</strong> {doc.treatment}</div>}
                           {doc.recomandari && <div><strong>Recomandări:</strong> {doc.recomandari}</div>}
-                          {doc.concluzii && <div><strong>Concluzii / Detalii:</strong> {doc.concluzii}</div>}
+                          {doc.concluzii && <div><strong>Concluzii / Interpretare:</strong> {doc.concluzii}</div>}
+                          {doc.servesTo && <div><strong>Îi servește la / Motiv:</strong> {doc.servesTo}</div>}
                         </div>
                       ))}
                     </div>
@@ -2285,7 +2316,8 @@ export const PatientSummaryModal: React.FC<PatientSummaryModalProps> = ({
                               {doc.diagnostic && <div><strong>Diagnostic:</strong> {doc.diagnostic}</div>}
                               {doc.treatment && <div><strong>Tratament:</strong> {doc.treatment}</div>}
                               {doc.recomandari && <div><strong>Recomandări:</strong> {doc.recomandari}</div>}
-                              {doc.concluzii && <div><strong>Concluzii / Detalii:</strong> {doc.concluzii}</div>}
+                              {doc.concluzii && <div><strong>Concluzii / Interpretare:</strong> {doc.concluzii}</div>}
+                              {doc.servesTo && <div><strong>Îi servește la / Motiv:</strong> {doc.servesTo}</div>}
                             </div>
                           ))}
                         </div>

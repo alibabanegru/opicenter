@@ -547,6 +547,7 @@ export interface MedicalRecordModalProps {
     patientPhone?: string;
     patientCnp?: string;
   }) => void;
+  patientDocumentsCount?: number;
 }
 
 export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => {
@@ -660,6 +661,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
     hasOpenSubModal = false,
     nonGrataMatch = null,
     onOpenNonGrataModal,
+    patientDocumentsCount = 0,
   } = props;
 
   const [isSavingAndPrinting, setIsSavingAndPrinting] = useState(false);
@@ -1417,7 +1419,6 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                     </span>
                     <div className="flex flex-col">
                       <span className="text-blue-600 dark:text-blue-400 flex items-center gap-1.5 leading-none py-0.5 flex-wrap">
-                        <User className="w-4.5 h-4.5 shrink-0 text-blue-500/85" />
                         {(() => {
                           const age = currentMedicalRecord.patientBirthDate
                             ? calculateDetailedAge(
@@ -1956,10 +1957,19 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                       <button
                         type="button"
                         onClick={() => setIsPatientSummaryModalOpen(true)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-emerald-900/20 whitespace-nowrap"
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-emerald-900/20 whitespace-nowrap cursor-pointer"
+                        title="Istoric Clinic Cronologic și documente din registru"
                       >
                         <FileText className="w-3 h-3" />
-                        Sumar
+                        <span>Sumar</span>
+                        {patientDocumentsCount > 0 && (
+                          <span
+                            className="px-1.5 py-0.5 rounded-full bg-white/25 text-white text-[9px] font-black leading-none"
+                            title={`${patientDocumentsCount} document(e) din registru în istoricul cronologic`}
+                          >
+                            {patientDocumentsCount}
+                          </span>
+                        )}
                       </button>
                     )}
 
@@ -1988,7 +1998,7 @@ export const MedicalRecordModal: React.FC<MedicalRecordModalProps> = (props) => 
                         }
                       >
                         <Ban className="w-3 h-3" />
-                        <span>{nonGrataMatch ? "Non Grata (Activ)" : "Non Grata"}</span>
+                        <span>{nonGrataMatch ? "PNG (Activ)" : "PNG"}</span>
                       </button>
                     )}
                   </div>
